@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon:addon id="ambianceamplipi" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:addon="https://openhab.org/schemas/addon/v1.0.0"
+	xsi:schemaLocation="https://openhab.org/schemas/addon/v1.0.0 https://openhab.org/schemas/addon-1.0.0.xsd">
+
+	<type>binding</type>
+	<name>Ambiance AmpliPi Binding</name>
+	<description>Whole-house radio, announcements and alarm for an Ambiance AmpliPi controller (a
+		stripped AmpliPi
+		derivative). Per-zone volume/mute/power, station selection, now-playing +
+		album art, a public-address audio sink for
+		Voice.say, and a burglar-siren switch.</description>
+	<connection>local</connection>
+
+</addon:addon>

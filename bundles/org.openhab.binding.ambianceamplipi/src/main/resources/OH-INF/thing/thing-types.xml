@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<thing:thing-descriptions bindingId="ambianceamplipi"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
+	xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description-1.0.0.xsd">
+
+	<bridge-type id="controller">
+		<label>Ambiance AmpliPi Controller</label>
+		<description>An Ambiance AmpliPi controller (radio + announcements + alarm).</description>
+		<semantic-equipment-tag>AudioVisual</semantic-equipment-tag>
+
+		<channels>
+			<channel id="station" typeId="station"/>
+			<channel id="power" typeId="system.power"/>
+			<channel id="control" typeId="system.media-control"/>
+			<channel id="masterVolume" typeId="system.volume"/>
+			<channel id="masterMute" typeId="system.mute"/>
+			<channel id="title" typeId="nowTitle"/>
+			<channel id="artist" typeId="nowArtist"/>
+			<channel id="track" typeId="nowTrack"/>
+			<channel id="cover" typeId="cover"/>
+			<channel id="siren" typeId="siren"/>
+			<channel id="announce" typeId="announce"/>
+			<channel id="healthOk" typeId="healthOk"/>
+			<channel id="health" typeId="health"/>
+		</channels>
+
+		<config-description>
+			<parameter name="hostname" type="text" required="true">
+				<context>network-address</context>
+				<label>Hostname</label>
+				<description>Hostname or IP address of the Ambiance AmpliPi controller.</description>
+			</parameter>
+			<parameter name="port" type="integer" min="1" max="65535">
+				<label>Port</label>
+				<description>HTTP API port.</description>
+				<default>8080</default>
+			</parameter>
+			<parameter name="refreshInterval" type="integer" unit="s" min="1">
+				<label>Refresh Interval</label>
+				<description>Interval the controller is polled, in seconds.</description>
+				<default>3</default>
+			</parameter>
+		</config-description>
+	</bridge-type>
+
+	<thing-type id="zone">
+		<supported-bridge-type-refs>
+			<bridge-type-ref id="controller"/>
+		</supported-bridge-type-refs>
+
+		<label>Ambiance AmpliPi Zone</label>
+		<description>A zone of the Ambiance AmpliPi system.</description>
+		<semantic-equipment-tag>Speaker</semantic-equipment-tag>
+
+		<channels>
+			<channel id="power" typeId="system.power"/>
+			<channel id="volume" typeId="system.volume"/>
+			<channel id="mute" typeId="system.mute"/>
+		</channels>
+
+		<config-description>
+			<parameter name="id" type="integer" required="true">
+				<label>Zone ID</label>
+				<description>The ID of the zone (0-based).</description>
+			</parameter>
+		</config-description>
+	</thing-type>
+
+	<channel-type id="station">
+		<item-type>String</item-type>
+		<label>Station</label>
+		<description>The radio station that is playing. Options come from the controller's station list.</description>
+		<tags>
+			<tag>Control</tag>
+			<tag>Channel</tag>
+		</tags>
+		<autoUpdatePolicy>recommend</autoUpdatePolicy>
+	</channel-type>
+
+	<channel-type id="nowTitle">
+		<item-type>String</item-type>
+		<label>Now playing</label>
+		<description>Current stream title (e.g. "Artist - Track").</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="nowArtist">
+		<item-type>String</item-type>
+		<label>Artist</label>
+		<description>Current artist (parsed from the stream title).</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="nowTrack">
+		<item-type>String</item-type>
+		<label>Track</label>
+		<description>Current track (parsed from the stream title).</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="cover">
+		<item-type>Image</item-type>
+		<label>Album art</label>
+		<description>Current album art (fetched by the controller from the now-playing metadata).</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="siren">
+		<item-type>Switch</item-type>
+		<label>Siren</label>
+		<description>Burglar siren: ON drives all zones to full and loops the alarm; OFF restores.</description>
+		<tags>
+			<tag>Alarm</tag>
+			<tag>Switch</tag>
+		</tags>
+	</channel-type>
+
+	<channel-type id="announce">
+		<item-type>String</item-type>
+		<label>Announce</label>
+		<description>URL of audio to play as a public-address announcement.</description>
+		<tags>
+			<tag>Control</tag>
+		</tags>
+	</channel-type>
+
+	<channel-type id="healthOk">
+		<item-type>Switch</item-type>
+		<label>Audio Health OK</label>
+		<description>ON while the controller's audio subsystem (radio + preamp) is healthy; OFF when it needs
+			attention.</description>
+		<tags>
+			<tag>Status</tag>
+			<tag>Switch</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="health">
+		<item-type>String</item-type>
+		<label>Audio Health</label>
+		<description>"ok", or a human-readable summary of what the controller reported wrong (radio / preamp).</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+</thing:thing-descriptions>
