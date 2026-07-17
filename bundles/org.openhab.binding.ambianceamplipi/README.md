@@ -13,7 +13,7 @@ The controller exposes a small REST API; this binding polls it, publishes the st
 
 ## Discovery
 
-There is no automatic discovery; add the `controller` bridge manually with its hostname or IP, then add one `zone` thing per output zone (with its zero-based `id`).
+If the controller host advertises the `_ambianceamplipi._tcp` mDNS service (install `packaging/avahi/ambiance-amplipi.service` from the [ambiance-amplipi](https://github.com/stamateviorel/ambiance-amplipi) repo into `/etc/avahi/services/`), the `controller` bridge is discovered automatically and appears in the Inbox with its hostname and port. Otherwise add the `controller` bridge manually with its hostname or IP. Zones are not auto-discovered — add one `zone` thing per output zone (with its zero-based `id`).
 
 ## Thing Configuration
 
