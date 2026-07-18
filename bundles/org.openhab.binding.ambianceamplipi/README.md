@@ -1,6 +1,6 @@
 # Ambiance AmpliPi Binding
 
-This binding controls an [Ambiance AmpliPi](https://github.com/stamateviorel/ambiance-amplipi) controller — a lightweight, single-purpose whole-house audio appliance (a stripped fork of [micro-nova/AmpliPi](https://github.com/micro-nova/AmpliPi)) whose only jobs are **internet radio**, **public-address announcements**, and a **burglar siren**, over up to six amplified zones.
+This binding controls an [Ambiance AmpliPi](https://github.com/stamateviorel/ambiance-amplipi) controller — a lightweight, single-purpose whole-house audio appliance (a stripped fork of [micro-nova/AmpliPi](https://github.com/micro-nova/AmpliPi)) whose only jobs are **internet radio**, **Spotify Connect**, **public-address announcements**, and a **burglar siren**, over up to six amplified zones.
 
 The controller exposes a small REST API; this binding polls it, publishes the state on channels, forwards commands, fetches album art, and registers an **audio sink** so `Voice.say(...)` and the `Audio` actions play announcements through the system.
 
@@ -13,7 +13,9 @@ The controller exposes a small REST API; this binding polls it, publishes the st
 
 ## Discovery
 
-If the controller host advertises the `_ambianceamplipi._tcp` mDNS service (install `packaging/avahi/ambiance-amplipi.service` from the [ambiance-amplipi](https://github.com/stamateviorel/ambiance-amplipi) repo into `/etc/avahi/services/`), the `controller` bridge is discovered automatically and appears in the Inbox with its hostname and port. Otherwise add the `controller` bridge manually with its hostname or IP. Zones are not auto-discovered — add one `zone` thing per output zone (with its zero-based `id`).
+If the controller host advertises the `_ambianceamplipi._tcp` mDNS service (install `packaging/avahi/ambiance-amplipi.service` from the [ambiance-amplipi](https://github.com/stamateviorel/ambiance-amplipi) repo into `/etc/avahi/services/`), the `controller` bridge is discovered automatically and appears in the Inbox with its hostname and port. Otherwise add the `controller` bridge manually with its hostname or IP.
+
+Once the bridge is online, its **zones are discovered automatically** — they appear in the Inbox labeled with the names configured on the controller (`zones.conf` / the web UI's zone rename), so nothing has to be written by hand. Renaming a zone on the controller re-publishes the discovery result with the new label.
 
 ## Thing Configuration
 
@@ -37,6 +39,7 @@ If the controller host advertises the `_ambianceamplipi._tcp` mDNS service (inst
 
 | Channel        | Type                   | RW | Description                                                                 |
 |----------------|------------------------|----|-----------------------------------------------------------------------------|
+| `source`       | String                 | RW | The playback source that owns the audio path (`radio`, `spotify`, ...). Command options come from the controller; selecting one switches to and starts it. The now-playing, `control` and `power` channels follow the active source. |
 | `station`      | String                 | RW | Current radio station. Command options are the controller's station list.   |
 | `power`        | Switch                 | RW | Radio source on/off (`ON` starts playback, `OFF` stops it).                 |
 | `control`      | Player                 | RW | Transport: play/pause and next/previous station.                            |

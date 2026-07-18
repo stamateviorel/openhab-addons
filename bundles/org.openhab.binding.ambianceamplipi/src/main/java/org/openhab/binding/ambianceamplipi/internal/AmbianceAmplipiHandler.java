@@ -34,6 +34,7 @@ import org.eclipse.jetty.client.util.StringContentProvider;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.openhab.binding.ambianceamplipi.internal.audio.PAAudioSink;
+import org.openhab.binding.ambianceamplipi.internal.discovery.AmbianceZoneDiscoveryService;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceHealth;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceRadio;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceSource;
@@ -296,7 +297,7 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
 
     @Override
     public Collection<Class<? extends ThingHandlerService>> getServices() {
-        return Set.of(PAAudioSink.class, AmbianceStationOptionProvider.class);
+        return Set.of(PAAudioSink.class, AmbianceStationOptionProvider.class, AmbianceZoneDiscoveryService.class);
     }
 
     public void addStatusChangeListener(AmbianceStatusChangeListener listener) {
