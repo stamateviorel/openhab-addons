@@ -41,6 +41,7 @@ public class AmbianceAmplipiBindingConstants {
     public static final String CHANNEL_ANNOUNCE = "announce";
     public static final String CHANNEL_HEALTH = "health";
     public static final String CHANNEL_HEALTH_OK = "healthOk";
+    public static final String CHANNEL_SOURCE = "source";
 
     // zone channels
     public static final String CHANNEL_POWER = "power";

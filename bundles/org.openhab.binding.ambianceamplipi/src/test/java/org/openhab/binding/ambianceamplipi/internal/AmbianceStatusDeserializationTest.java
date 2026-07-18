@@ -72,5 +72,26 @@ class AmbianceStatusDeserializationTest {
 
         assertNotNull(st);
         assertNull(st.health);
+        assertNull(st.source); // pre-source firmware -> handler stays radio-only
+        assertNull(st.spotify);
+    }
+
+    @Test
+    void deserializesSourceAndSpotify() {
+        String json = "{\"zones\":[],\"radio\":{\"playing\":false},\"master_vol\":0,\"master_mute\":false,"
+                + "\"siren\":false,\"source\":{\"active\":\"spotify\",\"available\":[\"radio\",\"spotify\"]},"
+                + "\"spotify\":{\"running\":true,\"playing\":true,\"track\":\"Yellow\",\"artist\":\"Coldplay\","
+                + "\"album\":\"Parachutes\",\"cover\":\"http://art/x.jpg\"}}";
+
+        AmbianceStatus st = gson.fromJson(json, AmbianceStatus.class);
+
+        assertNotNull(st);
+        assertEquals("spotify", st.source.active);
+        assertEquals(2, st.source.available.size());
+        assertTrue(st.spotify.running);
+        assertTrue(st.spotify.playing);
+        assertEquals("Yellow", st.spotify.track);
+        assertEquals("Coldplay", st.spotify.artist);
+        assertEquals("Parachutes", st.spotify.album);
     }
 }

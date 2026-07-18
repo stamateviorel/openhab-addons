@@ -14,22 +14,13 @@ package org.openhab.binding.ambianceamplipi.internal.model;
 
 import java.util.List;
 
-import com.google.gson.annotations.SerializedName;
-
 /**
- * DTO for the Ambiance AmpliPi {@code GET /api/status} response.
+ * The playback-source block of {@code /api/status}: which source (radio, spotify, ...) owns
+ * the audio path, and which are available (extensible on the controller side).
  *
  * @author Stamate Viorel - Initial contribution
  */
-public class AmbianceStatus {
-    public List<AmbianceZone> zones;
-    public AmbianceRadio radio;
-    @SerializedName("master_vol")
-    public int masterVol;
-    @SerializedName("master_mute")
-    public boolean masterMute;
-    public boolean siren;
-    public AmbianceHealth health;
-    public AmbianceSource source; // null on pre-source firmware
-    public AmbianceSpotify spotify;
+public class AmbianceSource {
+    public String active;
+    public List<String> available = List.of();
 }

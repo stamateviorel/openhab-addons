@@ -36,6 +36,8 @@ import org.eclipse.jetty.http.HttpStatus;
 import org.openhab.binding.ambianceamplipi.internal.audio.PAAudioSink;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceHealth;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceRadio;
+import org.openhab.binding.ambianceamplipi.internal.model.AmbianceSource;
+import org.openhab.binding.ambianceamplipi.internal.model.AmbianceSpotify;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceStatus;
 import org.openhab.core.audio.AudioHTTPServer;
 import org.openhab.core.library.types.NextPreviousType;
@@ -78,6 +80,8 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
 
     private String baseUrl = "http://ambiance:8080";
     private volatile List<String> latestStations = List.of();
+    private volatile List<String> latestSources = List.of();
+    private volatile boolean sourceAware; // false against pre-source firmware -> radio-only endpoints
     private final CopyOnWriteArrayList<AmbianceStatusChangeListener> changeListeners = new CopyOnWriteArrayList<>();
     private @Nullable ScheduledFuture<?> refreshJob;
 
@@ -129,14 +133,32 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
     }
 
     private void updateChannels(AmbianceStatus status) {
+        AmbianceSource source = status.source;
+        AmbianceSpotify spotify = status.spotify;
+        sourceAware = source != null && source.active != null;
+        boolean spotifyActive = sourceAware && "spotify".equals(source.active) && spotify != null && spotify.running;
+        if (sourceAware) {
+            updateState(CHANNEL_SOURCE, new StringType(source.active));
+            latestSources = source.available != null ? source.available : List.of();
+        }
         AmbianceRadio radio = status.radio;
-        if (radio != null) {
-            updateState(CHANNEL_STATION, radio.station != null ? new StringType(radio.station) : UnDefType.NULL);
+        if (spotifyActive) {
+            // now-playing reflects the source that owns the audio path: bold line = song,
+            // artist line = artist, secondary line = album
+            updateState(CHANNEL_CONTROL, spotify.playing ? PlayPauseType.PLAY : PlayPauseType.PAUSE);
+            updateState(CHANNEL_POWER, OnOffType.from(spotify.playing));
+            updateState(CHANNEL_TRACK, new StringType(nullToEmpty(spotify.track)));
+            updateState(CHANNEL_ARTIST, new StringType(nullToEmpty(spotify.artist)));
+            updateState(CHANNEL_TITLE, new StringType(nullToEmpty(spotify.album)));
+        } else if (radio != null) {
             updateState(CHANNEL_CONTROL, radio.playing ? PlayPauseType.PLAY : PlayPauseType.PAUSE);
             updateState(CHANNEL_POWER, OnOffType.from(radio.playing));
             updateState(CHANNEL_TITLE, new StringType(nullToEmpty(radio.title)));
             updateState(CHANNEL_ARTIST, new StringType(nullToEmpty(radio.artist)));
             updateState(CHANNEL_TRACK, new StringType(nullToEmpty(radio.track)));
+        }
+        if (radio != null) {
+            updateState(CHANNEL_STATION, radio.station != null ? new StringType(radio.station) : UnDefType.NULL);
             latestStations = radio.stations != null ? radio.stations : List.of();
         }
         updateState(CHANNEL_MASTER_VOLUME, new PercentType(Math.max(0, Math.min(100, status.masterVol))));
@@ -180,15 +202,23 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
                 break;
             case CHANNEL_POWER:
                 if (command instanceof OnOffType) {
-                    send(HttpMethod.POST, command == OnOffType.ON ? "/api/radio/play" : "/api/radio/stop", null);
+                    // source-aware: resumes the ACTIVE source (spotify falls back to radio when the
+                    // session is gone); OFF silences every source (away-mode kill list)
+                    send(HttpMethod.POST, command == OnOffType.ON ? playPath() : stopPath(), null);
                 }
                 break;
             case CHANNEL_CONTROL:
                 if (command instanceof PlayPauseType) {
-                    send(HttpMethod.POST, command == PlayPauseType.PLAY ? "/api/radio/play" : "/api/radio/stop", null);
+                    send(HttpMethod.POST, command == PlayPauseType.PLAY ? playPath() : stopPath(), null);
                 } else if (command instanceof NextPreviousType) {
-                    send(HttpMethod.POST, command == NextPreviousType.NEXT ? "/api/radio/next" : "/api/radio/prev",
-                            null);
+                    String next = sourceAware ? "/api/source/next" : "/api/radio/next";
+                    String prev = sourceAware ? "/api/source/prev" : "/api/radio/prev";
+                    send(HttpMethod.POST, command == NextPreviousType.NEXT ? next : prev, null);
+                }
+                break;
+            case CHANNEL_SOURCE:
+                if (command instanceof StringType) {
+                    send(HttpMethod.POST, "/api/source", Map.of("name", command.toString()));
                 }
                 break;
             case CHANNEL_MASTER_VOLUME:
@@ -217,6 +247,14 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
             default:
                 break;
         }
+    }
+
+    private String playPath() {
+        return sourceAware ? "/api/source/play" : "/api/radio/play";
+    }
+
+    private String stopPath() {
+        return sourceAware ? "/api/source/stop" : "/api/radio/stop";
     }
 
     /** Play a URL as a PA announcement (used by the announce channel and the audio sink). */
@@ -271,6 +309,10 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
 
     public List<String> getStations() {
         return new ArrayList<>(latestStations);
+    }
+
+    public List<String> getSources() {
+        return new ArrayList<>(latestSources);
     }
 
     public String getBaseUrl() {

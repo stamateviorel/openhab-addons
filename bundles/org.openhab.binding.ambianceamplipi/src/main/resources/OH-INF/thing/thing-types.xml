@@ -10,6 +10,7 @@
 		<semantic-equipment-tag>AudioVisual</semantic-equipment-tag>
 
 		<channels>
+			<channel id="source" typeId="source"/>
 			<channel id="station" typeId="station"/>
 			<channel id="power" typeId="system.power"/>
 			<channel id="control" typeId="system.media-control"/>
@@ -66,6 +67,18 @@
 			</parameter>
 		</config-description>
 	</thing-type>
+
+	<channel-type id="source">
+		<item-type>String</item-type>
+		<label>Source</label>
+		<description>The playback source that owns the audio path (radio, spotify, ...). Options come from the
+			controller's source list; selecting one switches to and starts it.</description>
+		<tags>
+			<tag>Control</tag>
+			<tag>Mode</tag>
+		</tags>
+		<autoUpdatePolicy>recommend</autoUpdatePolicy>
+	</channel-type>
 
 	<channel-type id="station">
 		<item-type>String</item-type>

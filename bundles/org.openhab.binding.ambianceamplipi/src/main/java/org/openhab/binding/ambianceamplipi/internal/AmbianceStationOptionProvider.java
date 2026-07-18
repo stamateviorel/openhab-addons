@@ -58,14 +58,33 @@ public class AmbianceStationOptionProvider extends BaseDynamicCommandDescription
             @Nullable CommandDescription originalCommandDescription, @Nullable Locale locale) {
         ChannelTypeUID typeUID = channel.getChannelTypeUID();
         AmbianceAmplipiHandler localHandler = handler;
-        if (typeUID != null && AmbianceAmplipiBindingConstants.CHANNEL_STATION.equals(typeUID.getId())
-                && localHandler != null) {
-            List<CommandOption> options = new ArrayList<>();
-            for (String station : localHandler.getStations()) {
-                options.add(new CommandOption(station, station));
+        if (typeUID != null && localHandler != null) {
+            if (AmbianceAmplipiBindingConstants.CHANNEL_STATION.equals(typeUID.getId())) {
+                List<CommandOption> options = new ArrayList<>();
+                for (String station : localHandler.getStations()) {
+                    options.add(new CommandOption(station, station));
+                }
+                setCommandOptions(channel.getUID(), options);
+            } else if (AmbianceAmplipiBindingConstants.CHANNEL_SOURCE.equals(typeUID.getId())) {
+                // dynamic: grows with whatever sources the controller registers (radio, spotify, ...)
+                List<CommandOption> options = new ArrayList<>();
+                for (String source : localHandler.getSources()) {
+                    options.add(new CommandOption(source, label(source)));
+                }
+                setCommandOptions(channel.getUID(), options);
             }
-            setCommandOptions(channel.getUID(), options);
         }
         return super.getCommandDescription(channel, originalCommandDescription, locale);
+    }
+
+    private static String label(String source) {
+        switch (source) {
+            case "radio":
+                return "Radio";
+            case "spotify":
+                return "Spotify";
+            default:
+                return source;
+        }
     }
 }
