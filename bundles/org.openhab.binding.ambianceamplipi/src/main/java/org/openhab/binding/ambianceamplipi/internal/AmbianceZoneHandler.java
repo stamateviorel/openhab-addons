@@ -35,6 +35,7 @@ import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingStatusDetail;
+import org.openhab.core.thing.ThingStatusInfo;
 import org.openhab.core.thing.binding.BaseThingHandler;
 import org.openhab.core.thing.binding.ThingHandler;
 import org.openhab.core.types.Command;
@@ -70,14 +71,33 @@ public class AmbianceZoneHandler extends BaseThingHandler implements AmbianceSta
     @Override
     public void initialize() {
         zoneId = getConfigAs(AmbianceZoneConfiguration.class).id;
+        attachToBridge();
+    }
+
+    /**
+     * (Re-)attach to the CURRENT bridge handler instance. Called from initialize() and again from
+     * bridgeStatusChanged(): a bridge config edit recreates the bridge handler without
+     * re-initializing child things, which would otherwise leave this zone registered on the
+     * disposed instance (stale baseUrl, no more status pushes).
+     */
+    private void attachToBridge() {
         Bridge bridge = getBridge();
         ThingHandler bridgeHandler = bridge != null ? bridge.getHandler() : null;
         if (bridgeHandler instanceof AmbianceAmplipiHandler h) {
             baseUrl = h.getBaseUrl();
-            h.addStatusChangeListener(this);
+            h.addStatusChangeListener(this); // idempotent on the bridge side
             updateStatus(ThingStatus.ONLINE);
         } else {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_UNINITIALIZED, "Controller bridge not ready");
+        }
+    }
+
+    @Override
+    public void bridgeStatusChanged(ThingStatusInfo bridgeStatusInfo) {
+        if (bridgeStatusInfo.getStatus() == ThingStatus.ONLINE) {
+            attachToBridge();
+        } else {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_OFFLINE);
         }
     }
 

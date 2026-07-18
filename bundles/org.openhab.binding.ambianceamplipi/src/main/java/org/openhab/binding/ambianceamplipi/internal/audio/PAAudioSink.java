@@ -48,7 +48,9 @@ public class PAAudioSink extends AudioSinkSync implements ThingHandlerService {
 
     private final Logger logger = LoggerFactory.getLogger(PAAudioSink.class);
 
-    private static final Set<AudioFormat> SUPPORTED_AUDIO_FORMATS = Set.of(AudioFormat.MP3, AudioFormat.WAV);
+    // WAV only: the controller plays announcements with plain aplay (no decoder on the Pi),
+    // so advertising MP3 would accept audio that fails silently at the far end.
+    private static final Set<AudioFormat> SUPPORTED_AUDIO_FORMATS = Set.of(AudioFormat.WAV);
     private static final Set<Class<? extends AudioStream>> SUPPORTED_AUDIO_STREAMS = Set.of(AudioStream.class);
 
     private @Nullable AmbianceAmplipiHandler handler;

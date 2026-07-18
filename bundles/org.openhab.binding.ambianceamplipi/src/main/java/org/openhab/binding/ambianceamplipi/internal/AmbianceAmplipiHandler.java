@@ -78,7 +78,7 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
 
     private String baseUrl = "http://ambiance:8080";
     private volatile List<String> latestStations = List.of();
-    private final List<AmbianceStatusChangeListener> changeListeners = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<AmbianceStatusChangeListener> changeListeners = new CopyOnWriteArrayList<>();
     private @Nullable ScheduledFuture<?> refreshJob;
 
     public AmbianceAmplipiHandler(Bridge bridge, HttpClient httpClient, AudioHTTPServer audioHTTPServer,
@@ -262,7 +262,7 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
     }
 
     public void addStatusChangeListener(AmbianceStatusChangeListener listener) {
-        changeListeners.add(listener);
+        changeListeners.addIfAbsent(listener); // idempotent: zones re-attach on bridge re-init
     }
 
     public void removeStatusChangeListener(AmbianceStatusChangeListener listener) {
