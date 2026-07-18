@@ -5,11 +5,7 @@
 
 	<type>binding</type>
 	<name>Ambiance AmpliPi Binding</name>
-	<description>Whole-house radio, announcements and alarm for an Ambiance AmpliPi controller (a
-		stripped AmpliPi
-		derivative). Per-zone volume/mute/power, station selection, now-playing +
-		album art, a public-address audio sink for
-		Voice.say, and a burglar-siren switch.</description>
+	<description>Whole-house radio, Spotify Connect, announcements and alarm for an Ambiance AmpliPi controller (a stripped AmpliPi derivative). Per-zone volume/mute/power with zone auto-discovery, playback-source switching, station selection, now-playing + album art, a public-address audio sink for Voice.say, and a burglar-siren switch.</description>
 	<connection>local</connection>
 
 </addon:addon>
