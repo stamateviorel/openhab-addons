@@ -37,16 +37,21 @@ import org.openhab.binding.ambianceamplipi.internal.audio.PAAudioSink;
 import org.openhab.binding.ambianceamplipi.internal.discovery.AmbianceZoneDiscoveryService;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceHealth;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceRadio;
+import org.openhab.binding.ambianceamplipi.internal.model.AmbianceSleep;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceSource;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceSpotify;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceStatus;
+import org.openhab.binding.ambianceamplipi.internal.model.AmbianceSystemStats;
 import org.openhab.core.audio.AudioHTTPServer;
+import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.NextPreviousType;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.PlayPauseType;
+import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.types.RawType;
 import org.openhab.core.library.types.StringType;
+import org.openhab.core.library.unit.SIUnits;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.ThingStatus;
@@ -85,6 +90,7 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
     private volatile boolean sourceAware; // false against pre-source firmware -> radio-only endpoints
     private final CopyOnWriteArrayList<AmbianceStatusChangeListener> changeListeners = new CopyOnWriteArrayList<>();
     private @Nullable ScheduledFuture<?> refreshJob;
+    private @Nullable ScheduledFuture<?> systemJob;
 
     public AmbianceAmplipiHandler(Bridge bridge, HttpClient httpClient, AudioHTTPServer audioHTTPServer,
             @Nullable String callbackUrl) {
@@ -105,6 +111,8 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
         baseUrl = "http://" + host + ":" + config.port;
         updateStatus(ThingStatus.UNKNOWN);
         refreshJob = scheduler.scheduleWithFixedDelay(this::poll, 0, config.refreshInterval, TimeUnit.SECONDS);
+        // host diagnostics on a slower cadence — the controller samples its CPU on each call
+        systemJob = scheduler.scheduleWithFixedDelay(this::pollSystem, 5, 60, TimeUnit.SECONDS);
     }
 
     private void poll() {
@@ -165,6 +173,11 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
         updateState(CHANNEL_MASTER_VOLUME, new PercentType(Math.max(0, Math.min(100, status.masterVol))));
         updateState(CHANNEL_MASTER_MUTE, OnOffType.from(status.masterMute));
         updateState(CHANNEL_SIREN, OnOffType.from(status.siren));
+        AmbianceSleep sleep = status.sleep;
+        if (sleep != null) {
+            updateState(CHANNEL_SLEEP, new DecimalType(
+                    sleep.active ? Math.max(1, (int) Math.ceil(sleep.remainingS / 60.0)) : 0));
+        }
         AmbianceHealth health = status.health;
         if (health != null) {
             updateState(CHANNEL_HEALTH_OK, OnOffType.from(health.ok));
@@ -172,6 +185,37 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
                     : (health.issues != null && !health.issues.isEmpty() ? String.join("; ", health.issues)
                             : "probleem");
             updateState(CHANNEL_HEALTH, new StringType(summary));
+        }
+    }
+
+    private void pollSystem() {
+        try {
+            ContentResponse response = httpClient.newRequest(baseUrl + "/api/system")
+                    .timeout(REQUEST_TIMEOUT, TimeUnit.MILLISECONDS).send();
+            if (response.getStatus() != HttpStatus.OK_200) {
+                return; // pre-system firmware — diagnostics stay undefined
+            }
+            AmbianceSystemStats stats = gson.fromJson(response.getContentAsString(), AmbianceSystemStats.class);
+            if (stats == null) {
+                return;
+            }
+            updateState(CHANNEL_CPU, new DecimalType(stats.cpuPct));
+            AmbianceSystemStats.Usage mem = stats.mem;
+            if (mem != null) {
+                updateState(CHANNEL_MEMORY, new DecimalType(mem.pct));
+            }
+            AmbianceSystemStats.Usage disk = stats.disk;
+            if (disk != null) {
+                updateState(CHANNEL_DISK, new DecimalType(disk.pct));
+            }
+            Double temp = stats.tempC;
+            if (temp != null) {
+                updateState(CHANNEL_TEMPERATURE, new QuantityType<>(temp, SIUnits.CELSIUS));
+            }
+        } catch (InterruptedException | TimeoutException | ExecutionException e) {
+            logger.debug("Ambiance system stats poll failed: {}", e.getMessage());
+        } catch (Exception e) {
+            logger.warn("Unexpected error polling Ambiance system stats: {}", e.getMessage());
         }
     }
 
@@ -220,6 +264,14 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
             case CHANNEL_SOURCE:
                 if (command instanceof StringType) {
                     send(HttpMethod.POST, "/api/source", Map.of("name", command.toString()));
+                }
+                break;
+            case CHANNEL_SLEEP:
+                // minutes until the active source is silenced; 0 cancels the timer
+                if (command instanceof DecimalType decimal) {
+                    send(HttpMethod.POST, "/api/sleep", Map.of("minutes", Math.max(0, decimal.intValue())));
+                } else if (command instanceof QuantityType<?> quantity) {
+                    send(HttpMethod.POST, "/api/sleep", Map.of("minutes", Math.max(0, quantity.intValue())));
                 }
                 break;
             case CHANNEL_MASTER_VOLUME:
@@ -292,6 +344,11 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
         if (job != null) {
             job.cancel(true);
             refreshJob = null;
+        }
+        ScheduledFuture<?> sysJob = systemJob;
+        if (sysJob != null) {
+            sysJob.cancel(true);
+            systemJob = null;
         }
     }
 

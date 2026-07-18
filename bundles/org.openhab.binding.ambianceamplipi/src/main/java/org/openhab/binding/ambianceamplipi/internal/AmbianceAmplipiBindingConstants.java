@@ -27,6 +27,7 @@ public class AmbianceAmplipiBindingConstants {
 
     public static final ThingTypeUID THING_TYPE_CONTROLLER = new ThingTypeUID(BINDING_ID, "controller");
     public static final ThingTypeUID THING_TYPE_ZONE = new ThingTypeUID(BINDING_ID, "zone");
+    public static final ThingTypeUID THING_TYPE_GROUP = new ThingTypeUID(BINDING_ID, "group");
 
     // controller channels
     public static final String CHANNEL_STATION = "station";
@@ -42,14 +43,21 @@ public class AmbianceAmplipiBindingConstants {
     public static final String CHANNEL_HEALTH = "health";
     public static final String CHANNEL_HEALTH_OK = "healthOk";
     public static final String CHANNEL_SOURCE = "source";
+    public static final String CHANNEL_SLEEP = "sleepTimer";
+    public static final String CHANNEL_CPU = "cpuPercent";
+    public static final String CHANNEL_MEMORY = "memoryPercent";
+    public static final String CHANNEL_DISK = "diskPercent";
+    public static final String CHANNEL_TEMPERATURE = "temperature";
 
-    // zone channels
+    // zone + group channels
     public static final String CHANNEL_POWER = "power";
     public static final String CHANNEL_VOLUME = "volume";
     public static final String CHANNEL_MUTE = "mute";
+    public static final String CHANNEL_NAME = "name";
 
     // config parameters
     public static final String CFG_HOSTNAME = "hostname";
     public static final String CFG_PORT = "port";
     public static final String CFG_ID = "id";
+    public static final String CFG_NAME = "name";
 }

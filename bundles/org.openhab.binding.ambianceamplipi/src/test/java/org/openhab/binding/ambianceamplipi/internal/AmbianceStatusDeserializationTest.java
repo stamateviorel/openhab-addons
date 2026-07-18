@@ -18,6 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceStatus;
@@ -74,6 +76,38 @@ class AmbianceStatusDeserializationTest {
         assertNull(st.health);
         assertNull(st.source); // pre-source firmware -> handler stays radio-only
         assertNull(st.spotify);
+    }
+
+    @Test
+    void deserializesGroupsAndSleep() {
+        String json = "{\"zones\":[],\"radio\":{\"playing\":false},\"master_vol\":0,\"master_mute\":false,"
+                + "\"siren\":false,\"groups\":[{\"name\":\"Boven\",\"zones\":[0,1],\"vol\":64,\"mute\":false,"
+                + "\"power\":true}],\"sleep\":{\"active\":true,\"remaining_s\":90}}";
+
+        AmbianceStatus st = gson.fromJson(json, AmbianceStatus.class);
+
+        assertNotNull(st);
+        assertEquals(1, st.groups.size());
+        assertEquals("Boven", st.groups.get(0).name);
+        assertEquals(List.of(0, 1), st.groups.get(0).zones);
+        assertEquals(64, st.groups.get(0).vol);
+        assertTrue(st.groups.get(0).power);
+        assertTrue(st.sleep.active);
+        assertEquals(90, st.sleep.remainingS); // @SerializedName("remaining_s")
+    }
+
+    @Test
+    void deserializesSystemStats() {
+        String json = "{\"hostname\":\"amplipi\",\"cpu_pct\":7,\"temp_c\":52.1,"
+                + "\"mem\":{\"total_mb\":966,\"used_mb\":171,\"pct\":18},\"disk\":{\"pct\":74}}";
+
+        var stats = gson.fromJson(json, org.openhab.binding.ambianceamplipi.internal.model.AmbianceSystemStats.class);
+
+        assertNotNull(stats);
+        assertEquals(7, stats.cpuPct);
+        assertEquals(52.1, stats.tempC);
+        assertEquals(18, stats.mem.pct);
+        assertEquals(74, stats.disk.pct);
     }
 
     @Test

@@ -8,14 +8,15 @@ The controller exposes a small REST API; this binding polls it, publishes the st
 
 | Thing        | Type   | Description                                                                 |
 |--------------|--------|-----------------------------------------------------------------------------|
-| `controller` | Bridge | An Ambiance AmpliPi controller: radio source, announcements, siren, master volume/mute, and the audio sink. |
-| `zone`       | Thing  | One amplified output zone (power, volume, mute). A child of a `controller`.  |
+| `controller` | Bridge | An Ambiance AmpliPi controller: playback sources (radio/Spotify), announcements, siren, sleep timer, master volume/mute, host diagnostics, and the audio sink. |
+| `zone`       | Thing  | One amplified output zone (power, volume, mute, name). A child of a `controller`. |
+| `group`      | Thing  | A controller-defined zone group controlled as one (power, volume, mute). Keyed by the group's name. |
 
 ## Discovery
 
 If the controller host advertises the `_ambianceamplipi._tcp` mDNS service (install `packaging/avahi/ambiance-amplipi.service` from the [ambiance-amplipi](https://github.com/stamateviorel/ambiance-amplipi) repo into `/etc/avahi/services/`), the `controller` bridge is discovered automatically and appears in the Inbox with its hostname and port. Otherwise add the `controller` bridge manually with its hostname or IP.
 
-Once the bridge is online, its **zones are discovered automatically** — they appear in the Inbox labeled with the names configured on the controller (`zones.conf` / the web UI's zone rename), so nothing has to be written by hand. Renaming a zone on the controller re-publishes the discovery result with the new label.
+Once the bridge is online, its **zones and zone groups are discovered automatically** — they appear in the Inbox labeled with the names configured on the controller (`zones.conf` / `groups.conf` / the web UI), so nothing has to be written by hand. Renaming a zone on the controller re-publishes its discovery result with the new label; a renamed *group* appears as a new discovery result (groups are keyed by name) and the old group thing goes offline as GONE.
 
 ## Thing Configuration
 
@@ -53,6 +54,11 @@ Once the bridge is online, its **zones are discovered automatically** — they a
 | `announce`     | String                 | RW | URL of audio to play as a public-address announcement.                      |
 | `healthOk`     | Switch                 | R  | `ON` while the audio subsystem (radio + preamp) is healthy.                 |
 | `health`       | String                 | R  | `ok`, or a human-readable summary of what the controller reported wrong.    |
+| `sleepTimer`   | Number                 | RW | Minutes until the active source is silenced (`0` = no timer). Command minutes to arm; `0` cancels. |
+| `cpuPercent`   | Number                 | R  | Controller host CPU usage (advanced; polled every 60 s).                    |
+| `memoryPercent`| Number                 | R  | Controller host memory usage (advanced).                                    |
+| `diskPercent`  | Number                 | R  | Controller host disk usage (advanced).                                      |
+| `temperature`  | Number:Temperature     | R  | Controller host CPU temperature (advanced).                                 |
 
 ### `zone`
 
@@ -61,6 +67,15 @@ Once the bridge is online, its **zones are discovered automatically** — they a
 | `power`  | Switch | RW | Zone power (output on/off).  |
 | `volume` | Dimmer | RW | Zone volume (0–100 %).       |
 | `mute`   | Switch | RW | Zone mute.                   |
+| `name`   | String | RW | The zone's display name; commanding a new one renames it on the controller (persisted). |
+
+### `group`
+
+| Channel  | Type   | RW | Description                                        |
+|----------|--------|----|-----------------------------------------------------|
+| `power`  | Switch | RW | All member zones on/off (`ON` when every member is on). |
+| `volume` | Dimmer | RW | Sets every member; state is the members' average.   |
+| `mute`   | Switch | RW | Mutes every member (`ON` when every member is muted). |
 
 ## Audio Sink
 

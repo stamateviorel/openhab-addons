@@ -14,6 +14,8 @@ package org.openhab.binding.ambianceamplipi.internal;
 
 import static org.openhab.binding.ambianceamplipi.internal.AmbianceAmplipiBindingConstants.*;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -26,11 +28,10 @@ import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.util.StringContentProvider;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
+import org.openhab.binding.ambianceamplipi.internal.model.AmbianceGroup;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceStatus;
-import org.openhab.binding.ambianceamplipi.internal.model.AmbianceZone;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
-import org.openhab.core.library.types.StringType;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
@@ -47,40 +48,41 @@ import org.slf4j.LoggerFactory;
 import com.google.gson.Gson;
 
 /**
- * Handler for a single Ambiance AmpliPi zone: reflects the bridge's status pushes and sends
- * per-zone power/volume/mute commands via {@code PATCH /api/zones/{id}}.
+ * Handler for a zone group: reflects the bridge's status pushes (average volume, all-mute,
+ * all-power over the member zones) and fans commands out via {@code PATCH /api/groups/{name}}.
+ * Groups are keyed by NAME — deleting or renaming the group on the controller marks the
+ * thing GONE (a renamed group is re-discovered under its new name).
  *
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-public class AmbianceZoneHandler extends BaseThingHandler implements AmbianceStatusChangeListener {
+public class AmbianceGroupHandler extends BaseThingHandler implements AmbianceStatusChangeListener {
 
     private static final int REQUEST_TIMEOUT = 5000;
 
-    private final Logger logger = LoggerFactory.getLogger(AmbianceZoneHandler.class);
+    private final Logger logger = LoggerFactory.getLogger(AmbianceGroupHandler.class);
     private final HttpClient httpClient;
     private final Gson gson = new Gson();
 
-    private int zoneId;
+    private String groupName = "";
     private String baseUrl = "";
 
-    public AmbianceZoneHandler(Thing thing, HttpClient httpClient) {
+    public AmbianceGroupHandler(Thing thing, HttpClient httpClient) {
         super(thing);
         this.httpClient = httpClient;
     }
 
     @Override
     public void initialize() {
-        zoneId = getConfigAs(AmbianceZoneConfiguration.class).id;
+        Object name = getConfig().get(CFG_NAME);
+        groupName = name != null ? name.toString() : "";
+        if (groupName.isBlank()) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Group name not set");
+            return;
+        }
         attachToBridge();
     }
 
-    /**
-     * (Re-)attach to the CURRENT bridge handler instance. Called from initialize() and again from
-     * bridgeStatusChanged(): a bridge config edit recreates the bridge handler without
-     * re-initializing child things, which would otherwise leave this zone registered on the
-     * disposed instance (stale baseUrl, no more status pushes).
-     */
     private void attachToBridge() {
         Bridge bridge = getBridge();
         ThingHandler bridgeHandler = bridge != null ? bridge.getHandler() : null;
@@ -96,7 +98,7 @@ public class AmbianceZoneHandler extends BaseThingHandler implements AmbianceSta
     @Override
     public void bridgeStatusChanged(ThingStatusInfo bridgeStatusInfo) {
         if (bridgeStatusInfo.getStatus() == ThingStatus.ONLINE) {
-            attachToBridge();
+            attachToBridge(); // re-attach: a bridge config edit recreates the bridge handler
         } else {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_OFFLINE);
         }
@@ -104,20 +106,22 @@ public class AmbianceZoneHandler extends BaseThingHandler implements AmbianceSta
 
     @Override
     public void receive(AmbianceStatus status) {
-        if (status.zones == null) {
-            return;
+        if (status.groups == null) {
+            return; // pre-groups firmware
         }
-        for (AmbianceZone z : status.zones) {
-            if (z != null && z.id == zoneId) {
-                updateState(CHANNEL_POWER, OnOffType.from(z.power));
-                updateState(CHANNEL_VOLUME, new PercentType(Math.max(0, Math.min(100, z.vol))));
-                updateState(CHANNEL_MUTE, OnOffType.from(z.mute));
-                if (z.name != null) {
-                    updateState(CHANNEL_NAME, new StringType(z.name));
+        for (AmbianceGroup g : status.groups) {
+            if (g != null && groupName.equals(g.name)) {
+                if (getThing().getStatus() != ThingStatus.ONLINE) {
+                    updateStatus(ThingStatus.ONLINE);
                 }
+                updateState(CHANNEL_POWER, OnOffType.from(g.power));
+                updateState(CHANNEL_VOLUME, new PercentType(Math.max(0, Math.min(100, g.vol))));
+                updateState(CHANNEL_MUTE, OnOffType.from(g.mute));
                 return;
             }
         }
+        // the group was deleted or renamed on the controller (a rename is re-discovered)
+        updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.GONE, "Group not present on the controller");
     }
 
     @Override
@@ -143,16 +147,12 @@ public class AmbianceZoneHandler extends BaseThingHandler implements AmbianceSta
                     body = Map.of("mute", command == OnOffType.ON);
                 }
                 break;
-            case CHANNEL_NAME:
-                if (command instanceof StringType && !command.toString().isBlank()) {
-                    body = Map.of("name", command.toString()); // rename, persisted to zones.conf
-                }
-                break;
             default:
                 return;
         }
         if (body != null) {
-            patch("/api/zones/" + zoneId, body);
+            String path = "/api/groups/" + URLEncoder.encode(groupName, StandardCharsets.UTF_8).replace("+", "%20");
+            patch(path, body);
         }
     }
 
@@ -162,10 +162,10 @@ public class AmbianceZoneHandler extends BaseThingHandler implements AmbianceSta
                     .content(new StringContentProvider(gson.toJson(body)), "application/json")
                     .timeout(REQUEST_TIMEOUT, TimeUnit.MILLISECONDS).send();
             if (resp.getStatus() != HttpStatus.OK_200) {
-                logger.warn("Ambiance zone PATCH {} -> HTTP {}", path, resp.getStatus());
+                logger.warn("Ambiance group PATCH {} -> HTTP {}", path, resp.getStatus());
             }
         } catch (InterruptedException | TimeoutException | ExecutionException e) {
-            logger.warn("Ambiance zone PATCH failed: {}", e.getMessage());
+            logger.warn("Ambiance group PATCH failed: {}", e.getMessage());
         }
     }
 

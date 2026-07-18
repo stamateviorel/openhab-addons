@@ -42,7 +42,7 @@ import org.osgi.service.component.annotations.Reference;
 @Component(configurationPid = "binding.ambianceamplipi", service = ThingHandlerFactory.class)
 public class AmbianceAmplipiHandlerFactory extends BaseThingHandlerFactory {
 
-    private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Set.of(THING_TYPE_CONTROLLER, THING_TYPE_ZONE);
+    private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Set.of(THING_TYPE_CONTROLLER, THING_TYPE_ZONE, THING_TYPE_GROUP);
 
     private final HttpClient httpClient;
     private final AudioHTTPServer audioHTTPServer;
@@ -69,6 +69,9 @@ public class AmbianceAmplipiHandlerFactory extends BaseThingHandlerFactory {
         }
         if (THING_TYPE_ZONE.equals(thingTypeUID)) {
             return new AmbianceZoneHandler(thing, httpClient);
+        }
+        if (THING_TYPE_GROUP.equals(thingTypeUID)) {
+            return new AmbianceGroupHandler(thing, httpClient);
         }
         return null;
     }

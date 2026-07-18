@@ -12,26 +12,25 @@
  */
 package org.openhab.binding.ambianceamplipi.internal.model;
 
-import java.util.List;
+import org.eclipse.jdt.annotation.Nullable;
 
 import com.google.gson.annotations.SerializedName;
 
 /**
- * DTO for the Ambiance AmpliPi {@code GET /api/status} response.
+ * {@code GET /api/system} — controller host diagnostics (polled on a slower schedule than
+ * the status, since the controller samples the CPU on each call).
  *
  * @author Stamate Viorel - Initial contribution
  */
-public class AmbianceStatus {
-    public List<AmbianceZone> zones;
-    public AmbianceRadio radio;
-    @SerializedName("master_vol")
-    public int masterVol;
-    @SerializedName("master_mute")
-    public boolean masterMute;
-    public boolean siren;
-    public AmbianceHealth health;
-    public AmbianceSource source; // null on pre-source firmware
-    public AmbianceSpotify spotify;
-    public List<AmbianceGroup> groups;
-    public AmbianceSleep sleep;
+public class AmbianceSystemStats {
+    @SerializedName("cpu_pct")
+    public int cpuPct;
+    @SerializedName("temp_c")
+    public @Nullable Double tempC; // null when the host has no thermal sensor
+    public @Nullable Usage mem;
+    public @Nullable Usage disk;
+
+    public static class Usage {
+        public int pct;
+    }
 }

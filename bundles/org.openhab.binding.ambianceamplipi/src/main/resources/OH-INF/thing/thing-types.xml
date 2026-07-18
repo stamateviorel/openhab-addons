@@ -24,6 +24,11 @@
 			<channel id="announce" typeId="announce"/>
 			<channel id="healthOk" typeId="healthOk"/>
 			<channel id="health" typeId="health"/>
+			<channel id="sleepTimer" typeId="sleepTimer"/>
+			<channel id="cpuPercent" typeId="cpuPercent"/>
+			<channel id="memoryPercent" typeId="memoryPercent"/>
+			<channel id="diskPercent" typeId="diskPercent"/>
+			<channel id="temperature" typeId="temperature"/>
 		</channels>
 
 		<config-description>
@@ -58,12 +63,38 @@
 			<channel id="power" typeId="system.power"/>
 			<channel id="volume" typeId="system.volume"/>
 			<channel id="mute" typeId="system.mute"/>
+			<channel id="name" typeId="zoneName"/>
 		</channels>
 
 		<config-description>
 			<parameter name="id" type="integer" required="true">
 				<label>Zone ID</label>
 				<description>The ID of the zone (0-based).</description>
+			</parameter>
+		</config-description>
+	</thing-type>
+
+	<thing-type id="group">
+		<supported-bridge-type-refs>
+			<bridge-type-ref id="controller"/>
+		</supported-bridge-type-refs>
+
+		<label>Ambiance AmpliPi Zone Group</label>
+		<description>A group of zones controlled as one (defined on the controller; volume shows the members' average,
+			mute/power reflect all members).</description>
+		<semantic-equipment-tag>Speaker</semantic-equipment-tag>
+
+		<channels>
+			<channel id="power" typeId="system.power"/>
+			<channel id="volume" typeId="system.volume"/>
+			<channel id="mute" typeId="system.mute"/>
+		</channels>
+
+		<config-description>
+			<parameter name="name" type="text" required="true">
+				<label>Group Name</label>
+				<description>The group's name as configured on the controller (groups.conf / web UI). Renaming the group
+					on the controller re-discovers it under the new name.</description>
 			</parameter>
 		</config-description>
 	</thing-type>
@@ -136,6 +167,53 @@
 		<tags>
 			<tag>Control</tag>
 		</tags>
+	</channel-type>
+
+	<channel-type id="zoneName">
+		<item-type>String</item-type>
+		<label>Zone Name</label>
+		<description>The zone's display name. Commanding a new name renames the zone on the controller (persisted to
+			zones.conf).</description>
+	</channel-type>
+
+	<channel-type id="sleepTimer">
+		<item-type>Number</item-type>
+		<label>Sleep Timer</label>
+		<description>Minutes until the active source is silenced (0 = no timer). Command a number of minutes to arm it;
+			0 cancels.</description>
+		<state pattern="%d min"/>
+	</channel-type>
+
+	<channel-type id="cpuPercent" advanced="true">
+		<item-type>Number</item-type>
+		<label>CPU Usage</label>
+		<description>Controller host CPU usage.</description>
+		<state readOnly="true" pattern="%d %%"/>
+	</channel-type>
+
+	<channel-type id="memoryPercent" advanced="true">
+		<item-type>Number</item-type>
+		<label>Memory Usage</label>
+		<description>Controller host memory usage.</description>
+		<state readOnly="true" pattern="%d %%"/>
+	</channel-type>
+
+	<channel-type id="diskPercent" advanced="true">
+		<item-type>Number</item-type>
+		<label>Disk Usage</label>
+		<description>Controller host disk usage.</description>
+		<state readOnly="true" pattern="%d %%"/>
+	</channel-type>
+
+	<channel-type id="temperature" advanced="true">
+		<item-type>Number:Temperature</item-type>
+		<label>CPU Temperature</label>
+		<description>Controller host CPU temperature.</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Temperature</tag>
+		</tags>
+		<state readOnly="true" pattern="%.1f %unit%"/>
 	</channel-type>
 
 	<channel-type id="healthOk">

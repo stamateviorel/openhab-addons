@@ -21,6 +21,7 @@ import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.ambianceamplipi.internal.AmbianceAmplipiBindingConstants;
 import org.openhab.binding.ambianceamplipi.internal.AmbianceAmplipiHandler;
 import org.openhab.binding.ambianceamplipi.internal.AmbianceStatusChangeListener;
+import org.openhab.binding.ambianceamplipi.internal.model.AmbianceGroup;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceStatus;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceZone;
 import org.openhab.core.config.discovery.AbstractThingHandlerDiscoveryService;
@@ -31,10 +32,11 @@ import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.ServiceScope;
 
 /**
- * Discovers the controller's zones — labeled with the names configured on the controller
- * (zones.conf / the web UI), so adopters get ready-made zone things in the Inbox instead of
- * hand-writing them. Results are produced from the bridge's status fan-out; already-existing
- * zone things (e.g. file-defined) are auto-ignored by the framework.
+ * Discovers the controller's zones AND zone groups — labeled with the names configured on
+ * the controller (zones.conf / groups.conf / the web UI), so adopters get ready-made things
+ * in the Inbox instead of hand-writing them. Results are produced from the bridge's status
+ * fan-out; already-existing things (e.g. file-defined) are auto-ignored by the framework.
+ * Groups are keyed by name: a rename shows up as a new discovery result.
  *
  * @author Stamate Viorel - Initial contribution
  */
@@ -50,7 +52,8 @@ public class AmbianceZoneDiscoveryService extends AbstractThingHandlerDiscoveryS
     private @Nullable String lastKey; // zone ids+names of the last publish — republish only on change
 
     public AmbianceZoneDiscoveryService() {
-        super(AmbianceAmplipiHandler.class, Set.of(AmbianceAmplipiBindingConstants.THING_TYPE_ZONE), SEARCH_TIME_S);
+        super(AmbianceAmplipiHandler.class, Set.of(AmbianceAmplipiBindingConstants.THING_TYPE_ZONE,
+                AmbianceAmplipiBindingConstants.THING_TYPE_GROUP), SEARCH_TIME_S);
     }
 
     @Override
@@ -77,13 +80,16 @@ public class AmbianceZoneDiscoveryService extends AbstractThingHandlerDiscoveryS
         if (zones == null || zones.isEmpty()) {
             return;
         }
+        List<AmbianceGroup> groups = status.groups != null ? status.groups : List.of();
         String key = zones.stream().filter(z -> z != null).map(z -> z.id + ":" + z.name)
-                .collect(Collectors.joining("|"));
+                .collect(Collectors.joining("|"))
+                + "//" + groups.stream().filter(g -> g != null && g.name != null).map(g -> g.name)
+                        .collect(Collectors.joining("|"));
         if (key.equals(lastKey)) {
             return; // nothing changed since the last publish (a rename re-publishes with the new label)
         }
         lastKey = key;
-        logger.debug("publishing {} zone discovery results ({})", zones.size(), key);
+        logger.debug("publishing {} zone + {} group discovery results ({})", zones.size(), groups.size(), key);
         ThingUID bridgeUID = thingHandler.getThing().getUID();
         for (AmbianceZone zone : zones) {
             if (zone == null) {
@@ -99,5 +105,25 @@ public class AmbianceZoneDiscoveryService extends AbstractThingHandlerDiscoveryS
                     .withRepresentationProperty("zoneKey") // unique even with several controllers
                     .build());
         }
+        for (AmbianceGroup group : groups) {
+            if (group == null || group.name == null || group.name.isBlank()) {
+                continue;
+            }
+            thingDiscovered(DiscoveryResultBuilder
+                    .create(new ThingUID(AmbianceAmplipiBindingConstants.THING_TYPE_GROUP, bridgeUID,
+                            slug(group.name)))
+                    .withBridge(bridgeUID) //
+                    .withLabel(group.name) //
+                    .withProperty(AmbianceAmplipiBindingConstants.CFG_NAME, group.name) //
+                    .withProperty("groupKey", bridgeUID.getId() + "-g-" + group.name) //
+                    .withRepresentationProperty("groupKey") //
+                    .build());
+        }
+    }
+
+    /** Group names become thing-UID segments — keep only [a-z0-9-]. */
+    private static String slug(String name) {
+        String s = name.toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("(^-+|-+$)", "");
+        return s.isEmpty() ? "group" : s;
     }
 }
