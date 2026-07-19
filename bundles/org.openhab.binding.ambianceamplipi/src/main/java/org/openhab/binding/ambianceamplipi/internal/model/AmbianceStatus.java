@@ -34,4 +34,5 @@ public class AmbianceStatus {
     public AmbianceSpotify spotify;
     public List<AmbianceGroup> groups;
     public AmbianceSleep sleep;
+    public AmbianceAnnounce announce; // null on pre-announce-queue firmware
 }

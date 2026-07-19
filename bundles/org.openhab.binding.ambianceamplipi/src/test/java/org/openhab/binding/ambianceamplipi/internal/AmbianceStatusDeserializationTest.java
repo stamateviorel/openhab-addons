@@ -76,13 +76,15 @@ class AmbianceStatusDeserializationTest {
         assertNull(st.health);
         assertNull(st.source); // pre-source firmware -> handler stays radio-only
         assertNull(st.spotify);
+        assertNull(st.announce); // pre-announce-queue firmware -> those channels stay untouched
     }
 
     @Test
     void deserializesGroupsAndSleep() {
         String json = "{\"zones\":[],\"radio\":{\"playing\":false},\"master_vol\":0,\"master_mute\":false,"
                 + "\"siren\":false,\"groups\":[{\"name\":\"Boven\",\"zones\":[0,1],\"vol\":64,\"mute\":false,"
-                + "\"power\":true}],\"sleep\":{\"active\":true,\"remaining_s\":90}}";
+                + "\"power\":true}],\"sleep\":{\"active\":true,\"remaining_s\":90},"
+                + "\"announce\":{\"queued\":3,\"playing\":true,\"vol\":60}}";
 
         AmbianceStatus st = gson.fromJson(json, AmbianceStatus.class);
 
@@ -94,6 +96,10 @@ class AmbianceStatusDeserializationTest {
         assertTrue(st.groups.get(0).power);
         assertTrue(st.sleep.active);
         assertEquals(90, st.sleep.remainingS); // @SerializedName("remaining_s")
+        assertNotNull(st.announce);
+        assertEquals(3, st.announce.queued);
+        assertTrue(st.announce.playing);
+        assertEquals(Integer.valueOf(60), st.announce.vol);
     }
 
     @Test

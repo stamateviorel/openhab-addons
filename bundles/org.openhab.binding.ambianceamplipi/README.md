@@ -52,6 +52,9 @@ Once the bridge is online, its **zones and zone groups are discovered automatica
 | `cover`        | Image                  | R  | Album art fetched by the controller from the now-playing metadata.          |
 | `siren`        | Switch                 | RW | Burglar siren: `ON` drives all zones to full and loops the alarm; `OFF` restores. |
 | `announce`     | String                 | RW | URL of audio to play as a public-address announcement.                      |
+| `announceQueue`| Number                 | R  | Announcements waiting in the controller's queue (the controller serializes a burst itself). |
+| `announceVolume`| Dimmer                | RW | Default announcement loudness (the boost channel), persisted on the controller; applies to any announcement that carries no volume of its own. |
+| `clearAnnouncements`| Switch            | RW | `ON` drops every announcement still queued (the one on air finishes).       |
 | `healthOk`     | Switch                 | R  | `ON` while the audio subsystem (radio + preamp) is healthy.                 |
 | `health`       | String                 | R  | `ok`, or a human-readable summary of what the controller reported wrong.    |
 | `sleepTimer`   | Number                 | RW | Minutes until the active source is silenced (`0` = no timer). Command minutes to arm; `0` cancels. |
@@ -85,7 +88,7 @@ Each `controller` registers an audio sink under its thing UID, so it can be used
 Voice.say("Dinner is ready", "voicerss:enGB", "ambianceamplipi:controller:main")
 ```
 
-or as the default sink in the console: `openhab:audio sink ambianceamplipi:controller:main`. Announcements are ducked over the radio and restored automatically by the controller.
+or as the default sink in the console: `openhab:audio sink ambianceamplipi:controller:main`. Announcements are ducked over the radio and restored automatically by the controller. A burst of announcements is **queued and played one at a time by the controller** (its own bounded FIFO), so overlapping `say(...)` calls never talk over each other — no queueing rule is needed on the openHAB side. The `announceQueue`, `announceVolume` and `clearAnnouncements` channels expose that queue and its default loudness.
 
 ## Full Example
 

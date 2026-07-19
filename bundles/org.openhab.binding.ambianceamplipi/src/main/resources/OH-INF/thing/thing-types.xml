@@ -22,6 +22,9 @@
 			<channel id="cover" typeId="cover"/>
 			<channel id="siren" typeId="siren"/>
 			<channel id="announce" typeId="announce"/>
+			<channel id="announceQueue" typeId="announceQueue"/>
+			<channel id="announceVolume" typeId="announceVolume"/>
+			<channel id="clearAnnouncements" typeId="clearAnnouncements"/>
 			<channel id="healthOk" typeId="healthOk"/>
 			<channel id="health" typeId="health"/>
 			<channel id="sleepTimer" typeId="sleepTimer"/>
@@ -164,6 +167,37 @@
 		<item-type>String</item-type>
 		<label>Announce</label>
 		<description>URL of audio to play as a public-address announcement.</description>
+		<tags>
+			<tag>Control</tag>
+		</tags>
+	</channel-type>
+
+	<channel-type id="announceQueue">
+		<item-type>Number</item-type>
+		<label>Announcement Queue</label>
+		<description>Number of announcements waiting in the controller's queue (not yet playing). The controller
+			serializes a burst on its own; this is how deep the backlog is.</description>
+		<tags>
+			<tag>Status</tag>
+		</tags>
+		<state readOnly="true" pattern="%d"/>
+	</channel-type>
+
+	<channel-type id="announceVolume">
+		<item-type>Dimmer</item-type>
+		<label>Announcement Volume</label>
+		<description>Default loudness of public-address announcements (the controller's boost channel), persisted
+			across reboots. Applies to every announcement that does not carry its own volume.</description>
+		<tags>
+			<tag>Control</tag>
+			<tag>SoundVolume</tag>
+		</tags>
+	</channel-type>
+
+	<channel-type id="clearAnnouncements">
+		<item-type>Switch</item-type>
+		<label>Clear Announcements</label>
+		<description>ON drops every announcement still waiting in the queue (the one on air finishes).</description>
 		<tags>
 			<tag>Control</tag>
 		</tags>

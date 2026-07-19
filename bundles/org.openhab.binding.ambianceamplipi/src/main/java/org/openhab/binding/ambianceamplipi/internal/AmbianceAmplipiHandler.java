@@ -35,6 +35,7 @@ import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.openhab.binding.ambianceamplipi.internal.audio.PAAudioSink;
 import org.openhab.binding.ambianceamplipi.internal.discovery.AmbianceZoneDiscoveryService;
+import org.openhab.binding.ambianceamplipi.internal.model.AmbianceAnnounce;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceHealth;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceRadio;
 import org.openhab.binding.ambianceamplipi.internal.model.AmbianceSleep;
@@ -178,6 +179,14 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
             updateState(CHANNEL_SLEEP, new DecimalType(
                     sleep.active ? Math.max(1, (int) Math.ceil(sleep.remainingS / 60.0)) : 0));
         }
+        AmbianceAnnounce announce = status.announce;
+        if (announce != null) {
+            updateState(CHANNEL_ANNOUNCE_QUEUE, new DecimalType(announce.queued));
+            Integer announceVol = announce.vol;
+            if (announceVol != null) { // null = box leaves the boost level untouched
+                updateState(CHANNEL_ANNOUNCE_VOLUME, new PercentType(Math.max(0, Math.min(100, announceVol))));
+            }
+        }
         AmbianceHealth health = status.health;
         if (health != null) {
             updateState(CHANNEL_HEALTH_OK, OnOffType.from(health.ok));
@@ -295,6 +304,17 @@ public class AmbianceAmplipiHandler extends BaseBridgeHandler {
                     if (!url.isBlank()) {
                         playPA(url, null);
                     }
+                }
+                break;
+            case CHANNEL_ANNOUNCE_VOLUME:
+                // default boost level for announcements that carry no explicit volume; persisted
+                if (command instanceof PercentType announceVol) {
+                    send(HttpMethod.PATCH, "/api/announce", Map.of("vol", announceVol.intValue()));
+                }
+                break;
+            case CHANNEL_CLEAR_ANNOUNCEMENTS:
+                if (command == OnOffType.ON) {
+                    send(HttpMethod.DELETE, "/api/announce", null); // drop everything still queued
                 }
                 break;
             default:

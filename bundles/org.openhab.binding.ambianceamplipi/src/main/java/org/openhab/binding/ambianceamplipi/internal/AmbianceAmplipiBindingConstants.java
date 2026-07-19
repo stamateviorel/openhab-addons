@@ -40,6 +40,9 @@ public class AmbianceAmplipiBindingConstants {
     public static final String CHANNEL_COVER = "cover";
     public static final String CHANNEL_SIREN = "siren";
     public static final String CHANNEL_ANNOUNCE = "announce";
+    public static final String CHANNEL_ANNOUNCE_QUEUE = "announceQueue";
+    public static final String CHANNEL_ANNOUNCE_VOLUME = "announceVolume";
+    public static final String CHANNEL_CLEAR_ANNOUNCEMENTS = "clearAnnouncements";
     public static final String CHANNEL_HEALTH = "health";
     public static final String CHANNEL_HEALTH_OK = "healthOk";
     public static final String CHANNEL_SOURCE = "source";
