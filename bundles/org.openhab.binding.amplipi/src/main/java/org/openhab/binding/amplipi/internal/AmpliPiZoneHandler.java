@@ -64,8 +64,6 @@ public class AmpliPiZoneHandler extends BaseThingHandler implements AmpliPiStatu
 
     private @Nullable Zone zoneState;
 
-    // vol_delta_f only exists from AmpliPi 0.4.6, four releases after vol_f, so the presence of
-    // vol_f says nothing about it.
     private static final Pattern VERSION_PATTERN = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)");
     private static final int VOL_DELTA_F_MAJOR = 0;
     private static final int VOL_DELTA_F_MINOR = 4;
@@ -139,16 +137,12 @@ public class AmpliPiZoneHandler extends BaseThingHandler implements AmpliPiStatu
                     }
                 } else if (command instanceof IncreaseDecreaseType) {
                     if (supportsVolumeDelta) {
-                        // Send the step itself and let AmpliPi apply it to its own current volume.
-                        // The cached zone state can be stale when the volume was changed through the
-                        // AmpliPi UI or another client since the last poll, and this also leaves the
-                        // bounds and overflow handling to the device. Gated on the reported version,
-                        // not on vol_f: vol_delta_f only arrived in 0.4.6, four releases later.
+                        // Sending the step lets the device apply it to its own volume, which the
+                        // cached state may no longer match after a change made outside the binding.
                         double step = volumeDelta / 100.0;
                         update.setVolDeltaF(IncreaseDecreaseType.INCREASE.equals(command) ? step : -step);
                     } else if (supportsVolumeFraction && state != null && state.getVolF() != null) {
-                        // Knows vol_f but not vol_delta_f: adjust the fraction against the cached
-                        // state, which is still better than falling all the way back to dB.
+                        // Knows vol_f but not vol_delta_f, so the step is applied here instead.
                         double step = volumeDelta / 100.0;
                         double current = state.getVolF();
                         double newVolF = IncreaseDecreaseType.INCREASE.equals(command) ? Math.min(current + step, 1.0)
@@ -156,8 +150,7 @@ public class AmpliPiZoneHandler extends BaseThingHandler implements AmpliPiStatu
                         state.setVolF(newVolF);
                         update.setVolF(newVolF);
                     } else if (state != null && state.getVol() != null) {
-                        // Older firmware: keep adjusting the dB value against the cached state. The
-                        // configured step is a percentage, so scale it over the dB range.
+                        // The configured step is a percentage, so scale it over the dB range.
                         int stepDb = Math.max(1, (int) Math.round(
                                 volumeDelta / 100.0 * (AmpliPiUtils.MAX_VOLUME_DB - AmpliPiUtils.MIN_VOLUME_DB)));
                         int current = state.getVol();
@@ -206,9 +199,7 @@ public class AmpliPiZoneHandler extends BaseThingHandler implements AmpliPiStatu
      * Whether this AmpliPi understands {@code vol_delta_f}, which it only does from 0.4.6 on.
      *
      * It cannot be probed from the zone status: {@code vol_delta_f} is write-only, and the status
-     * is identical in 0.4.5 and 0.4.6, so the reported software version is the only signal. Anything
-     * unparseable is treated as too old, which costs nothing -- the caller then adjusts the dB value
-     * itself, exactly as the binding did before.
+     * is identical in 0.4.5 and 0.4.6, so the reported software version is the only signal.
      */
     private static boolean supportsVolumeDelta(Status status) {
         Info info = status.getInfo();
@@ -241,8 +232,6 @@ public class AmpliPiZoneHandler extends BaseThingHandler implements AmpliPiStatu
 
         updateState(AmpliPiBindingConstants.CHANNEL_POWER, OnOffType.from(power));
         updateState(AmpliPiBindingConstants.CHANNEL_MUTE, OnOffType.from(mute));
-        // Prefer the firmware-provided volume fraction; fall back to the dB value
-        // for older firmware that does not report vol_f.
         Double volF = zoneState.getVolF();
         PercentType volume = volF != null ? AmpliPiUtils.volumeFractionToPercentType(volF)
                 : AmpliPiUtils.volumeToPercentType(zoneState.getVol());
