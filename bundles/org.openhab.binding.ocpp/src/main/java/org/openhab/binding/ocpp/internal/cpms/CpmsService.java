@@ -13,7 +13,9 @@
 package org.openhab.binding.ocpp.internal.cpms;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -120,6 +122,52 @@ public class CpmsService {
         String json = storage.get(KEY_TRANSACTIONS);
         CpmsTransaction @Nullable [] arr = json == null ? null : gson.fromJson(json, CpmsTransaction[].class);
         return arr == null ? new ArrayList<>() : new ArrayList<>(List.of(arr));
+    }
+
+    /** The most recent sessions first, up to {@code limit}. */
+    public synchronized List<CpmsTransaction> recentTransactions(int limit) {
+        List<CpmsTransaction> all = transactions();
+        List<CpmsTransaction> recent = new ArrayList<>();
+        for (int i = all.size() - 1; i >= 0 && recent.size() < limit; i--) {
+            recent.add(all.get(i));
+        }
+        return recent;
+    }
+
+    /** kWh charged to a user's cards for sessions that ended within {@code [fromEpoch, toEpoch)}. */
+    public synchronized double energyKwh(String userId, long fromEpoch, long toEpoch) {
+        double wh = 0;
+        for (CpmsTransaction tx : transactions()) {
+            if (userId.equals(tx.userId()) && tx.stopEpoch() >= fromEpoch && tx.stopEpoch() < toEpoch) {
+                wh += tx.energyWh();
+            }
+        }
+        return wh / 1000.0;
+    }
+
+    /** Per-user kWh for the month and the year, given the two window starts and now. */
+    public synchronized List<Usage> usage(long monthStart, long yearStart, long now) {
+        Map<String, double[]> totals = new HashMap<>();
+        for (CpmsTransaction tx : transactions()) {
+            String userId = tx.userId();
+            if (userId == null || tx.stopEpoch() >= now || tx.stopEpoch() < yearStart) {
+                continue;
+            }
+            double[] bucket = totals.computeIfAbsent(userId, k -> new double[2]);
+            bucket[1] += tx.energyWh();
+            if (tx.stopEpoch() >= monthStart) {
+                bucket[0] += tx.energyWh();
+            }
+        }
+        List<Usage> out = new ArrayList<>();
+        for (CpmsUser user : users()) {
+            double[] bucket = totals.getOrDefault(user.id(), new double[2]);
+            out.add(new Usage(user, bucket[0] / 1000.0, bucket[1] / 1000.0));
+        }
+        return out;
+    }
+
+    public record Usage(CpmsUser user, double monthKwh, double yearKwh) {
     }
 
     private record OpenTx(String idTag, String chargePointId, int connectorId, int meterStart, long startEpoch) {

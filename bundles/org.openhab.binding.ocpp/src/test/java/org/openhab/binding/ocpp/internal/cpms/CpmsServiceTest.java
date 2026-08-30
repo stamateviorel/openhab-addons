@@ -95,6 +95,42 @@ class CpmsServiceTest {
         assertNull(cpms.authorize("CARD-A"));
     }
 
+    @Test
+    void usageSumsPerUserForTheMonthAndTheYear() {
+        cpms.putUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
+        cpms.putUser(new CpmsUser("u2", "Anna", true, 0, List.of("CARD-B")));
+        session(1, "CARD-A", 1_500L, 4000);
+        session(2, "CARD-A", 6_000L, 2000);
+        session(3, "CARD-B", 6_000L, 10000);
+
+        List<CpmsService.Usage> usage = cpms.usage(5_000L, 1_000L, 10_000L);
+        CpmsService.Usage geert = usage.stream().filter(u -> "u1".equals(u.user().id())).findFirst().orElseThrow();
+        CpmsService.Usage anna = usage.stream().filter(u -> "u2".equals(u.user().id())).findFirst().orElseThrow();
+
+        assertEquals(2.0, geert.monthKwh());
+        assertEquals(6.0, geert.yearKwh());
+        assertEquals(10.0, anna.monthKwh());
+        assertEquals(10.0, anna.yearKwh());
+    }
+
+    @Test
+    void recentTransactionsReturnsTheNewestFirst() {
+        session(1, "CARD-A", 100L, 1000);
+        session(2, "CARD-A", 200L, 2000);
+        session(3, "CARD-A", 300L, 3000);
+
+        List<CpmsTransaction> recent = cpms.recentTransactions(2);
+
+        assertEquals(2, recent.size());
+        assertEquals(300L, recent.get(0).stopEpoch());
+        assertEquals(200L, recent.get(1).stopEpoch());
+    }
+
+    private void session(int transactionId, String card, long stopEpoch, int energyWh) {
+        cpms.onTransactionStart(transactionId, card, "charger1", 1, 0, stopEpoch - 1);
+        cpms.onTransactionStop(transactionId, energyWh, stopEpoch);
+    }
+
     private static class MemoryStorage implements Storage<String> {
         private final Map<String, String> map = new HashMap<>();
 
