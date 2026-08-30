@@ -493,6 +493,7 @@
 			authorization list. Auto-disarms once the card is read or 60 s pass.</description>
 	</channel-type>
 
+
 	<channel-type id="local-auth-list">
 		<item-type>String</item-type>
 		<label>Local Authorization List</label>

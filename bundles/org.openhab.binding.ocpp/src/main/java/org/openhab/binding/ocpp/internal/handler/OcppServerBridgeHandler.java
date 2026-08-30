@@ -289,6 +289,11 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     @Override
     public void onAuthorize(UUID session, @Nullable String idTag) {
+        CpmsService service = cpms;
+        OcppDiscoveryService discovery = discoveryService;
+        if (idTag != null && service != null && discovery != null && service.userForCard(idTag) == null) {
+            discovery.cardDiscovered(idTag);
+        }
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
             handler.onAuthorized(idTag);

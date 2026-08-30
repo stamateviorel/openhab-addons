@@ -16,6 +16,7 @@ import static org.openhab.binding.ocpp.internal.OcppBindingConstants.*;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -37,7 +38,8 @@ import org.osgi.service.component.annotations.ServiceScope;
 @NonNullByDefault
 public class OcppDiscoveryService extends AbstractThingHandlerDiscoveryService<OcppServerBridgeHandler> {
 
-    private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES = Set.of(THING_TYPE_CHARGEPOINT, THING_TYPE_CONNECTOR);
+    private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES = Set.of(THING_TYPE_CHARGEPOINT, THING_TYPE_CONNECTOR,
+            THING_TYPE_CPMS_USER);
     private static final int DISCOVERY_TIMEOUT_SECONDS = 5;
     private static final Pattern VALID_SEGMENT = Pattern.compile("[A-Za-z0-9_-]+");
 
@@ -75,6 +77,14 @@ public class OcppDiscoveryService extends AbstractThingHandlerDiscoveryService<O
                 .withProperty(CONFIG_CONNECTOR_ID, connectorId)
                 .withProperty(PROPERTY_UNIQUE_ID, uniqueConnectorId(chargePointId, connectorId))
                 .withRepresentationProperty(PROPERTY_UNIQUE_ID).withLabel("OCPP Connector " + connectorId).build());
+    }
+
+    /** A card was presented that no user owns yet — offer it to the inbox to create a user from. */
+    public void cardDiscovered(String idTag) {
+        ThingUID bridgeUID = thingHandler.getThing().getUID();
+        ThingUID thingUID = new ThingUID(THING_TYPE_CPMS_USER, bridgeUID, "card-" + sanitize(idTag));
+        thingDiscovered(DiscoveryResultBuilder.create(thingUID).withBridge(bridgeUID)
+                .withProperty("cards", List.of(idTag)).withLabel("OCPP User — card " + idTag).build());
     }
 
     /**
