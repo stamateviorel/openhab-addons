@@ -111,6 +111,13 @@
 					closed.</description>
 				<advanced>true</advanced>
 			</parameter>
+			<parameter name="discoverCards" type="boolean">
+				<label>Discover New Cards</label>
+				<description>When on, a card that no user owns yet is offered in the inbox to create a user from. Turn it off
+					once
+					your people are set up to stop new inbox entries.</description>
+				<default>true</default>
+			</parameter>
 		</config-description>
 	</bridge-type>
 
