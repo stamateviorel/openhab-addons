@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -33,40 +34,32 @@ import com.google.gson.Gson;
 @NonNullByDefault
 public class CpmsService {
 
-    private static final String KEY_USERS = "users";
     private static final String KEY_TRANSACTIONS = "transactions";
     private static final String OPEN_PREFIX = "open:";
 
     private final Storage<String> storage;
     private final Gson gson = new Gson();
+    private final Map<String, CpmsUser> userRegistry = new ConcurrentHashMap<>();
 
     public CpmsService(Storage<String> storage) {
         this.storage = storage;
     }
 
-    public synchronized List<CpmsUser> users() {
-        String json = storage.get(KEY_USERS);
-        CpmsUser @Nullable [] arr = json == null ? null : gson.fromJson(json, CpmsUser[].class);
-        return arr == null ? new ArrayList<>() : new ArrayList<>(List.of(arr));
+    /** Registered by the CPMS user Things, which are the source of truth for people and their cards. */
+    public void registerUser(CpmsUser user) {
+        userRegistry.put(user.id(), user);
     }
 
-    /** Add a user, or replace the existing one with the same id. */
-    public synchronized void putUser(CpmsUser user) {
-        List<CpmsUser> users = users();
-        users.removeIf(u -> u.id().equals(user.id()));
-        users.add(user);
-        storage.put(KEY_USERS, gson.toJson(users));
+    public void unregisterUser(String id) {
+        userRegistry.remove(id);
     }
 
-    public synchronized void removeUser(String id) {
-        List<CpmsUser> users = users();
-        if (users.removeIf(u -> u.id().equals(id))) {
-            storage.put(KEY_USERS, gson.toJson(users));
-        }
+    public List<CpmsUser> users() {
+        return new ArrayList<>(userRegistry.values());
     }
 
-    public synchronized @Nullable CpmsUser userForCard(String idTag) {
-        for (CpmsUser u : users()) {
+    public @Nullable CpmsUser userForCard(String idTag) {
+        for (CpmsUser u : userRegistry.values()) {
             if (u.cards().contains(idTag)) {
                 return u;
             }
@@ -76,10 +69,10 @@ public class CpmsService {
 
     /**
      * Authorization decision for a card, or {@code null} when the CPMS is not managing authorization
-     * (no users defined yet) so the caller falls back to its own whitelist.
+     * (no users defined) so the caller falls back to its own whitelist.
      */
-    public synchronized @Nullable Boolean authorize(@Nullable String idTag) {
-        if (users().isEmpty()) {
+    public @Nullable Boolean authorize(@Nullable String idTag) {
+        if (userRegistry.isEmpty()) {
             return null;
         }
         if (idTag == null) {

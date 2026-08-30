@@ -314,6 +314,43 @@
 		</config-description>
 	</thing-type>
 
+	<!-- CPMS user: a person and their RFID cards -->
+	<thing-type id="cpms-user">
+		<supported-bridge-type-refs>
+			<bridge-type-ref id="server"/>
+		</supported-bridge-type-refs>
+
+		<label>OCPP User</label>
+		<description>A person and their RFID cards, for CPMS authorization and per-user usage.</description>
+
+		<channels>
+			<channel id="month-energy" typeId="energy">
+				<label>This Month</label>
+			</channel>
+			<channel id="year-energy" typeId="energy">
+				<label>This Year</label>
+			</channel>
+		</channels>
+
+		<config-description>
+			<parameter name="enabled" type="boolean">
+				<label>Enabled</label>
+				<description>Whether this person's cards may start a charge.</description>
+				<default>true</default>
+			</parameter>
+			<parameter name="cards" type="text" multiple="true">
+				<label>Cards</label>
+				<description>The RFID idTags belonging to this person.</description>
+			</parameter>
+			<parameter name="monthlyCapKwh" type="decimal" min="0">
+				<label>Monthly Cap (kWh)</label>
+				<description>Optional monthly kWh cap, for reference. 0 = none.</description>
+				<default>0</default>
+				<advanced>true</advanced>
+			</parameter>
+		</config-description>
+	</thing-type>
+
 	<!-- Channel types -->
 	<channel-type id="connected">
 		<item-type>Switch</item-type>

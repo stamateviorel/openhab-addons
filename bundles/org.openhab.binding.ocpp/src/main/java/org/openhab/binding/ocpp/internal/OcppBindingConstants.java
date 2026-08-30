@@ -29,6 +29,7 @@ public class OcppBindingConstants {
     public static final ThingTypeUID THING_TYPE_SERVER = new ThingTypeUID(BINDING_ID, "server");
     public static final ThingTypeUID THING_TYPE_CHARGEPOINT = new ThingTypeUID(BINDING_ID, "chargepoint");
     public static final ThingTypeUID THING_TYPE_CONNECTOR = new ThingTypeUID(BINDING_ID, "connector");
+    public static final ThingTypeUID THING_TYPE_CPMS_USER = new ThingTypeUID(BINDING_ID, "cpms-user");
 
     // Chargepoint channels
     public static final String CHANNEL_CONNECTED = "connected";
@@ -92,6 +93,10 @@ public class OcppBindingConstants {
     public static final String CHANNEL_TIMESTAMP = "timestamp";
     public static final String CHANNEL_TIMESTAMP_START = "timestamp-start";
     public static final String CHANNEL_TIMESTAMP_STOP = "timestamp-stop";
+
+    // CPMS user channels
+    public static final String CHANNEL_MONTH_ENERGY = "month-energy";
+    public static final String CHANNEL_YEAR_ENERGY = "year-energy";
 
     // Config parameter names (must match thing-types.xml)
     public static final String CONFIG_CHARGE_POINT_ID = "chargePointId";

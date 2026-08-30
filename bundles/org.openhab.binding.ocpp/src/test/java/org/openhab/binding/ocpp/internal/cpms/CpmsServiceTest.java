@@ -47,8 +47,8 @@ class CpmsServiceTest {
 
     @Test
     void aCardOfAnEnabledUserIsAllowedAndAnUnknownOrDisabledOneIsNot() {
-        cpms.putUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
-        cpms.putUser(new CpmsUser("u2", "Anna", false, 0, List.of("CARD-B")));
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
+        cpms.registerUser(new CpmsUser("u2", "Anna", false, 0, List.of("CARD-B")));
 
         assertEquals(Boolean.TRUE, cpms.authorize("CARD-A"));
         assertEquals(Boolean.FALSE, cpms.authorize("CARD-B"));
@@ -57,7 +57,7 @@ class CpmsServiceTest {
 
     @Test
     void aSessionIsLoggedWithTheResolvedUserAndEnergyAndSurvivesARestart() {
-        cpms.putUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
         cpms.onTransactionStart(7, "CARD-A", "charger3", 1, 1000, 100L);
         cpms.onTransactionStop(7, 7200, 200L);
 
@@ -89,16 +89,16 @@ class CpmsServiceTest {
 
     @Test
     void removingAUserDropsTheirAuthorization() {
-        cpms.putUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
-        cpms.removeUser("u1");
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
+        cpms.unregisterUser("u1");
 
         assertNull(cpms.authorize("CARD-A"));
     }
 
     @Test
     void usageSumsPerUserForTheMonthAndTheYear() {
-        cpms.putUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
-        cpms.putUser(new CpmsUser("u2", "Anna", true, 0, List.of("CARD-B")));
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
+        cpms.registerUser(new CpmsUser("u2", "Anna", true, 0, List.of("CARD-B")));
         session(1, "CARD-A", 1_500L, 4000);
         session(2, "CARD-A", 6_000L, 2000);
         session(3, "CARD-B", 6_000L, 10000);

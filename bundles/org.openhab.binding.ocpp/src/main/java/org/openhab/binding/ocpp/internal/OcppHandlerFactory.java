@@ -20,6 +20,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.ocpp.internal.handler.OcppChargePointHandler;
 import org.openhab.binding.ocpp.internal.handler.OcppConnectorHandler;
+import org.openhab.binding.ocpp.internal.handler.OcppCpmsUserHandler;
 import org.openhab.binding.ocpp.internal.handler.OcppServerBridgeHandler;
 import org.openhab.core.storage.StorageService;
 import org.openhab.core.thing.Bridge;
@@ -42,7 +43,7 @@ import org.osgi.service.component.annotations.Reference;
 public class OcppHandlerFactory extends BaseThingHandlerFactory {
 
     private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Set.of(THING_TYPE_SERVER,
-            THING_TYPE_CHARGEPOINT, THING_TYPE_CONNECTOR);
+            THING_TYPE_CHARGEPOINT, THING_TYPE_CONNECTOR, THING_TYPE_CPMS_USER);
 
     private final StorageService storageService;
 
@@ -66,6 +67,8 @@ public class OcppHandlerFactory extends BaseThingHandlerFactory {
             return new OcppChargePointHandler((Bridge) thing);
         } else if (THING_TYPE_CONNECTOR.equals(thingTypeUID)) {
             return new OcppConnectorHandler(thing);
+        } else if (THING_TYPE_CPMS_USER.equals(thingTypeUID)) {
+            return new OcppCpmsUserHandler(thing);
         }
 
         return null;
