@@ -1,0 +1,127 @@
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
+ *
+ * See the NOTICE file(s) distributed with this work for additional
+ * information.
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
+ *
+ * SPDX-License-Identifier: EPL-2.0
+ */
+package org.openhab.binding.ocpp.internal.cpms;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.storage.Storage;
+
+import com.google.gson.Gson;
+
+/**
+ * The CPMS: a user/card registry, person-based authorization, and a persisted log of completed
+ * charging sessions. State lives in a {@link Storage} so it survives a restart, the same as the
+ * core transaction store.
+ *
+ * @author Stamate Viorel - Initial contribution
+ */
+@NonNullByDefault
+public class CpmsService {
+
+    private static final String KEY_USERS = "users";
+    private static final String KEY_TRANSACTIONS = "transactions";
+    private static final String OPEN_PREFIX = "open:";
+
+    private final Storage<String> storage;
+    private final Gson gson = new Gson();
+
+    public CpmsService(Storage<String> storage) {
+        this.storage = storage;
+    }
+
+    public synchronized List<CpmsUser> users() {
+        String json = storage.get(KEY_USERS);
+        CpmsUser @Nullable [] arr = json == null ? null : gson.fromJson(json, CpmsUser[].class);
+        return arr == null ? new ArrayList<>() : new ArrayList<>(List.of(arr));
+    }
+
+    /** Add a user, or replace the existing one with the same id. */
+    public synchronized void putUser(CpmsUser user) {
+        List<CpmsUser> users = users();
+        users.removeIf(u -> u.id().equals(user.id()));
+        users.add(user);
+        storage.put(KEY_USERS, gson.toJson(users));
+    }
+
+    public synchronized void removeUser(String id) {
+        List<CpmsUser> users = users();
+        if (users.removeIf(u -> u.id().equals(id))) {
+            storage.put(KEY_USERS, gson.toJson(users));
+        }
+    }
+
+    public synchronized @Nullable CpmsUser userForCard(String idTag) {
+        for (CpmsUser u : users()) {
+            if (u.cards().contains(idTag)) {
+                return u;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Authorization decision for a card, or {@code null} when the CPMS is not managing authorization
+     * (no users defined yet) so the caller falls back to its own whitelist.
+     */
+    public synchronized @Nullable Boolean authorize(@Nullable String idTag) {
+        if (users().isEmpty()) {
+            return null;
+        }
+        if (idTag == null) {
+            return false;
+        }
+        CpmsUser user = userForCard(idTag);
+        return user != null && user.enabled();
+    }
+
+    public synchronized void onTransactionStart(int transactionId, @Nullable String idTag, String chargePointId,
+            int connectorId, @Nullable Integer meterStart, long startEpoch) {
+        if (idTag == null) {
+            return;
+        }
+        OpenTx open = new OpenTx(idTag, chargePointId, connectorId, meterStart == null ? 0 : meterStart, startEpoch);
+        storage.put(OPEN_PREFIX + transactionId, gson.toJson(open));
+    }
+
+    public synchronized void onTransactionStop(int transactionId, @Nullable Integer meterStop, long stopEpoch) {
+        String key = OPEN_PREFIX + transactionId;
+        String json = storage.get(key);
+        if (json == null) {
+            return;
+        }
+        storage.remove(key);
+        OpenTx open = gson.fromJson(json, OpenTx.class);
+        if (open == null) {
+            return;
+        }
+        // A meter-less charger sends no meterStop, so the session is logged with 0 energy.
+        double energy = meterStop == null ? 0 : Math.max(0, meterStop - open.meterStart());
+        CpmsUser user = userForCard(open.idTag());
+        List<CpmsTransaction> log = transactions();
+        log.add(new CpmsTransaction(open.idTag(), user == null ? null : user.id(), open.chargePointId(),
+                open.connectorId(), open.startEpoch(), stopEpoch, energy));
+        storage.put(KEY_TRANSACTIONS, gson.toJson(log));
+    }
+
+    public synchronized List<CpmsTransaction> transactions() {
+        String json = storage.get(KEY_TRANSACTIONS);
+        CpmsTransaction @Nullable [] arr = json == null ? null : gson.fromJson(json, CpmsTransaction[].class);
+        return arr == null ? new ArrayList<>() : new ArrayList<>(List.of(arr));
+    }
+
+    private record OpenTx(String idTag, String chargePointId, int connectorId, int meterStart, long startEpoch) {
+    }
+}

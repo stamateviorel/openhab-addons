@@ -13,6 +13,7 @@
 package org.openhab.binding.ocpp.internal.handler;
 
 import java.net.InetSocketAddress;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -26,6 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.ocpp.internal.config.OcppServerConfiguration;
+import org.openhab.binding.ocpp.internal.cpms.CpmsService;
 import org.openhab.binding.ocpp.internal.discovery.OcppDiscoveryService;
 import org.openhab.binding.ocpp.internal.transport.ChargeTimeTransport;
 import org.openhab.binding.ocpp.internal.transport.OcppServerListener;
@@ -69,6 +71,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     private final StorageService storageService;
     private volatile @Nullable TransactionStore transactionStore;
+    private volatile @Nullable CpmsService cpms;
     private final AtomicInteger fallbackSequence = new AtomicInteger();
 
     private volatile @Nullable OcppTransport transport;
@@ -109,6 +112,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
         disposed = false;
         transactionStore = new TransactionStore(storageService.getStorage(getThing().getUID().getAsString()));
+        cpms = new CpmsService(storageService.getStorage(getThing().getUID().getAsString() + ":cpms"));
         updateStatus(ThingStatus.UNKNOWN);
 
         OcppTransport newTransport = createTransport(localConfig);
@@ -315,6 +319,11 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             // Persist at accept time so a later stop routes even before a Thing exists.
             rememberTransaction(transactionId, chargePointId, connectorId);
         }
+        CpmsService service = cpms;
+        if (service != null && chargePointId != null && connectorId != null) {
+            service.onTransactionStart(transactionId, request.getIdTag(), chargePointId, connectorId,
+                    request.getMeterStart(), epochOf(request.getTimestamp()));
+        }
         OcppChargePointHandler handler = chargePointId != null ? chargePoints.get(chargePointId) : null;
         if (handler != null) {
             handler.onStartTransaction(request, transactionId);
@@ -323,6 +332,11 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     @Override
     public void onStopTransaction(UUID session, StopTransactionRequest request) {
+        CpmsService service = cpms;
+        Integer stopTransactionId = request.getTransactionId();
+        if (service != null && stopTransactionId != null) {
+            service.onTransactionStop(stopTransactionId, request.getMeterStop(), epochOf(request.getTimestamp()));
+        }
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
             handler.onStopTransaction(request);
@@ -338,8 +352,23 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     @Override
     public boolean isTagAuthorized(@Nullable String idTag) {
+        CpmsService service = cpms;
+        if (service != null) {
+            Boolean decision = service.authorize(idTag);
+            if (decision != null) {
+                return decision;
+            }
+        }
         List<String> whitelist = config.whitelistTagIds;
         return whitelist.isEmpty() || (idTag != null && whitelist.contains(idTag));
+    }
+
+    public @Nullable CpmsService getCpms() {
+        return cpms;
+    }
+
+    private static long epochOf(@Nullable ZonedDateTime timestamp) {
+        return timestamp != null ? timestamp.toInstant().toEpochMilli() : System.currentTimeMillis();
     }
 
     @Override
