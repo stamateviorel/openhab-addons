@@ -13,16 +13,15 @@
 package org.openhab.binding.ocpp.internal.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import java.util.Collection;
 import java.util.List;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.thing.ThingRegistry;
-import org.openhab.core.ui.components.RootUIComponent;
 
 /**
  * Tests that the CPMS page provider serves a stable sidebar page.
@@ -34,16 +33,14 @@ import org.openhab.core.ui.components.RootUIComponent;
 class OcppCpmsUiProviderTest {
 
     @Test
-    void servesOneStableSidebarPageEvenWithNoServer() {
+    void servesNoPageUntilThereAreUsers() {
         ThingRegistry registry = mock(ThingRegistry.class);
         when(registry.getAll()).thenReturn(List.of());
 
         OcppCpmsUiProvider provider = new OcppCpmsUiProvider(registry);
         try {
             assertEquals("ui:page", provider.getNamespace());
-            Collection<RootUIComponent> pages = provider.getAll();
-            assertEquals(1, pages.size());
-            assertEquals("ocpp_cpms", pages.iterator().next().getUID());
+            assertTrue(provider.getAll().isEmpty());
         } finally {
             provider.deactivate();
         }

@@ -71,7 +71,7 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
     public OcppCpmsUiProvider(@Reference ThingRegistry thingRegistry) {
         this.thingRegistry = thingRegistry;
         this.signature = signatureOf(cpms());
-        this.pages = List.of(buildPage());
+        this.pages = computePages();
         refreshTask = scheduler.scheduleWithFixedDelay(this::refresh, REFRESH_SECONDS, REFRESH_SECONDS,
                 TimeUnit.SECONDS);
     }
@@ -95,15 +95,34 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
         return pages;
     }
 
+    /** The page only exists once there are users — without them a CPMS view makes no sense. */
+    private List<RootUIComponent> computePages() {
+        CpmsService cpms = cpms();
+        return cpms == null || cpms.users().isEmpty() ? List.of() : List.of(buildPage(cpms));
+    }
+
     private void refresh() {
-        String now = signatureOf(cpms());
-        if (now.equals(signature)) {
+        String current = signatureOf(cpms());
+        if (current.equals(signature)) {
             return;
         }
-        signature = now;
-        RootUIComponent previous = pages.get(0);
-        pages = List.of(buildPage());
-        notifyListenersAboutUpdatedElement(previous, pages.get(0));
+        signature = current;
+        Map<String, RootUIComponent> previous = new HashMap<>();
+        for (RootUIComponent page : pages) {
+            previous.put(page.getUID(), page);
+        }
+        pages = computePages();
+        for (RootUIComponent page : pages) {
+            RootUIComponent old = previous.remove(page.getUID());
+            if (old != null) {
+                notifyListenersAboutUpdatedElement(old, page);
+            } else {
+                notifyListenersAboutAddedElement(page);
+            }
+        }
+        for (RootUIComponent gone : previous.values()) {
+            notifyListenersAboutRemovedElement(gone);
+        }
     }
 
     private @Nullable CpmsService cpms() {
@@ -127,19 +146,13 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
         return sb.toString();
     }
 
-    private RootUIComponent buildPage() {
+    private RootUIComponent buildPage(CpmsService cpms) {
         RootUIComponent page = new RootUIComponent(PAGE_UID, "oh-layout-page");
         page.addConfig("label", "OCPP Charging");
         page.addConfig("sidebar", Boolean.TRUE);
         page.addConfig("icon", "f7:bolt_car_fill");
         page.updateTimestamp();
         List<UIComponent> root = page.addSlot("default");
-
-        CpmsService cpms = cpms();
-        if (cpms == null) {
-            root.add(note("Add an OCPP Server thing to start."));
-            return page;
-        }
 
         ZonedDateTime now = ZonedDateTime.now();
         long nowMs = now.toInstant().toEpochMilli();
@@ -148,15 +161,10 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
 
         UIComponent users = block("Users");
         List<UIComponent> userSlot = users.addSlot("default");
-        List<CpmsService.Usage> usage = cpms.usage(monthStart, yearStart, nowMs);
-        if (usage.isEmpty()) {
-            userSlot.add(note("Add an OCPP User thing under the server to manage people and cards."));
-        } else {
-            for (CpmsService.Usage entry : usage) {
-                String title = entry.user().name() + (entry.user().enabled() ? "" : " (disabled)");
-                String value = kwh(entry.monthKwh()) + " kWh this month · " + kwh(entry.yearKwh()) + " kWh this year";
-                userSlot.add(labelCard("f7:person_fill", title, value));
-            }
+        for (CpmsService.Usage entry : cpms.usage(monthStart, yearStart, nowMs)) {
+            String title = entry.user().name() + (entry.user().enabled() ? "" : " (disabled)");
+            String value = kwh(entry.monthKwh()) + " kWh this month · " + kwh(entry.yearKwh()) + " kWh this year";
+            userSlot.add(labelCard("f7:person_fill", title, value));
         }
         root.add(users);
 
