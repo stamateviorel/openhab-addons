@@ -467,38 +467,6 @@ class OcppBootConfigTest {
     }
 
     @Test
-    void learningACardAddsItToTheLocalAuthList() {
-        when(transport.send(any(), any())).thenAnswer(invocation -> {
-            Request req = invocation.getArgument(1);
-            if (req instanceof GetConfigurationRequest) {
-                eu.chargetime.ocpp.model.core.KeyValueType profiles = new eu.chargetime.ocpp.model.core.KeyValueType(
-                        "SupportedFeatureProfiles", Boolean.TRUE);
-                profiles.setValue("Core,LocalAuthListManagement,RemoteTrigger");
-                GetConfigurationConfirmation conf = new GetConfigurationConfirmation();
-                conf.setConfigurationKey(new eu.chargetime.ocpp.model.core.KeyValueType[] { profiles });
-                return CompletableFuture.completedFuture(conf);
-            }
-            if (req instanceof eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest) {
-                return CompletableFuture
-                        .completedFuture(new eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionConfirmation(0));
-            }
-            return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
-        });
-
-        handler.handleCommand(new org.openhab.core.thing.ChannelUID(CP_UID, "learn-card"),
-                org.openhab.core.library.types.OnOffType.ON);
-        handler.onAuthorized("RFID-LEARN");
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
-        handler.onHeartbeat();
-
-        verify(transport, timeout(2000)).send(any(),
-                argThat(r -> r instanceof eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest s
-                        && s.getUpdateType() == eu.chargetime.ocpp.model.localauthlist.UpdateType.Full
-                        && s.getLocalAuthorizationList() != null && s.getLocalAuthorizationList().length == 1
-                        && "RFID-LEARN".equals(s.getLocalAuthorizationList()[0].getIdTag())));
-    }
-
-    @Test
     void localAuthListIsNotSentWhenTheChargerLacksTheProfile() {
         when(transport.send(any(), any())).thenAnswer(invocation -> {
             Request req = invocation.getArgument(1);

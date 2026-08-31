@@ -33,6 +33,7 @@ import org.openhab.binding.ocpp.internal.transport.ChargeTimeTransport;
 import org.openhab.binding.ocpp.internal.transport.OcppServerListener;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.binding.ocpp.internal.transport.TransactionStore;
+import org.openhab.core.config.core.Configuration;
 import org.openhab.core.storage.StorageService;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ChannelUID;
@@ -289,16 +290,30 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     @Override
     public void onAuthorize(UUID session, @Nullable String idTag) {
-        CpmsService service = cpms;
-        OcppDiscoveryService discovery = discoveryService;
-        if (idTag != null && service != null && discovery != null && config.discoverCards
-                && service.userForCard(idTag) == null) {
-            discovery.cardDiscovered(idTag);
+        if (idTag != null) {
+            if (config.autoLearn && !config.whitelistTagIds.contains(idTag)) {
+                scheduler.execute(() -> learnCard(idTag));
+            } else if (config.discoverCards) {
+                CpmsService service = cpms;
+                OcppDiscoveryService discovery = discoveryService;
+                if (service != null && discovery != null && service.userForCard(idTag) == null) {
+                    discovery.cardDiscovered(idTag);
+                }
+            }
         }
-        OcppChargePointHandler handler = resolve(session);
-        if (handler != null) {
-            handler.onAuthorized(idTag);
+    }
+
+    private void learnCard(String idTag) {
+        List<String> list = new ArrayList<>(config.whitelistTagIds);
+        if (list.contains(idTag)) {
+            return;
         }
+        list.add(idTag);
+        // Writing the whitelist reinitializes the bridge, so a learned card takes effect on its next tap.
+        Configuration configuration = editConfiguration();
+        configuration.put("whitelistTagIds", list);
+        updateConfiguration(configuration);
+        logger.info("Auto-learned card {} into the whitelist", idTag);
     }
 
     @Override

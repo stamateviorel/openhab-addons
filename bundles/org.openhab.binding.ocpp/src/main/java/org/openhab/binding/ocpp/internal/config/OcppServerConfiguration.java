@@ -41,4 +41,5 @@ public class OcppServerConfiguration {
     public List<String> whitelistTagIds = List.of();
     public List<String> chargerIds = List.of();
     public boolean discoverCards = false;
+    public boolean autoLearn = false;
 }

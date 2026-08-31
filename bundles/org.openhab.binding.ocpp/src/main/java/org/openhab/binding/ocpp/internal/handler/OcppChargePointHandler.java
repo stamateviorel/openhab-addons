@@ -94,7 +94,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
 
     private static final long LIVENESS_FLOOR_SECONDS = 180;
     private static final long STATUS_FALLBACK_SECONDS = 25;
-    private static final long LEARN_WINDOW_SECONDS = 60;
     private static final int MAX_BOOT_CONFIG_ATTEMPTS = 3;
     private static final long BOOT_READY_GRACE_MILLIS = 1000;
     private static final int PENDING_SEND_LIMIT = 32;
@@ -122,8 +121,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private final Map<String, String> acceptedMeasurands = new ConcurrentHashMap<>();
     private volatile ChargerCapabilities capabilities = ChargerCapabilities.unknown();
     private volatile List<String> localAuthList = List.of();
-    private volatile boolean learningCard;
-    private volatile @Nullable ScheduledFuture<?> learnTask;
     private volatile @Nullable ScheduledFuture<?> bootConfigTask;
     private volatile @Nullable ScheduledFuture<?> livenessTask;
     private volatile @Nullable ScheduledFuture<?> statusFallbackTask;
@@ -156,24 +153,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             updateState(CHANNEL_RESET, OnOffType.OFF);
         } else if (CHANNEL_LOCAL_AUTH_LIST.equals(channelUID.getId()) && command instanceof StringType text) {
             setLocalAuthList(parseTagList(text.toString()));
-        } else if (CHANNEL_LEARN_CARD.equals(channelUID.getId()) && command instanceof OnOffType onOff) {
-            if (onOff == OnOffType.ON) {
-                learningCard = true;
-                cancel(learnTask);
-                learnTask = scheduler.schedule(this::stopLearning, LEARN_WINDOW_SECONDS, TimeUnit.SECONDS);
-                logger.info("Learning next card for {} — present a card within {} s", chargePointId,
-                        LEARN_WINDOW_SECONDS);
-            } else {
-                stopLearning();
-            }
         }
-    }
-
-    private void stopLearning() {
-        learningCard = false;
-        cancel(learnTask);
-        learnTask = null;
-        updateState(CHANNEL_LEARN_CARD, OnOffType.OFF);
     }
 
     private void setLocalAuthList(List<String> tags) {
@@ -186,19 +166,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                     logger.warn("SendLocalList to {} failed: {}", chargePointId, ex.getMessage());
                 }
             });
-        }
-    }
-
-    public void onAuthorized(@Nullable String idTag) {
-        if (idTag == null || idTag.isBlank() || !learningCard) {
-            return;
-        }
-        stopLearning();
-        if (!localAuthList.contains(idTag)) {
-            List<String> updated = new ArrayList<>(localAuthList);
-            updated.add(idTag);
-            logger.info("Learned card {} for {}", idTag, chargePointId);
-            setLocalAuthList(updated);
         }
     }
 
@@ -274,13 +241,10 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         cancel(livenessTask);
         cancel(statusFallbackTask);
         cancel(readyTask);
-        cancel(learnTask);
         bootConfigTask = null;
         livenessTask = null;
         statusFallbackTask = null;
         readyTask = null;
-        learnTask = null;
-        learningCard = false;
     }
 
     private @Nullable OcppServerBridgeHandler serverHandler() {

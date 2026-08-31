@@ -8,11 +8,11 @@
 			<add-channel id="local-auth-list">
 				<type>ocpp:local-auth-list</type>
 			</add-channel>
-			<add-channel id="learn-card">
-				<type>ocpp:learn-card</type>
-			</add-channel>
-			<!-- last-id-tag was folded into the learn-card flow before release; drop it from any early instance. -->
 			<remove-channel id="last-id-tag"/>
+		</instruction-set>
+		<instruction-set targetVersion="2">
+			<!-- learn-card was replaced by the server-side Auto-learn Cards setting. -->
+			<remove-channel id="learn-card"/>
 		</instruction-set>
 	</thing-type>
 

@@ -103,7 +103,6 @@
 			<parameter name="whitelistTagIds" type="text" multiple="true">
 				<label>Authorized Tag IDs</label>
 				<description>idTag whitelist. Empty accepts every tag; otherwise unknown tags are rejected.</description>
-				<advanced>true</advanced>
 			</parameter>
 			<parameter name="chargerIds" type="text" multiple="true">
 				<label>Permitted Charger IDs</label>
@@ -116,6 +115,13 @@
 				<description>When on, a card that no user owns yet is offered in the inbox to create a user from. Off by
 					default;
 					turn it on while adding people, then off again.</description>
+				<default>false</default>
+			</parameter>
+			<parameter name="autoLearn" type="boolean">
+				<label>Auto-learn Cards</label>
+				<description>When on, a tapped card that is not yet authorized is added to the Authorized Tag IDs list. Off by
+					default; turn it on while adding cards, then off again. Each learned card briefly reconnects the
+					chargers.</description>
 				<default>false</default>
 			</parameter>
 		</config-description>
@@ -135,11 +141,10 @@
 			<channel id="last-seen" typeId="last-seen"/>
 			<channel id="reset" typeId="reset"/>
 			<channel id="local-auth-list" typeId="local-auth-list"/>
-			<channel id="learn-card" typeId="learn-card"/>
 		</channels>
 
 		<properties>
-			<property name="thingTypeVersion">1</property>
+			<property name="thingTypeVersion">2</property>
 		</properties>
 
 		<representation-property>chargePointId</representation-property>
@@ -492,14 +497,6 @@
 		<description>Momentary — soft reset the charge point (Reset).</description>
 		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
-
-	<channel-type id="learn-card">
-		<item-type>Switch</item-type>
-		<label>Learn Card</label>
-		<description>Switch ON to arm learning; the next RFID card presented to the charger is added to the local
-			authorization list. Auto-disarms once the card is read or 60 s pass.</description>
-	</channel-type>
-
 
 	<channel-type id="local-auth-list">
 		<item-type>String</item-type>
