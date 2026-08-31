@@ -100,29 +100,11 @@
 				<description>Password for the TLS keystore (store and key password).</description>
 				<advanced>true</advanced>
 			</parameter>
-			<parameter name="whitelistTagIds" type="text" multiple="true">
-				<label>Authorized Tag IDs</label>
-				<description>idTag whitelist. Empty accepts every tag; otherwise unknown tags are rejected.</description>
-			</parameter>
 			<parameter name="chargerIds" type="text" multiple="true">
 				<label>Permitted Charger IDs</label>
 				<description>Charge point id allow-list. Empty accepts any charger; otherwise unlisted chargers are rejected and
 					closed.</description>
 				<advanced>true</advanced>
-			</parameter>
-			<parameter name="discoverCards" type="boolean">
-				<label>Discover New Cards</label>
-				<description>When on, a card that no user owns yet is offered in the inbox to create a user from. Off by
-					default;
-					turn it on while adding people, then off again.</description>
-				<default>false</default>
-			</parameter>
-			<parameter name="autoLearn" type="boolean">
-				<label>Auto-learn Cards</label>
-				<description>When on, a tapped card that is not yet authorized is added to the Authorized Tag IDs list. Off by
-					default; turn it on while adding cards, then off again. Each learned card briefly reconnects the
-					chargers.</description>
-				<default>false</default>
 			</parameter>
 		</config-description>
 	</bridge-type>

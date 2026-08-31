@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config-description:config-descriptions
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:config-description="https://openhab.org/schemas/config-description/v1.0.0"
+	xsi:schemaLocation="https://openhab.org/schemas/config-description/v1.0.0
+		https://openhab.org/schemas/config-description-1.0.0.xsd">
+
+	<config-description uri="binding:ocpp">
+
+		<parameter name="whitelistTagIds" type="text" multiple="true">
+			<label>Authorized Tag IDs</label>
+			<description>idTag whitelist. Empty accepts every tag; otherwise unknown tags are rejected.</description>
+		</parameter>
+
+		<parameter name="autoLearn" type="boolean">
+			<label>Auto-learn Cards</label>
+			<description>When on, a tapped tag that is not yet authorized is added to the list above. Turn it on while
+				enrolling
+				cards, then off again.</description>
+			<default>false</default>
+		</parameter>
+
+		<parameter name="discoverCards" type="boolean">
+			<label>Discover New Cards</label>
+			<description>When on, a tapped tag that no user owns is offered in the inbox to create a user from. Turn it on
+				while
+				adding people, then off again.</description>
+			<default>false</default>
+		</parameter>
+
+	</config-description>
+
+</config-description:config-descriptions>

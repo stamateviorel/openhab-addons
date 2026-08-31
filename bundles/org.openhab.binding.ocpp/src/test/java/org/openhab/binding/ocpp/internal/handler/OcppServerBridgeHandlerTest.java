@@ -35,6 +35,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.openhab.binding.ocpp.internal.OcppBindingConfig;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.storage.Storage;
@@ -43,6 +44,7 @@ import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingUID;
 import org.openhab.core.thing.binding.ThingHandlerCallback;
+import org.osgi.service.cm.ConfigurationAdmin;
 
 import eu.chargetime.ocpp.model.core.StartTransactionRequest;
 import eu.chargetime.ocpp.model.core.StopTransactionRequest;
@@ -101,7 +103,7 @@ class OcppServerBridgeHandlerTest {
         private final OcppTransport injected;
 
         TestableBridgeHandler(Bridge bridge, StorageService storageService, OcppTransport injected) {
-            super(bridge, storageService);
+            super(bridge, storageService, new OcppBindingConfig(mock(ConfigurationAdmin.class), null));
             this.injected = injected;
         }
 

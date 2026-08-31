@@ -38,8 +38,5 @@ public class OcppServerConfiguration {
     public String authPassword = "";
     public String tlsKeystorePath = "";
     public String tlsKeystorePassword = "";
-    public List<String> whitelistTagIds = List.of();
     public List<String> chargerIds = List.of();
-    public boolean discoverCards = false;
-    public boolean autoLearn = false;
 }

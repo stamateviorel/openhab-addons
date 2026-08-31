@@ -39,17 +39,19 @@ import org.osgi.service.component.annotations.Reference;
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-@Component(configurationPid = "binding.ocpp", service = ThingHandlerFactory.class)
+@Component(service = ThingHandlerFactory.class)
 public class OcppHandlerFactory extends BaseThingHandlerFactory {
 
     private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Set.of(THING_TYPE_SERVER,
             THING_TYPE_CHARGEPOINT, THING_TYPE_CONNECTOR, THING_TYPE_CPMS_USER);
 
     private final StorageService storageService;
+    private final OcppBindingConfig bindingConfig;
 
     @Activate
-    public OcppHandlerFactory(@Reference StorageService storageService) {
+    public OcppHandlerFactory(@Reference StorageService storageService, @Reference OcppBindingConfig bindingConfig) {
         this.storageService = storageService;
+        this.bindingConfig = bindingConfig;
     }
 
     @Override
@@ -62,7 +64,7 @@ public class OcppHandlerFactory extends BaseThingHandlerFactory {
         ThingTypeUID thingTypeUID = thing.getThingTypeUID();
 
         if (THING_TYPE_SERVER.equals(thingTypeUID)) {
-            return new OcppServerBridgeHandler((Bridge) thing, storageService);
+            return new OcppServerBridgeHandler((Bridge) thing, storageService, bindingConfig);
         } else if (THING_TYPE_CHARGEPOINT.equals(thingTypeUID)) {
             return new OcppChargePointHandler((Bridge) thing);
         } else if (THING_TYPE_CONNECTOR.equals(thingTypeUID)) {

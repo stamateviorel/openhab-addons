@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.ocpp.internal.OcppBindingConfig;
 import org.openhab.binding.ocpp.internal.config.OcppServerConfiguration;
 import org.openhab.binding.ocpp.internal.cpms.CpmsService;
 import org.openhab.binding.ocpp.internal.discovery.OcppDiscoveryService;
@@ -33,7 +34,6 @@ import org.openhab.binding.ocpp.internal.transport.ChargeTimeTransport;
 import org.openhab.binding.ocpp.internal.transport.OcppServerListener;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.binding.ocpp.internal.transport.TransactionStore;
-import org.openhab.core.config.core.Configuration;
 import org.openhab.core.storage.StorageService;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ChannelUID;
@@ -71,6 +71,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private volatile @Nullable Future<?> startupTask;
 
     private final StorageService storageService;
+    private final OcppBindingConfig bindingConfig;
     private volatile @Nullable TransactionStore transactionStore;
     private volatile @Nullable CpmsService cpms;
     private final AtomicInteger fallbackSequence = new AtomicInteger();
@@ -79,9 +80,10 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private volatile @Nullable OcppDiscoveryService discoveryService;
     private volatile OcppServerConfiguration config = new OcppServerConfiguration();
 
-    public OcppServerBridgeHandler(Bridge bridge, StorageService storageService) {
+    public OcppServerBridgeHandler(Bridge bridge, StorageService storageService, OcppBindingConfig bindingConfig) {
         super(bridge);
         this.storageService = storageService;
+        this.bindingConfig = bindingConfig;
     }
 
     @Override
@@ -291,9 +293,9 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     @Override
     public void onAuthorize(UUID session, @Nullable String idTag) {
         if (idTag != null) {
-            if (config.autoLearn && !config.whitelistTagIds.contains(idTag)) {
-                scheduler.execute(() -> learnCard(idTag));
-            } else if (config.discoverCards) {
+            if (bindingConfig.isAutoLearn() && !bindingConfig.getWhitelist().contains(idTag)) {
+                bindingConfig.addToWhitelist(idTag);
+            } else if (bindingConfig.isDiscoverCards()) {
                 CpmsService service = cpms;
                 OcppDiscoveryService discovery = discoveryService;
                 if (service != null && discovery != null && service.userForCard(idTag) == null) {
@@ -301,19 +303,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
                 }
             }
         }
-    }
-
-    private void learnCard(String idTag) {
-        List<String> list = new ArrayList<>(config.whitelistTagIds);
-        if (list.contains(idTag)) {
-            return;
-        }
-        list.add(idTag);
-        // Writing the whitelist reinitializes the bridge, so a learned card takes effect on its next tap.
-        Configuration configuration = editConfiguration();
-        configuration.put("whitelistTagIds", list);
-        updateConfiguration(configuration);
-        logger.info("Auto-learned card {} into the whitelist", idTag);
     }
 
     @Override
@@ -380,7 +369,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
                 return decision;
             }
         }
-        List<String> whitelist = config.whitelistTagIds;
+        List<String> whitelist = bindingConfig.getWhitelist();
         return whitelist.isEmpty() || (idTag != null && whitelist.contains(idTag));
     }
 
