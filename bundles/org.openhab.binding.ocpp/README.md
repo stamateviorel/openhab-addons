@@ -12,6 +12,7 @@ It reports connection state, connector status and metering, and controls chargin
 - `server`: the OCPP JSON WebSocket endpoint chargers connect to, and the bridge for all charge points.
 - `chargepoint`: one physical charger matched to a session by its OCPP charge point id (the URL path it dials, without the leading slash), and the bridge for its connectors.
 - `connector`: one connector (outlet) of a charger, carrying the live status and metering channels.
+- `cpms-user`: a person and their RFID cards, for authorization and per-person monthly/yearly usage. Optional — add these only if you want to track who charges. See [Users and usage](#users-and-usage).
 
 ## Discovery
 
@@ -143,7 +144,7 @@ For chargers that reject a TxProfile outside a transaction (e.g. Phoenix CHARX),
 The connector's writable channels map to OCPP commands, and each updates only once the charger confirms the command — a rejected request leaves the channel showing the real state rather than the requested one.
 
 `charging` starts and stops a transaction: sending it `ON` issues a `RemoteStartTransaction`, `OFF` a `RemoteStopTransaction`.
-The transaction is started with the idTag from the connector's `remoteStartTag` (default `openhab`), which has to be authorized: by this binding through the `server` thing's `tags` list (empty accepts any tag), and by the charger itself if it enforces its own whitelist.
+The transaction is started with the idTag from the connector's `remoteStartTag` (default `openhab`), which has to be authorized: by this binding through the Authorized Tag IDs list in [Add-on Settings](#add-on-settings) (empty accepts any tag), and by the charger itself if it enforces its own whitelist.
 So if `ON` does nothing, set `remoteStartTag` to a tag your charger accepts, or allow that tag on the charger.
 Most chargers also only start once a vehicle is plugged in, so a `RemoteStart` on an idle connector is often ignored.
 Because `charging` follows the charger's reported status, it also reads `ON` on its own whenever a transaction is running, however it was started.
@@ -159,6 +160,16 @@ Alternatively set `power-limit` (watts) directly — when set it overrides `char
 `pause` suspends charging with a 0 A profile without ending the transaction; switching it off resumes — at your `charge-limit` if one is set, otherwise by removing the cap so the charger returns to its own maximum — distinct from `charging`, which ends the session.
 A pause is a 0 A limit, so a resume must lift the cap rather than send another 0 A, which a charger reads as "stay suspended".
 `availability` takes the connector Operative or Inoperative, `unlock` releases the cable lock, and the `chargepoint`-level `reset` performs a soft reset of the whole charger.
+
+## Users and usage
+
+A private site with several chargers often wants to know who charged and how much. Add a `cpms-user` thing per person and the binding tracks their energy and can gate authorization on their cards — all optional; without any users, authorization falls back to the [Add-on Settings](#add-on-settings) whitelist and no usage is tracked.
+
+A `cpms-user` carries the person's `cards` (their RFID idTags), an `enabled` switch (off blocks that person's cards from starting a charge), and an optional `monthlyCapKwh` for reference. Its `month-energy` and `year-energy` channels report the kWh that person has drawn since the start of the month and year, summed across every charger from the transactions the binding logs.
+
+To add someone without typing card ids, turn on Discover New Cards in Add-on Settings, have them tap their card, and it appears in the inbox as a new user pre-filled with that card — accept it and give it their name. Turn Discover off again once everyone is enrolled. You can also add a `cpms-user` by hand and type the cards in.
+
+Once at least one user exists, the binding serves a **Charging** sidebar page (no setup, no items to wire) listing each person's month and year kWh and the most recent charging sessions. The page appears only while users exist — for a site with no users it stays hidden.
 
 ## Full Example
 
