@@ -40,5 +40,5 @@ public class OcppServerConfiguration {
     public String tlsKeystorePassword = "";
     public List<String> whitelistTagIds = List.of();
     public List<String> chargerIds = List.of();
-    public boolean discoverCards = true;
+    public boolean discoverCards = false;
 }
