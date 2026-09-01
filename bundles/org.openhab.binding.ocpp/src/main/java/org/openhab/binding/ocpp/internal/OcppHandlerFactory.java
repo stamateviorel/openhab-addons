@@ -22,6 +22,7 @@ import org.openhab.binding.ocpp.internal.handler.OcppChargePointHandler;
 import org.openhab.binding.ocpp.internal.handler.OcppConnectorHandler;
 import org.openhab.binding.ocpp.internal.handler.OcppCpmsUserHandler;
 import org.openhab.binding.ocpp.internal.handler.OcppServerBridgeHandler;
+import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.storage.StorageService;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.Thing;
@@ -47,11 +48,14 @@ public class OcppHandlerFactory extends BaseThingHandlerFactory {
 
     private final StorageService storageService;
     private final OcppBindingConfig bindingConfig;
+    private final ItemRegistry itemRegistry;
 
     @Activate
-    public OcppHandlerFactory(@Reference StorageService storageService, @Reference OcppBindingConfig bindingConfig) {
+    public OcppHandlerFactory(@Reference StorageService storageService, @Reference OcppBindingConfig bindingConfig,
+            @Reference ItemRegistry itemRegistry) {
         this.storageService = storageService;
         this.bindingConfig = bindingConfig;
+        this.itemRegistry = itemRegistry;
     }
 
     @Override
@@ -64,7 +68,7 @@ public class OcppHandlerFactory extends BaseThingHandlerFactory {
         ThingTypeUID thingTypeUID = thing.getThingTypeUID();
 
         if (THING_TYPE_SERVER.equals(thingTypeUID)) {
-            return new OcppServerBridgeHandler((Bridge) thing, storageService, bindingConfig);
+            return new OcppServerBridgeHandler((Bridge) thing, storageService, bindingConfig, itemRegistry);
         } else if (THING_TYPE_CHARGEPOINT.equals(thingTypeUID)) {
             return new OcppChargePointHandler((Bridge) thing);
         } else if (THING_TYPE_CONNECTOR.equals(thingTypeUID)) {

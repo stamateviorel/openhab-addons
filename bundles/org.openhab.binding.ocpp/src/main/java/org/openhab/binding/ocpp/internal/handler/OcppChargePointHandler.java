@@ -264,6 +264,16 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         connectors.remove(connectorId);
     }
 
+    /** Name of the item metering this connector externally, or {@code null} when none is configured. */
+    public @Nullable String externalEnergyItem(int connectorId) {
+        OcppConnectorHandler connector = connectors.get(connectorId);
+        if (connector == null) {
+            return null;
+        }
+        String item = connector.getExternalEnergyItem();
+        return item.isBlank() ? null : item;
+    }
+
     public CompletionStage<Confirmation> send(Request request) {
         UUID localSession = session;
         if (localSession == null) {

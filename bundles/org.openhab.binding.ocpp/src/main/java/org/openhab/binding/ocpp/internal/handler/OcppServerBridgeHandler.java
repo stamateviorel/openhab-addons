@@ -34,6 +34,11 @@ import org.openhab.binding.ocpp.internal.transport.ChargeTimeTransport;
 import org.openhab.binding.ocpp.internal.transport.OcppServerListener;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.binding.ocpp.internal.transport.TransactionStore;
+import org.openhab.core.items.ItemNotFoundException;
+import org.openhab.core.items.ItemRegistry;
+import org.openhab.core.library.types.DecimalType;
+import org.openhab.core.library.types.QuantityType;
+import org.openhab.core.library.unit.Units;
 import org.openhab.core.storage.StorageService;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ChannelUID;
@@ -42,6 +47,7 @@ import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.thing.binding.BaseBridgeHandler;
 import org.openhab.core.thing.binding.ThingHandlerService;
 import org.openhab.core.types.Command;
+import org.openhab.core.types.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -72,6 +78,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     private final StorageService storageService;
     private final OcppBindingConfig bindingConfig;
+    private final ItemRegistry itemRegistry;
     private volatile @Nullable TransactionStore transactionStore;
     private volatile @Nullable CpmsService cpms;
     private final AtomicInteger fallbackSequence = new AtomicInteger();
@@ -80,10 +87,12 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private volatile @Nullable OcppDiscoveryService discoveryService;
     private volatile OcppServerConfiguration config = new OcppServerConfiguration();
 
-    public OcppServerBridgeHandler(Bridge bridge, StorageService storageService, OcppBindingConfig bindingConfig) {
+    public OcppServerBridgeHandler(Bridge bridge, StorageService storageService, OcppBindingConfig bindingConfig,
+            ItemRegistry itemRegistry) {
         super(bridge);
         this.storageService = storageService;
         this.bindingConfig = bindingConfig;
+        this.itemRegistry = itemRegistry;
     }
 
     @Override
@@ -331,8 +340,10 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
         CpmsService service = cpms;
         if (service != null && chargePointId != null && connectorId != null) {
-            service.onTransactionStart(transactionId, request.getIdTag(), chargePointId, connectorId,
-                    request.getMeterStart(), epochOf(request.getTimestamp()));
+            Integer external = externalMeterWh(chargePointId, connectorId);
+            Integer meterStart = external != null ? external : request.getMeterStart();
+            service.onTransactionStart(transactionId, request.getIdTag(), chargePointId, connectorId, meterStart,
+                    epochOf(request.getTimestamp()));
         }
         OcppChargePointHandler handler = chargePointId != null ? chargePoints.get(chargePointId) : null;
         if (handler != null) {
@@ -345,7 +356,11 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         CpmsService service = cpms;
         Integer stopTransactionId = request.getTransactionId();
         if (service != null && stopTransactionId != null) {
-            service.onTransactionStop(stopTransactionId, request.getMeterStop(), epochOf(request.getTimestamp()));
+            String cpId = sessionChargePoints.get(session);
+            Integer connId = cpId == null ? null : transactionConnector(stopTransactionId, cpId);
+            Integer external = cpId != null && connId != null ? externalMeterWh(cpId, connId) : null;
+            Integer meterStop = external != null ? external : request.getMeterStop();
+            service.onTransactionStop(stopTransactionId, meterStop, epochOf(request.getTimestamp()));
         }
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
@@ -375,6 +390,33 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     public @Nullable CpmsService getCpms() {
         return cpms;
+    }
+
+    private @Nullable Integer externalMeterWh(String chargePointId, int connectorId) {
+        OcppChargePointHandler handler = chargePoints.get(chargePointId);
+        String itemName = handler == null ? null : handler.externalEnergyItem(connectorId);
+        if (itemName == null) {
+            return null;
+        }
+        try {
+            return externalWh(itemRegistry.getItem(itemName).getState());
+        } catch (ItemNotFoundException e) {
+            logger.warn("External energy item {} for {}/{} not found; falling back to the OCPP meter", itemName,
+                    chargePointId, connectorId);
+            return null;
+        }
+    }
+
+    /** A cumulative energy reading as Wh: a Quantity converted to Wh, or a plain number read as kWh. */
+    static @Nullable Integer externalWh(State state) {
+        if (state instanceof QuantityType<?> quantity) {
+            QuantityType<?> wh = quantity.toUnit(Units.WATT_HOUR);
+            return wh == null ? null : (int) Math.round(wh.doubleValue());
+        }
+        if (state instanceof DecimalType number) {
+            return (int) Math.round(number.doubleValue() * 1000.0);
+        }
+        return null;
     }
 
     private static long epochOf(@Nullable ZonedDateTime timestamp) {

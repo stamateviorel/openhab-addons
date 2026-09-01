@@ -13,6 +13,7 @@
 package org.openhab.binding.ocpp.internal.handler;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -38,12 +39,16 @@ import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.OcppBindingConfig;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.core.config.core.Configuration;
+import org.openhab.core.items.ItemRegistry;
+import org.openhab.core.library.types.DecimalType;
+import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.storage.Storage;
 import org.openhab.core.storage.StorageService;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingUID;
 import org.openhab.core.thing.binding.ThingHandlerCallback;
+import org.openhab.core.types.UnDefType;
 import org.osgi.service.cm.ConfigurationAdmin;
 
 import eu.chargetime.ocpp.model.core.StartTransactionRequest;
@@ -103,7 +108,8 @@ class OcppServerBridgeHandlerTest {
         private final OcppTransport injected;
 
         TestableBridgeHandler(Bridge bridge, StorageService storageService, OcppTransport injected) {
-            super(bridge, storageService, new OcppBindingConfig(mock(ConfigurationAdmin.class), null));
+            super(bridge, storageService, new OcppBindingConfig(mock(ConfigurationAdmin.class), null),
+                    mock(ItemRegistry.class));
             this.injected = injected;
         }
 
@@ -131,6 +137,15 @@ class OcppServerBridgeHandlerTest {
 
         handler = new TestableBridgeHandler(thing, storageService, transport);
         handler.setCallback(callback);
+    }
+
+    @Test
+    void externalEnergyReadingsConvertToWattHours() {
+        assertEquals(Integer.valueOf(5000), OcppServerBridgeHandler.externalWh(new QuantityType<>("5 kWh")));
+        assertEquals(Integer.valueOf(5000), OcppServerBridgeHandler.externalWh(new QuantityType<>("5000 Wh")));
+        assertEquals(Integer.valueOf(5000), OcppServerBridgeHandler.externalWh(new DecimalType(5)));
+        assertNull(OcppServerBridgeHandler.externalWh(UnDefType.UNDEF));
+        assertNull(OcppServerBridgeHandler.externalWh(new QuantityType<>("5 W")));
     }
 
     @Test

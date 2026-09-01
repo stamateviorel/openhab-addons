@@ -87,6 +87,7 @@ Card authorization is edited under Settings → Add-on Settings → OCPP Binding
 | phases                | integer | Phases assumed in that amps→watts conversion — 1 single-phase, 3 three-phase                                                                                       | 1       | no       | yes      |
 | stuckStateRecovery    | boolean | Send an UnlockConnector if the connector stays in a transient state (Preparing/Finishing) too long. Off by default; enable only for a charger known to wedge there | false   | no       | yes      |
 | remoteStartRetries    | integer | Retry a RemoteStart the charger does not answer, this many times. 0 disables. For a charger that drops the first start request but accepts a retry                 | 0       | no       | yes      |
+| externalEnergyItem    | text    | Number item holding this connector's cumulative imported energy (kWh), for usage accounting when the charger has no OCPP meter                                     | (empty) | no       | no       |
 
 Most connectors need no configuration beyond `connectorId`.
 The rest cover specific charger behaviors.
@@ -96,6 +97,7 @@ The rest cover specific charger behaviors.
 `hardwareMaxCurrentKey` binds the `hardware-max-current` channel to a vendor `ChangeConfiguration` key, since the hardware ceiling is not a standard OCPP setting.
 `stuckStateRecovery` is left off because auto-unlocking a connector is a physical side effect, and `Preparing` and `Finishing` are normal states a charger can dwell in.
 `remoteStartRetries` is for a charger that intermittently ignores the first `RemoteStartTransaction`: the binding re-sends it up to that many times, a few seconds apart, and stops as soon as a transaction starts, so it never double-starts. Off (0) by default, so a charger that answers first time is unaffected.
+`externalEnergyItem` is for a charger with no internal meter (a Phoenix CHARX, say): point it at a Number item carrying that connector's cumulative imported energy in kWh — from a separate meter such as a Modbus energy clamp — and the binding reads that item at the start and stop of each session and uses the difference as the session's energy, exactly as it would the charger's own meter. A `Number:Energy` item is converted from its own unit; a plain `Number` is read as kWh. Without it, a meter-less charger logs sessions with zero energy.
 
 ## Channels
 

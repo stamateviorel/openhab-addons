@@ -32,4 +32,5 @@ public class OcppConnectorConfiguration {
     public int refreshInterval = 0;
     public boolean stuckStateRecovery = false;
     public int remoteStartRetries = 0;
+    public String externalEnergyItem = "";
 }

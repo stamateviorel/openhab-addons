@@ -305,6 +305,14 @@
 				<default>0</default>
 				<advanced>true</advanced>
 			</parameter>
+			<parameter name="externalEnergyItem" type="text">
+				<context>item</context>
+				<label>External Energy Meter</label>
+				<description>Name of a Number item holding this connector's cumulative imported energy (kWh), used for usage
+					accounting when the charger has no OCPP meter. When set, its reading at start and stop gives the session
+					energy
+					instead of the charger's MeterValues.</description>
+			</parameter>
 		</config-description>
 	</thing-type>
 
