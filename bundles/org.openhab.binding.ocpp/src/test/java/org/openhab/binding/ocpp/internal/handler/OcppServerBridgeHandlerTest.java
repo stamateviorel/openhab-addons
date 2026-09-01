@@ -141,11 +141,24 @@ class OcppServerBridgeHandlerTest {
 
     @Test
     void externalEnergyReadingsConvertToWattHours() {
-        assertEquals(Integer.valueOf(5000), OcppServerBridgeHandler.externalWh(new QuantityType<>("5 kWh")));
-        assertEquals(Integer.valueOf(5000), OcppServerBridgeHandler.externalWh(new QuantityType<>("5000 Wh")));
-        assertEquals(Integer.valueOf(5000), OcppServerBridgeHandler.externalWh(new DecimalType(5)));
-        assertNull(OcppServerBridgeHandler.externalWh(UnDefType.UNDEF));
-        assertNull(OcppServerBridgeHandler.externalWh(new QuantityType<>("5 W")));
+        assertEquals(Integer.valueOf(5000), OcppServerBridgeHandler.energyReadingWh(new QuantityType<>("5 kWh"), true));
+        assertEquals(Integer.valueOf(5000),
+                OcppServerBridgeHandler.energyReadingWh(new QuantityType<>("5000 Wh"), false));
+        assertEquals(Integer.valueOf(5000), OcppServerBridgeHandler.energyReadingWh(new DecimalType(5), true));
+        assertEquals(Integer.valueOf(5000), OcppServerBridgeHandler.energyReadingWh(new DecimalType(5000), false));
+        assertNull(OcppServerBridgeHandler.energyReadingWh(UnDefType.UNDEF, true));
+        assertNull(OcppServerBridgeHandler.energyReadingWh(new QuantityType<>("5 W"), true));
+    }
+
+    @Test
+    void externalPowerReadingsConvertToWatts() {
+        assertEquals(Double.valueOf(7000.0), OcppServerBridgeHandler.powerReadingW(new QuantityType<>("7 kW"), true));
+        assertEquals(Double.valueOf(7000.0),
+                OcppServerBridgeHandler.powerReadingW(new QuantityType<>("7000 W"), false));
+        assertEquals(Double.valueOf(7000.0), OcppServerBridgeHandler.powerReadingW(new DecimalType(7), true));
+        assertEquals(Double.valueOf(7000.0), OcppServerBridgeHandler.powerReadingW(new DecimalType(7000), false));
+        assertNull(OcppServerBridgeHandler.powerReadingW(UnDefType.UNDEF, false));
+        assertNull(OcppServerBridgeHandler.powerReadingW(new QuantityType<>("7 kWh"), true));
     }
 
     @Test

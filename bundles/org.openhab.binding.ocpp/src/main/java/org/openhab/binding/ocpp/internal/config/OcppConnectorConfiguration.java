@@ -33,4 +33,5 @@ public class OcppConnectorConfiguration {
     public boolean stuckStateRecovery = false;
     public int remoteStartRetries = 0;
     public String externalEnergyItem = "";
+    public String externalMeterType = "energy-kwh";
 }

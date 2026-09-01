@@ -308,10 +308,24 @@
 			<parameter name="externalEnergyItem" type="text">
 				<context>item</context>
 				<label>External Energy Meter</label>
-				<description>Name of a Number item holding this connector's cumulative imported energy (kWh), used for usage
-					accounting when the charger has no OCPP meter. When set, its reading at start and stop gives the session
-					energy
-					instead of the charger's MeterValues.</description>
+				<description>Name of a Number item that meters this connector, used for usage accounting when the charger has no
+					OCPP meter. When set, it supplies the session energy instead of the charger's MeterValues.</description>
+			</parameter>
+			<parameter name="externalMeterType" type="text">
+				<label>External Meter Type</label>
+				<description>How to read the External Energy Meter item: a cumulative energy counter (differenced over the
+					session)
+					or an instantaneous power reading (integrated over the session). A Number:Energy or Number:Power
+					item is converted
+					from its own unit; a plain Number is read in the unit chosen here.</description>
+				<options>
+					<option value="energy-kwh">Cumulative energy (kWh)</option>
+					<option value="energy-wh">Cumulative energy (Wh)</option>
+					<option value="power-kw">Instantaneous power (kW)</option>
+					<option value="power-w">Instantaneous power (W)</option>
+				</options>
+				<limitToOptions>true</limitToOptions>
+				<default>energy-kwh</default>
 			</parameter>
 		</config-description>
 	</thing-type>

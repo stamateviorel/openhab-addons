@@ -150,6 +150,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private volatile int phases = 1;
     private volatile int remoteStartRetries;
     private volatile String externalEnergyItem = "";
+    private volatile String externalMeterType = "energy-kwh";
 
     private volatile @Nullable OcppChargePointHandler chargePoint;
     private volatile @Nullable Integer transactionId;
@@ -197,6 +198,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         phases = config.phases;
         remoteStartRetries = config.remoteStartRetries;
         externalEnergyItem = config.externalEnergyItem;
+        externalMeterType = config.externalMeterType;
         OcppChargePointHandler parent = chargePointHandler();
         if (parent == null) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_UNINITIALIZED);
@@ -216,6 +218,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
     /** The item feeding session energy when the charger has no OCPP meter, or empty. */
     public String getExternalEnergyItem() {
         return externalEnergyItem;
+    }
+
+    /** How to read {@link #getExternalEnergyItem}: energy-kwh, energy-wh, power-kw or power-w. */
+    public String getExternalMeterType() {
+        return externalMeterType;
     }
 
     private void recoverTransaction(OcppChargePointHandler parent) {

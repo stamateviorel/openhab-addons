@@ -264,14 +264,25 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         connectors.remove(connectorId);
     }
 
-    /** Name of the item metering this connector externally, or {@code null} when none is configured. */
-    public @Nullable String externalEnergyItem(int connectorId) {
+    /** The external energy meter configured on a connector, or {@code null} when none is. */
+    public @Nullable ExternalMeter externalMeter(int connectorId) {
         OcppConnectorHandler connector = connectors.get(connectorId);
         if (connector == null) {
             return null;
         }
         String item = connector.getExternalEnergyItem();
-        return item.isBlank() ? null : item;
+        if (item.isBlank()) {
+            return null;
+        }
+        String type = connector.getExternalMeterType();
+        return new ExternalMeter(item, type.startsWith("power"), type.contains("kw"));
+    }
+
+    /**
+     * An item metering a connector: {@code power} = integrate over the session, else cumulative; {@code kilo} =
+     * k-prefixed unit.
+     */
+    public record ExternalMeter(String itemName, boolean power, boolean kilo) {
     }
 
     public CompletionStage<Confirmation> send(Request request) {

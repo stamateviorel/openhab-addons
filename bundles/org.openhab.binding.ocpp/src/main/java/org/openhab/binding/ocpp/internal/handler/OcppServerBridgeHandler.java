@@ -22,6 +22,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -68,8 +70,12 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     private final Logger logger = LoggerFactory.getLogger(OcppServerBridgeHandler.class);
 
+    private static final long POWER_SAMPLE_SECONDS = 30;
+
     private final Map<UUID, String> sessionChargePoints = new ConcurrentHashMap<>();
     private final Map<String, OcppChargePointHandler> chargePoints = new ConcurrentHashMap<>();
+    private final Map<Integer, PowerTally> powerTallies = new ConcurrentHashMap<>();
+    private volatile @Nullable ScheduledFuture<?> powerSampler;
 
     private final Object lifecycleLock = new Object();
     private volatile boolean disposed;
@@ -126,6 +132,13 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         transactionStore = new TransactionStore(storageService.getStorage(getThing().getUID().getAsString()));
         cpms = new CpmsService(storageService.getStorage(getThing().getUID().getAsString() + ":cpms"));
         updateStatus(ThingStatus.UNKNOWN);
+
+        ScheduledFuture<?> previousSampler = powerSampler;
+        if (previousSampler != null) {
+            previousSampler.cancel(false);
+        }
+        powerSampler = scheduler.scheduleWithFixedDelay(this::samplePowerTallies, POWER_SAMPLE_SECONDS,
+                POWER_SAMPLE_SECONDS, TimeUnit.SECONDS);
 
         OcppTransport newTransport = createTransport(localConfig);
         long generation;
@@ -188,6 +201,12 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         if (localTransport != null) {
             localTransport.stop();
         }
+        ScheduledFuture<?> sampler = powerSampler;
+        if (sampler != null) {
+            sampler.cancel(false);
+            powerSampler = null;
+        }
+        powerTallies.clear();
         sessionChargePoints.clear();
         chargePoints.clear();
     }
@@ -340,8 +359,17 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
         CpmsService service = cpms;
         if (service != null && chargePointId != null && connectorId != null) {
-            Integer external = externalMeterWh(chargePointId, connectorId);
-            Integer meterStart = external != null ? external : request.getMeterStart();
+            OcppChargePointHandler.ExternalMeter meter = externalMeterFor(chargePointId, connectorId);
+            Integer meterStart;
+            if (meter == null) {
+                meterStart = request.getMeterStart();
+            } else if (meter.power()) {
+                startPowerTally(transactionId, meter);
+                meterStart = 0;
+            } else {
+                Integer reading = energyMeterWh(meter);
+                meterStart = reading != null ? reading : request.getMeterStart();
+            }
             service.onTransactionStart(transactionId, request.getIdTag(), chargePointId, connectorId, meterStart,
                     epochOf(request.getTimestamp()));
         }
@@ -358,8 +386,17 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         if (service != null && stopTransactionId != null) {
             String cpId = sessionChargePoints.get(session);
             Integer connId = cpId == null ? null : transactionConnector(stopTransactionId, cpId);
-            Integer external = cpId != null && connId != null ? externalMeterWh(cpId, connId) : null;
-            Integer meterStop = external != null ? external : request.getMeterStop();
+            OcppChargePointHandler.ExternalMeter meter = cpId != null && connId != null ? externalMeterFor(cpId, connId)
+                    : null;
+            Integer meterStop;
+            if (meter == null) {
+                meterStop = request.getMeterStop();
+            } else if (meter.power()) {
+                meterStop = finishPowerTally(stopTransactionId);
+            } else {
+                Integer reading = energyMeterWh(meter);
+                meterStop = reading != null ? reading : request.getMeterStop();
+            }
             service.onTransactionStop(stopTransactionId, meterStop, epochOf(request.getTimestamp()));
         }
         OcppChargePointHandler handler = resolve(session);
@@ -392,31 +429,96 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         return cpms;
     }
 
-    private @Nullable Integer externalMeterWh(String chargePointId, int connectorId) {
+    private OcppChargePointHandler.@Nullable ExternalMeter externalMeterFor(String chargePointId, int connectorId) {
         OcppChargePointHandler handler = chargePoints.get(chargePointId);
-        String itemName = handler == null ? null : handler.externalEnergyItem(connectorId);
-        if (itemName == null) {
-            return null;
-        }
+        return handler == null ? null : handler.externalMeter(connectorId);
+    }
+
+    private @Nullable State meterState(String itemName) {
         try {
-            return externalWh(itemRegistry.getItem(itemName).getState());
+            return itemRegistry.getItem(itemName).getState();
         } catch (ItemNotFoundException e) {
-            logger.warn("External energy item {} for {}/{} not found; falling back to the OCPP meter", itemName,
-                    chargePointId, connectorId);
+            logger.warn("External energy item {} not found; falling back to the OCPP meter", itemName);
             return null;
         }
     }
 
-    /** A cumulative energy reading as Wh: a Quantity converted to Wh, or a plain number read as kWh. */
-    static @Nullable Integer externalWh(State state) {
+    private @Nullable Integer energyMeterWh(OcppChargePointHandler.ExternalMeter meter) {
+        State state = meterState(meter.itemName());
+        return state == null ? null : energyReadingWh(state, meter.kilo());
+    }
+
+    /**
+     * A cumulative energy reading as Wh: a Quantity converted from its own unit, or a plain number read per
+     * {@code kilo}.
+     */
+    static @Nullable Integer energyReadingWh(State state, boolean kilo) {
         if (state instanceof QuantityType<?> quantity) {
             QuantityType<?> wh = quantity.toUnit(Units.WATT_HOUR);
             return wh == null ? null : (int) Math.round(wh.doubleValue());
         }
         if (state instanceof DecimalType number) {
-            return (int) Math.round(number.doubleValue() * 1000.0);
+            return (int) Math.round(number.doubleValue() * (kilo ? 1000.0 : 1.0));
         }
         return null;
+    }
+
+    /**
+     * An instantaneous power reading as W: a Quantity converted from its own unit, or a plain number read per
+     * {@code kilo}.
+     */
+    static @Nullable Double powerReadingW(State state, boolean kilo) {
+        if (state instanceof QuantityType<?> quantity) {
+            QuantityType<?> watts = quantity.toUnit(Units.WATT);
+            return watts == null ? null : watts.doubleValue();
+        }
+        if (state instanceof DecimalType number) {
+            return number.doubleValue() * (kilo ? 1000.0 : 1.0);
+        }
+        return null;
+    }
+
+    private void startPowerTally(int transactionId, OcppChargePointHandler.ExternalMeter meter) {
+        powerTallies.put(transactionId, new PowerTally(meter.itemName(), meter.kilo(), System.currentTimeMillis()));
+    }
+
+    /** Integrate one interval of power into every open tally — the running estimate of a power-metered session's Wh. */
+    private void samplePowerTallies() {
+        long now = System.currentTimeMillis();
+        for (PowerTally tally : powerTallies.values()) {
+            tally.accumulate(now, this);
+        }
+    }
+
+    private @Nullable Integer finishPowerTally(int transactionId) {
+        PowerTally tally = powerTallies.remove(transactionId);
+        if (tally == null) {
+            return null;
+        }
+        tally.accumulate(System.currentTimeMillis(), this);
+        return (int) Math.round(tally.wh);
+    }
+
+    private static final class PowerTally {
+        private final String itemName;
+        private final boolean kilo;
+        private double wh;
+        private long lastSampleMs;
+
+        PowerTally(String itemName, boolean kilo, long startMs) {
+            this.itemName = itemName;
+            this.kilo = kilo;
+            this.lastSampleMs = startMs;
+        }
+
+        void accumulate(long now, OcppServerBridgeHandler bridge) {
+            State state = bridge.meterState(itemName);
+            Double watts = state == null ? null : powerReadingW(state, kilo);
+            if (watts != null) {
+                wh += watts * (now - lastSampleMs) / 3_600_000.0;
+            }
+            lastSampleMs = now;
+        }
     }
 
     private static long epochOf(@Nullable ZonedDateTime timestamp) {
