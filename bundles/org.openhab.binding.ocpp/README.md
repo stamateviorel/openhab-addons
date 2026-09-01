@@ -165,7 +165,9 @@ A pause is a 0 A limit, so a resume must lift the cap rather than send another 0
 
 A private site with several chargers often wants to know who charged and how much. Add a `cpms-user` thing per person and the binding tracks their energy and can gate authorization on their cards — all optional; without any users, authorization falls back to the [Add-on Settings](#add-on-settings) whitelist and no usage is tracked.
 
-A `cpms-user` carries the person's `cards` (their RFID idTags), an `enabled` switch (off blocks that person's cards from starting a charge), and an optional `monthlyCapKwh` for reference. Its `month-energy` and `year-energy` channels report the kWh that person has drawn since the start of the month and year, summed across every charger from the transactions the binding logs.
+A `cpms-user` carries the person's `cards` (their RFID idTags), an `enabled` switch (off blocks that person's cards from starting a charge), and an optional `monthlyCapKwh`. The cap is enforced: once that person's charging this month reaches it, their cards stop authorizing until the next month rolls over. Its `month-energy` and `year-energy` channels report the kWh that person has drawn since the start of the month and year, summed across every charger from the transactions the binding logs.
+
+The session log is append-only and never trimmed, so month and year totals stay computable for as far back as the binding has run; if the stored log is ever found unreadable, a new session is dropped rather than allowed to overwrite the history.
 
 To add someone without typing card ids, turn on Discover New Cards in Add-on Settings, have them tap their card, and it appears in the inbox as a new user pre-filled with that card — accept it and give it their name. Turn Discover off again once everyone is enrolled. You can also add a `cpms-user` by hand and type the cards in.
 

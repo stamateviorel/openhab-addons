@@ -16,6 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -124,6 +127,60 @@ class CpmsServiceTest {
         assertEquals(2, recent.size());
         assertEquals(300L, recent.get(0).stopEpoch());
         assertEquals(200L, recent.get(1).stopEpoch());
+    }
+
+    @Test
+    void aCardIsBlockedOnceThisMonthReachesTheCap() {
+        CpmsService capped = new CpmsService(storage,
+                Clock.fixed(Instant.parse("2026-06-15T12:00:00Z"), ZoneOffset.UTC));
+        capped.registerUser(new CpmsUser("u1", "Geert", true, 10, List.of("CARD-A")));
+
+        cappedSession(capped, 1, "CARD-A", "2026-06-10T00:00:00Z", 6000);
+        assertEquals(Boolean.TRUE, capped.authorize("CARD-A"));
+
+        cappedSession(capped, 2, "CARD-A", "2026-06-12T00:00:00Z", 5000);
+        assertEquals(Boolean.FALSE, capped.authorize("CARD-A"));
+    }
+
+    @Test
+    void lastMonthUsageDoesNotCountAgainstThisMonthsCap() {
+        CpmsService capped = new CpmsService(storage,
+                Clock.fixed(Instant.parse("2026-06-15T12:00:00Z"), ZoneOffset.UTC));
+        capped.registerUser(new CpmsUser("u1", "Geert", true, 10, List.of("CARD-A")));
+
+        cappedSession(capped, 1, "CARD-A", "2026-05-20T00:00:00Z", 50000);
+
+        assertEquals(Boolean.TRUE, capped.authorize("CARD-A"));
+    }
+
+    @Test
+    void everySessionIsRetainedAndPastYearsStayComputable() {
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
+        cappedSession(cpms, 1, "CARD-A", "2025-01-10T00:00:00Z", 3000);
+        cappedSession(cpms, 2, "CARD-A", "2026-06-10T00:00:00Z", 4000);
+
+        assertEquals(2, cpms.transactions().size());
+        assertEquals(3.0, cpms.energyKwh("u1", ms("2025-01-01T00:00:00Z"), ms("2026-01-01T00:00:00Z")));
+        assertEquals(4.0, cpms.energyKwh("u1", ms("2026-01-01T00:00:00Z"), ms("2027-01-01T00:00:00Z")));
+    }
+
+    @Test
+    void anUnreadableLogIsNotOverwrittenByANewSession() {
+        storage.put("transactions", "{not a valid transaction array");
+        cpms.onTransactionStart(5, "CARD-A", "charger1", 1, 0, 100L);
+        cpms.onTransactionStop(5, 5000, 200L);
+
+        assertEquals("{not a valid transaction array", storage.get("transactions"));
+    }
+
+    private static long ms(String iso) {
+        return Instant.parse(iso).toEpochMilli();
+    }
+
+    private void cappedSession(CpmsService svc, int transactionId, String card, String stopIso, int energyWh) {
+        long stopEpoch = ms(stopIso);
+        svc.onTransactionStart(transactionId, card, "charger1", 1, 0, stopEpoch - 1000);
+        svc.onTransactionStop(transactionId, energyWh, stopEpoch);
     }
 
     private void session(int transactionId, String card, long stopEpoch, int energyWh) {

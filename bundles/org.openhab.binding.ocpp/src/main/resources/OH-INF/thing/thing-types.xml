@@ -338,9 +338,10 @@
 			</parameter>
 			<parameter name="monthlyCapKwh" type="decimal" min="0">
 				<label>Monthly Cap (kWh)</label>
-				<description>Optional monthly kWh cap, for reference. 0 = none.</description>
+				<description>Monthly kWh cap. Once this person's charging this month reaches it, their cards stop authorizing
+					until
+					the next month. 0 = no cap.</description>
 				<default>0</default>
-				<advanced>true</advanced>
 			</parameter>
 		</config-description>
 	</thing-type>

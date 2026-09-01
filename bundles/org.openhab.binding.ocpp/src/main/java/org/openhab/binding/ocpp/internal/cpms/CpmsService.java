@@ -12,6 +12,8 @@
  */
 package org.openhab.binding.ocpp.internal.cpms;
 
+import java.time.Clock;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -21,8 +23,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.storage.Storage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 
 /**
  * The CPMS: a user/card registry, person-based authorization, and a persisted log of completed
@@ -37,12 +42,19 @@ public class CpmsService {
     private static final String KEY_TRANSACTIONS = "transactions";
     private static final String OPEN_PREFIX = "open:";
 
+    private final Logger logger = LoggerFactory.getLogger(CpmsService.class);
     private final Storage<String> storage;
     private final Gson gson = new Gson();
     private final Map<String, CpmsUser> userRegistry = new ConcurrentHashMap<>();
+    private final Clock clock;
 
     public CpmsService(Storage<String> storage) {
+        this(storage, Clock.systemDefaultZone());
+    }
+
+    CpmsService(Storage<String> storage, Clock clock) {
         this.storage = storage;
+        this.clock = clock;
     }
 
     /** Registered by the CPMS user Things, which are the source of truth for people and their cards. */
@@ -79,7 +91,21 @@ public class CpmsService {
             return false;
         }
         CpmsUser user = userForCard(idTag);
-        return user != null && user.enabled();
+        if (user == null || !user.enabled()) {
+            return false;
+        }
+        double cap = user.monthlyCapKwh();
+        if (cap > 0 && energyKwh(user.id(), monthStartEpoch(), Long.MAX_VALUE) >= cap) {
+            logger.info("User {} reached the monthly cap of {} kWh; card {} rejected until next month", user.name(),
+                    cap, idTag);
+            return false;
+        }
+        return true;
+    }
+
+    private long monthStartEpoch() {
+        ZonedDateTime now = ZonedDateTime.now(clock);
+        return now.toLocalDate().withDayOfMonth(1).atStartOfDay(now.getZone()).toInstant().toEpochMilli();
     }
 
     public synchronized void onTransactionStart(int transactionId, @Nullable String idTag, String chargePointId,
@@ -105,16 +131,35 @@ public class CpmsService {
         // A meter-less charger sends no meterStop, so the session is logged with 0 energy.
         double energy = meterStop == null ? 0 : Math.max(0, meterStop - open.meterStart());
         CpmsUser user = userForCard(open.idTag());
-        List<CpmsTransaction> log = transactions();
+        List<CpmsTransaction> log = readLog();
+        if (log == null) {
+            // Never overwrite an unreadable log — that would wipe every past month's history at once.
+            logger.error("CPMS transaction log is unreadable; session {} not recorded to preserve past usage",
+                    transactionId);
+            return;
+        }
         log.add(new CpmsTransaction(open.idTag(), user == null ? null : user.id(), open.chargePointId(),
                 open.connectorId(), open.startEpoch(), stopEpoch, energy));
         storage.put(KEY_TRANSACTIONS, gson.toJson(log));
     }
 
+    /** Every session ever recorded — the durable log is append-only and never trimmed. */
     public synchronized List<CpmsTransaction> transactions() {
+        List<CpmsTransaction> log = readLog();
+        return log == null ? new ArrayList<>() : log;
+    }
+
+    private @Nullable List<CpmsTransaction> readLog() {
         String json = storage.get(KEY_TRANSACTIONS);
-        CpmsTransaction @Nullable [] arr = json == null ? null : gson.fromJson(json, CpmsTransaction[].class);
-        return arr == null ? new ArrayList<>() : new ArrayList<>(List.of(arr));
+        if (json == null) {
+            return new ArrayList<>();
+        }
+        try {
+            CpmsTransaction @Nullable [] arr = gson.fromJson(json, CpmsTransaction[].class);
+            return arr == null ? new ArrayList<>() : new ArrayList<>(List.of(arr));
+        } catch (JsonSyntaxException e) {
+            return null;
+        }
     }
 
     /** The most recent sessions first, up to {@code limit}. */
