@@ -41,6 +41,7 @@ import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.unit.Units;
+import org.openhab.core.storage.Storage;
 import org.openhab.core.storage.StorageService;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ChannelUID;
@@ -52,6 +53,8 @@ import org.openhab.core.types.Command;
 import org.openhab.core.types.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.gson.Gson;
 
 import eu.chargetime.ocpp.model.core.BootNotificationRequest;
 import eu.chargetime.ocpp.model.core.MeterValuesRequest;
@@ -76,6 +79,8 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private final Map<String, OcppChargePointHandler> chargePoints = new ConcurrentHashMap<>();
     private final Map<Integer, PowerTally> powerTallies = new ConcurrentHashMap<>();
     private volatile @Nullable ScheduledFuture<?> powerSampler;
+    private final Gson gson = new Gson();
+    private volatile @Nullable Storage<String> powerStore;
 
     private final Object lifecycleLock = new Object();
     private volatile boolean disposed;
@@ -131,6 +136,8 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         disposed = false;
         transactionStore = new TransactionStore(storageService.getStorage(getThing().getUID().getAsString()));
         cpms = new CpmsService(storageService.getStorage(getThing().getUID().getAsString() + ":cpms"));
+        powerStore = storageService.getStorage(getThing().getUID().getAsString() + ":power");
+        reloadPowerTallies();
         updateStatus(ThingStatus.UNKNOWN);
 
         ScheduledFuture<?> previousSampler = powerSampler;
@@ -488,20 +495,61 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     private void startPowerTally(int transactionId, OcppChargePointHandler.ExternalMeter meter) {
-        powerTallies.put(transactionId, new PowerTally(meter.itemName(), meter.kilo(), System.currentTimeMillis()));
+        PowerTally tally = new PowerTally(meter.itemName(), meter.kilo(), System.currentTimeMillis(), 0);
+        powerTallies.put(transactionId, tally);
+        persistTally(transactionId, tally);
     }
 
     /** Integrate one interval of power into every open tally — the running estimate of a power-metered session's Wh. */
     private void samplePowerTallies() {
         long now = System.currentTimeMillis();
-        for (PowerTally tally : powerTallies.values()) {
-            tally.accumulate(now, this);
+        for (Map.Entry<Integer, PowerTally> entry : powerTallies.entrySet()) {
+            entry.getValue().accumulate(now, this);
+            persistTally(entry.getKey(), entry.getValue());
         }
     }
 
     private @Nullable Integer finishPowerTally(int transactionId) {
         PowerTally tally = powerTallies.remove(transactionId);
-        return tally == null ? null : (int) Math.round(tally.finish(System.currentTimeMillis(), this));
+        if (tally == null) {
+            return null;
+        }
+        Storage<String> store = powerStore;
+        if (store != null) {
+            store.remove(String.valueOf(transactionId));
+        }
+        return (int) Math.round(tally.finish(System.currentTimeMillis(), this));
+    }
+
+    /** Persist a running tally so a power-integrated session survives an openHAB restart mid-charge. */
+    private void persistTally(int transactionId, PowerTally tally) {
+        Storage<String> store = powerStore;
+        if (store != null) {
+            store.put(String.valueOf(transactionId), gson.toJson(tally.persisted()));
+        }
+    }
+
+    private void reloadPowerTallies() {
+        Storage<String> store = powerStore;
+        if (store == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (String key : store.getKeys()) {
+            String json = store.get(key);
+            if (json == null) {
+                continue;
+            }
+            try {
+                // Restart from the persisted Wh, but reset the clock to now: no power flowed while openHAB was down.
+                PersistedTally p = gson.fromJson(json, PersistedTally.class);
+                if (p != null) {
+                    powerTallies.put(Integer.valueOf(key), new PowerTally(p.itemName(), p.kilo(), now, p.wh()));
+                }
+            } catch (RuntimeException e) {
+                logger.warn("Could not restore power tally {}: {}", key, e.getMessage());
+            }
+        }
     }
 
     private static final class PowerTally {
@@ -510,10 +558,11 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         private double wh;
         private long lastSampleMs;
 
-        PowerTally(String itemName, boolean kilo, long startMs) {
+        PowerTally(String itemName, boolean kilo, long startMs, double initialWh) {
             this.itemName = itemName;
             this.kilo = kilo;
             this.lastSampleMs = startMs;
+            this.wh = initialWh;
         }
 
         // Synchronized: the 30s sampler and the inbound StopTransaction thread both reach a tally.
@@ -530,6 +579,13 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             accumulate(now, bridge);
             return wh;
         }
+
+        synchronized PersistedTally persisted() {
+            return new PersistedTally(itemName, kilo, wh);
+        }
+    }
+
+    private record PersistedTally(String itemName, boolean kilo, double wh) {
     }
 
     private static long epochOf(@Nullable ZonedDateTime timestamp) {

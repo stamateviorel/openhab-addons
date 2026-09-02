@@ -47,6 +47,7 @@ public class CpmsService {
     private final Gson gson = new Gson();
     private final Map<String, CpmsUser> userRegistry = new ConcurrentHashMap<>();
     private final Clock clock;
+    private @Nullable List<CpmsTransaction> cache;
 
     public CpmsService(Storage<String> storage) {
         this(storage, Clock.systemDefaultZone());
@@ -148,17 +149,27 @@ public class CpmsService {
     /** Every session ever recorded — the durable log is append-only and never trimmed. */
     public synchronized List<CpmsTransaction> transactions() {
         List<CpmsTransaction> log = readLog();
-        return log == null ? new ArrayList<>() : log;
+        return log == null ? new ArrayList<>() : new ArrayList<>(log);
     }
 
+    /**
+     * The live log, parsed from storage once and cached in memory so authorize does not re-parse the JSON on
+     * every tap. Returns {@code null} only when the stored JSON is corrupt (never cached, never clobbered).
+     */
     private @Nullable List<CpmsTransaction> readLog() {
+        List<CpmsTransaction> cached = cache;
+        if (cached != null) {
+            return cached;
+        }
         String json = storage.get(KEY_TRANSACTIONS);
         if (json == null) {
-            return new ArrayList<>();
+            cache = new ArrayList<>();
+            return cache;
         }
         try {
             CpmsTransaction @Nullable [] arr = gson.fromJson(json, CpmsTransaction[].class);
-            return arr == null ? new ArrayList<>() : new ArrayList<>(List.of(arr));
+            cache = arr == null ? new ArrayList<>() : new ArrayList<>(List.of(arr));
+            return cache;
         } catch (JsonSyntaxException e) {
             return null;
         }
