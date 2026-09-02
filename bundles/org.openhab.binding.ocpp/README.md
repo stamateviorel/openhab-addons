@@ -1,11 +1,35 @@
 # OCPP Binding
 
-This binding lets openHAB act as an OCPP 1.6-J central system, so EV chargers (charge points) that speak OCPP connect directly to openHAB — no vendor cloud required.
+This binding lets openHAB act as an OCPP central system, so EV chargers (charge points) that speak OCPP connect directly to openHAB — no vendor cloud required.
+It speaks both OCPP 1.6-J and OCPP 2.0.1, and each charger settles on one of them when it connects.
 It is built on the [ChargeTime OCA-OCPP](https://github.com/ChargeTimeEU/Java-OCA-OCPP) library.
 
 Chargers open a WebSocket connection to openHAB and are modelled as a three-tier hierarchy that mirrors OCPP itself: one server endpoint, the charge points that dial in to it, and the connectors of each charge point.
 
 It reports connection state, connector status and metering, and controls charging: current limit, pause, remote start/stop, availability, unlock and reset.
+
+## Protocol versions
+
+A charger picks the version at the WebSocket handshake, by asking for the `ocpp1.6` or `ocpp2.0.1`
+subprotocol, and keeps it for the life of the connection. Nothing has to be configured for this: the
+same endpoint answers both, and one charger can be on 1.6 while the next is on 2.0.1. A charger that
+asks for no subprotocol at all is treated as 1.6. The Things, channels and users are the same either
+way, so a charger can be moved between versions without touching the openHAB side.
+
+Three differences are worth knowing about, because they show up in what the channels report:
+
+- 2.0.1 has five connector statuses where 1.6 had nine, and moved the rest into the transaction it
+  belongs to. The `charge-point-status` channel still reports the 1.6 names; `Occupied` reads as
+  `Preparing` until the charger says what the vehicle is doing.
+- 2.0.1 lets the charger name a transaction with text rather than a number. The `transaction-id`
+  channel keeps reporting the number the binding logs usage under, and the charger's own id is used
+  when a stop has to be sent.
+- Capabilities come from the 2.0.1 device model rather than a flat key list, so they arrive a moment
+  after the charger connects rather than in a single answer.
+
+The `extraConfig` entries on the `server` are named with 1.6 keys. On a 2.0.1 charger the ones the
+binding knows are mapped onto their device-model variables; anything else has to be written as
+`Component.Variable`, and a bare key that cannot be mapped is skipped with a note in the log.
 
 ## Supported Things
 
@@ -282,7 +306,7 @@ Every charger dials `ws://<openhab-host>:<port>/<chargePointId>`; the only real 
 | ----------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Phoenix Contact CHARX SEC-3xxx      | `ws://<host>:8887/<id>`                                                           | No internal meter: set `meterless` on the `chargepoint` and `forceTxDefaultProfile` on the `connector`. Metered externally.                                          |
 | Wallbox Copper SB / Pulsar Plus     | `ws://<host>:8887/<id>`                                                           | Works with defaults.                                                                                                                                                 |
-| Alfen Eve Single Pro                | `ws://<host>:8887/<id>` (CSMS URL in the ACE Service Installer)                   | Its BootNotification model can exceed OCPP's 20-character limit; the binding accepts it rather than refusing the charger.                                            |
+| Alfen Eve Single/Double             | `ws://<host>:8887/<id>` (CSMS URL in the ACE Service Installer)                   | Speaks either version; the network profile that wins decides which. Its BootNotification model can exceed OCPP's 20-character limit; the binding accepts it rather than refusing the charger. |
 | Mennekes Amtron (Bender controller) | Backend URL `ws://<host>:8887/` plus ChargeBoxIdentity `<id>` in a separate field | The controller joins them into `ws://<host>:8887/<id>`. Do not copy the `/OCPPJProxy/v16/` path from the Bender docs — that is only for their proxy backend.         |
 | V2C Trydan                          | `ws://<host>:8887/<id>`                                                           | Sends a short-password HTTP Basic-auth header on every connection; accepted (the binding relaxes the library's password-length check when no `authPassword` is set). |
 
