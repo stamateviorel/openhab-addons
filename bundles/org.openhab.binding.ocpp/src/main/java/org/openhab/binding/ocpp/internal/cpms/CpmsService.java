@@ -123,24 +123,26 @@ public class CpmsService {
         if (json == null) {
             return;
         }
-        storage.remove(key);
         OpenTx open = gson.fromJson(json, OpenTx.class);
         if (open == null) {
+            storage.remove(key);
+            return;
+        }
+        List<CpmsTransaction> log = readLog();
+        if (log == null) {
+            // Never overwrite an unreadable log — that would wipe every past month's history at once. Keep the
+            // open key so the session is not also lost from the open store; it can be recovered once the log is fixed.
+            logger.error("CPMS transaction log is unreadable; session {} not recorded to preserve past usage",
+                    transactionId);
             return;
         }
         // A meter-less charger sends no meterStop, so the session is logged with 0 energy.
         double energy = meterStop == null ? 0 : Math.max(0, meterStop - open.meterStart());
         CpmsUser user = userForCard(open.idTag());
-        List<CpmsTransaction> log = readLog();
-        if (log == null) {
-            // Never overwrite an unreadable log — that would wipe every past month's history at once.
-            logger.error("CPMS transaction log is unreadable; session {} not recorded to preserve past usage",
-                    transactionId);
-            return;
-        }
         log.add(new CpmsTransaction(open.idTag(), user == null ? null : user.id(), open.chargePointId(),
                 open.connectorId(), open.startEpoch(), stopEpoch, energy));
         storage.put(KEY_TRANSACTIONS, gson.toJson(log));
+        storage.remove(key);
     }
 
     /** Every session ever recorded — the durable log is append-only and never trimmed. */

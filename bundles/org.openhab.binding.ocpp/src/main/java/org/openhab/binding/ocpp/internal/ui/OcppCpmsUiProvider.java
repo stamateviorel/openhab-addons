@@ -15,6 +15,7 @@ package org.openhab.binding.ocpp.internal.ui;
 import static org.openhab.binding.ocpp.internal.OcppBindingConstants.THING_TYPE_SERVER;
 
 import java.time.Instant;
+import java.time.YearMonth;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collection;
@@ -139,7 +140,8 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
         if (cpms == null) {
             return "none";
         }
-        StringBuilder sb = new StringBuilder().append(cpms.transactions().size());
+        // Include the month so the "this month" totals rebuild at the rollover, not only on the next session.
+        StringBuilder sb = new StringBuilder().append(YearMonth.now()).append('#').append(cpms.transactions().size());
         for (CpmsUser user : cpms.users()) {
             sb.append('|').append(user.id()).append(user.enabled()).append(user.name());
         }

@@ -16,7 +16,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -25,6 +24,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.Collection;
 import java.util.Dictionary;
+import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
 
@@ -78,13 +78,17 @@ class OcppBindingConfigTest {
     }
 
     @Test
-    void addToWhitelistPersistsThroughConfigurationAdmin() throws Exception {
+    void addToWhitelistAppendsToThePersistedListNotTheStaleField() throws Exception {
+        // The in-memory field is empty (null props); the new tag must still be appended to the persisted [KNOWN],
+        // so two cards learned before the async modified callback lands do not overwrite each other.
         ConfigurationAdmin configAdmin = mock(ConfigurationAdmin.class);
         Configuration configuration = mock(Configuration.class);
         when(configAdmin.getConfiguration(eq("binding.ocpp"), any())).thenReturn(configuration);
-        when(configuration.getProperties()).thenReturn(null);
+        Dictionary<String, Object> props = new Hashtable<>();
+        props.put("whitelistTagIds", List.of("KNOWN"));
+        when(configuration.getProperties()).thenReturn(props);
 
-        new OcppBindingConfig(configAdmin, Map.of("whitelistTagIds", List.of("KNOWN"))).addToWhitelist("NEW");
+        new OcppBindingConfig(configAdmin, null).addToWhitelist("NEW");
 
         ArgumentCaptor<Dictionary<String, Object>> captor = ArgumentCaptor.forClass(Dictionary.class);
         verify(configuration).update(captor.capture());
@@ -96,9 +100,14 @@ class OcppBindingConfigTest {
     @Test
     void addToWhitelistIgnoresATagAlreadyPresent() throws Exception {
         ConfigurationAdmin configAdmin = mock(ConfigurationAdmin.class);
+        Configuration configuration = mock(Configuration.class);
+        when(configAdmin.getConfiguration(eq("binding.ocpp"), any())).thenReturn(configuration);
+        Dictionary<String, Object> props = new Hashtable<>();
+        props.put("whitelistTagIds", List.of("KNOWN"));
+        when(configuration.getProperties()).thenReturn(props);
 
-        new OcppBindingConfig(configAdmin, Map.of("whitelistTagIds", List.of("KNOWN"))).addToWhitelist("KNOWN");
+        new OcppBindingConfig(configAdmin, null).addToWhitelist("KNOWN");
 
-        verify(configAdmin, never()).getConfiguration(anyString(), any());
+        verify(configuration, never()).update(any());
     }
 }

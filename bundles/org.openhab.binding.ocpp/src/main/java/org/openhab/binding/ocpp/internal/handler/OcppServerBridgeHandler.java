@@ -320,15 +320,23 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     @Override
     public void onAuthorize(UUID session, @Nullable String idTag) {
-        if (idTag != null) {
-            if (bindingConfig.isAutoLearn() && !bindingConfig.getWhitelist().contains(idTag)) {
-                bindingConfig.addToWhitelist(idTag);
-            } else if (bindingConfig.isDiscoverCards()) {
-                CpmsService service = cpms;
-                OcppDiscoveryService discovery = discoveryService;
-                if (service != null && discovery != null && service.userForCard(idTag) == null) {
-                    discovery.cardDiscovered(idTag);
-                }
+        enrollCard(idTag);
+    }
+
+    /**
+     * Learn or offer an unknown card. Called on Authorize and on StartTransaction, since a charger may skip Authorize.
+     */
+    private void enrollCard(@Nullable String idTag) {
+        if (idTag == null) {
+            return;
+        }
+        if (bindingConfig.isAutoLearn() && !bindingConfig.getWhitelist().contains(idTag)) {
+            bindingConfig.addToWhitelist(idTag);
+        } else if (bindingConfig.isDiscoverCards()) {
+            CpmsService service = cpms;
+            OcppDiscoveryService discovery = discoveryService;
+            if (service != null && discovery != null && service.userForCard(idTag) == null) {
+                discovery.cardDiscovered(idTag);
             }
         }
     }
@@ -351,6 +359,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     @Override
     public void onStartTransaction(UUID session, StartTransactionRequest request, int transactionId) {
+        enrollCard(request.getIdTag());
         String chargePointId = sessionChargePoints.get(session);
         Integer connectorId = request.getConnectorId();
         if (chargePointId != null && connectorId != null) {
@@ -492,11 +501,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     private @Nullable Integer finishPowerTally(int transactionId) {
         PowerTally tally = powerTallies.remove(transactionId);
-        if (tally == null) {
-            return null;
-        }
-        tally.accumulate(System.currentTimeMillis(), this);
-        return (int) Math.round(tally.wh);
+        return tally == null ? null : (int) Math.round(tally.finish(System.currentTimeMillis(), this));
     }
 
     private static final class PowerTally {
@@ -511,13 +516,19 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             this.lastSampleMs = startMs;
         }
 
-        void accumulate(long now, OcppServerBridgeHandler bridge) {
+        // Synchronized: the 30s sampler and the inbound StopTransaction thread both reach a tally.
+        synchronized void accumulate(long now, OcppServerBridgeHandler bridge) {
             State state = bridge.meterState(itemName);
             Double watts = state == null ? null : powerReadingW(state, kilo);
             if (watts != null) {
                 wh += watts * (now - lastSampleMs) / 3_600_000.0;
             }
             lastSampleMs = now;
+        }
+
+        synchronized double finish(long now, OcppServerBridgeHandler bridge) {
+            accumulate(now, bridge);
+            return wh;
         }
     }
 

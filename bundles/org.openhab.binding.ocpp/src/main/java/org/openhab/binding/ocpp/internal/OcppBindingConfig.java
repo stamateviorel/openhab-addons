@@ -87,18 +87,23 @@ public class OcppBindingConfig {
         return whitelist;
     }
 
-    /** Persists a tag into the whitelist via Configuration Admin; the modified callback re-reads it. */
-    public void addToWhitelist(String idTag) {
-        if (whitelist.contains(idTag)) {
-            return;
-        }
+    /**
+     * Persists a tag into the whitelist via Configuration Admin; the modified callback re-reads it.
+     * Synchronized and built from the persisted list, not the in-memory field, so two cards learned before
+     * the async callback lands do not overwrite each other.
+     */
+    public synchronized void addToWhitelist(String idTag) {
         try {
             Configuration configuration = configAdmin.getConfiguration(PID, null);
             Dictionary<String, Object> props = configuration.getProperties();
             if (props == null) {
                 props = new Hashtable<>();
             }
-            List<String> updated = new ArrayList<>(whitelist);
+            List<String> current = toList(props.get(KEY_WHITELIST));
+            if (current.contains(idTag)) {
+                return;
+            }
+            List<String> updated = new ArrayList<>(current);
             updated.add(idTag);
             props.put(KEY_WHITELIST, updated);
             configuration.update(props);
