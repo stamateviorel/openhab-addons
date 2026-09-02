@@ -85,6 +85,8 @@ public class ChargeTimeTransport implements OcppTransport {
     private static final int PROBE_CONNECT_TIMEOUT_MILLIS = 250;
     private static final String MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY = "OCPPJ_CP_MIN_PASSWORD_LENGTH";
     private static final String MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY = "OCPPJ_CP_MAX_PASSWORD_LENGTH";
+    private static final String MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY_201 = "OCPP2J_CP_MIN_PASSWORD_LENGTH";
+    private static final String MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY_201 = "OCPP2J_CP_MAX_PASSWORD_LENGTH";
 
     private final Logger logger = LoggerFactory.getLogger(ChargeTimeTransport.class);
     private final Server server;
@@ -123,11 +125,15 @@ public class ChargeTimeTransport implements OcppTransport {
         // Off: many chargers never pong, so WebSocket pings would drop healthy sessions.
         configuration = configuration.setParameter(JSONConfiguration.PING_INTERVAL_PARAMETER,
                 pingIntervalSeconds > 0 ? pingIntervalSeconds : 0);
-        // Relax the library's handshake password-length check; real auth stays in authenticateSession.
-        if (authPassword.isBlank()) {
-            configuration = configuration.setParameter(MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY, 0);
-            configuration = configuration.setParameter(MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY, Integer.MAX_VALUE);
-        }
+        // The library refuses a handshake whose Basic-auth password falls outside a fixed window
+        // (16-20 for 1.6, 16-40 for 2.0.1) before the binding is consulted, which silently locks out
+        // chargers that always send a header with a short or empty password. Both windows are opened
+        // so authenticateSession is the only thing that decides: it accepts every charger when no
+        // authPassword is set, and compares the password exactly when one is.
+        configuration = configuration.setParameter(MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY, 0);
+        configuration = configuration.setParameter(MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY, Integer.MAX_VALUE);
+        configuration = configuration.setParameter(MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY_201, 0);
+        configuration = configuration.setParameter(MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY_201, Integer.MAX_VALUE);
 
         // The empty protocol stays last so a charger that offers no subprotocol is still accepted.
         Draft draft = new Draft_6455(List.of(),

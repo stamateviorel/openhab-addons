@@ -145,6 +145,94 @@ class ChargeTimeTransportTest {
         assertNegotiated("", "", OcppVersion.V1_6);
     }
 
+    @Test
+    void aShortPasswordBasicAuthChargerIsAcceptedOnOcpp201Too() throws Exception {
+        // 2.0.1 is length-checked against its own limits (16-40) rather than the 1.6 pair, so a
+        // charger set to security profile 1 is refused with a 401 unless both are relaxed.
+        CountDownLatch opened = new CountDownLatch(1);
+        ChargeTimeTransport transport = new ChargeTimeTransport(listener(opened::countDown), 0, 30, "", "", "");
+        int port = findFreePort();
+        transport.start("127.0.0.1", port);
+        WebSocketClient client = new WebSocketClient(new URI("ws://127.0.0.1:" + port + "/charger201"),
+                new Draft_6455(List.of(), List.<IProtocol> of(new Protocol("ocpp2.0.1")))) {
+            @Override
+            public void onOpen(@Nullable ServerHandshake handshake) {
+            }
+
+            @Override
+            public void onMessage(@Nullable String message) {
+            }
+
+            @Override
+            public void onClose(int code, @Nullable String reason, boolean remote) {
+            }
+
+            @Override
+            public void onError(@Nullable Exception ex) {
+            }
+        };
+        client.addHeader("Authorization",
+                "Basic " + Base64.getEncoder().encodeToString("charger201:short".getBytes(StandardCharsets.UTF_8)));
+        try {
+            client.connectBlocking(5, TimeUnit.SECONDS);
+            assertTrue(opened.await(5, TimeUnit.SECONDS),
+                    "a short-password Basic-auth charger must be accepted on 2.0.1 when no authPassword is set");
+            assertEquals(OcppVersion.V2_0_1, negotiatedVersion.get());
+        } finally {
+            client.close();
+            transport.stop();
+        }
+    }
+
+    @Test
+    void aConfiguredPasswordOutsideTheLibrarysWindowIsStillUsable() throws Exception {
+        // 25 characters is past the library's 1.6 maximum of 20; the binding, not the library,
+        // decides whether a password is right.
+        String password = "a-very-long-site-password";
+        assertEquals(true, connectsWith(password, password, "ocpp1.6"),
+                "the charge point should be accepted with the configured password");
+    }
+
+    @Test
+    void aWrongPasswordIsStillRefused() throws Exception {
+        assertEquals(false, connectsWith("a-very-long-site-password", "not-the-password", "ocpp1.6"),
+                "authentication must still be enforced when a password is configured");
+    }
+
+    private boolean connectsWith(String configured, String offered, String subprotocol) throws Exception {
+        CountDownLatch opened = new CountDownLatch(1);
+        ChargeTimeTransport transport = new ChargeTimeTransport(listener(opened::countDown), 0, 30, configured, "", "");
+        int port = findFreePort();
+        transport.start("127.0.0.1", port);
+        WebSocketClient client = new WebSocketClient(new URI("ws://127.0.0.1:" + port + "/authcharger"),
+                new Draft_6455(List.of(), List.<IProtocol> of(new Protocol(subprotocol)))) {
+            @Override
+            public void onOpen(@Nullable ServerHandshake handshake) {
+            }
+
+            @Override
+            public void onMessage(@Nullable String message) {
+            }
+
+            @Override
+            public void onClose(int code, @Nullable String reason, boolean remote) {
+            }
+
+            @Override
+            public void onError(@Nullable Exception ex) {
+            }
+        };
+        client.addHeader("Authorization", "Basic "
+                + Base64.getEncoder().encodeToString(("authcharger:" + offered).getBytes(StandardCharsets.UTF_8)));
+        try {
+            client.connectBlocking(5, TimeUnit.SECONDS);
+            return opened.await(3, TimeUnit.SECONDS);
+        } finally {
+            client.close();
+            transport.stop();
+        }
+    }
+
     private void assertNegotiated(String offered, String expected, OcppVersion expectedVersion) throws Exception {
         CountDownLatch opened = new CountDownLatch(1);
         ChargeTimeTransport transport = new ChargeTimeTransport(listener(opened::countDown), 0, 30, "", "", "");
