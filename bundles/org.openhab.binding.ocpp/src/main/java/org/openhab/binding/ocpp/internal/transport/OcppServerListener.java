@@ -17,15 +17,17 @@ import java.util.UUID;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-
-import eu.chargetime.ocpp.model.core.BootNotificationRequest;
-import eu.chargetime.ocpp.model.core.MeterValuesRequest;
-import eu.chargetime.ocpp.model.core.StartTransactionRequest;
-import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
-import eu.chargetime.ocpp.model.core.StopTransactionRequest;
+import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 
 /**
  * Callbacks raised by the {@link OcppTransport} for inbound OCPP traffic, keyed by session id.
+ *
+ * <p>
+ * The events are protocol-neutral: each wire protocol translates its own messages into them, so
+ * everything above this interface is shared by every OCPP version the binding speaks.
  *
  * @author Stamate Viorel - Initial contribution
  */
@@ -36,21 +38,19 @@ public interface OcppServerListener {
 
     void onSessionClosed(UUID session);
 
-    void onBootNotification(UUID session, BootNotificationRequest request);
+    void onBootNotification(UUID session, BootInfo boot);
 
-    void onStatusNotification(UUID session, StatusNotificationRequest request);
+    void onStatusNotification(UUID session, StatusInfo status);
 
-    void onMeterValues(UUID session, MeterValuesRequest request);
+    void onMeterValues(UUID session, MeterSample sample);
 
     void onHeartbeat(UUID session);
 
-    void onStartTransaction(UUID session, StartTransactionRequest request, int transactionId);
+    void onTransactionEvent(UUID session, TransactionEvent event);
 
-    void onStopTransaction(UUID session, StopTransactionRequest request);
+    void onAuthorize(UUID session, @Nullable String idToken);
 
-    void onAuthorize(UUID session, @Nullable String idTag);
-
-    boolean isTagAuthorized(@Nullable String idTag);
+    boolean isTagAuthorized(@Nullable String idToken);
 
     int heartbeatFor(UUID session);
 

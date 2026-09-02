@@ -38,6 +38,10 @@ import org.openhab.binding.ocpp.internal.config.OcppServerConfiguration;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
 import org.openhab.binding.ocpp.internal.transport.Measurands;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
+import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.StringType;
@@ -56,19 +60,14 @@ import org.slf4j.LoggerFactory;
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.core.AuthorizationStatus;
-import eu.chargetime.ocpp.model.core.BootNotificationRequest;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationRequest;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 import eu.chargetime.ocpp.model.core.GetConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
 import eu.chargetime.ocpp.model.core.IdTagInfo;
-import eu.chargetime.ocpp.model.core.MeterValuesRequest;
 import eu.chargetime.ocpp.model.core.ResetRequest;
 import eu.chargetime.ocpp.model.core.ResetType;
-import eu.chargetime.ocpp.model.core.StartTransactionRequest;
-import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
-import eu.chargetime.ocpp.model.core.StopTransactionRequest;
 import eu.chargetime.ocpp.model.localauthlist.AuthorizationData;
 import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionConfirmation;
 import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest;
@@ -534,14 +533,14 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         updateState(CHANNEL_CONNECTED, OnOffType.OFF);
     }
 
-    public void onBootNotification(BootNotificationRequest request) {
+    public void onBootNotification(BootInfo boot) {
         bootAccepted = true;
         cancel(statusFallbackTask);
         statusFallbackTask = null;
-        setProperty(Thing.PROPERTY_VENDOR, request.getChargePointVendor());
-        setProperty(Thing.PROPERTY_MODEL_ID, request.getChargePointModel());
-        setProperty(Thing.PROPERTY_FIRMWARE_VERSION, request.getFirmwareVersion());
-        setProperty(Thing.PROPERTY_SERIAL_NUMBER, request.getChargePointSerialNumber());
+        setProperty(Thing.PROPERTY_VENDOR, boot.vendor());
+        setProperty(Thing.PROPERTY_MODEL_ID, boot.model());
+        setProperty(Thing.PROPERTY_FIRMWARE_VERSION, boot.firmwareVersion());
+        setProperty(Thing.PROPERTY_SERIAL_NUMBER, boot.serialNumber());
         recordActivity();
         UUID bootSession = session;
         if (bootSession == null) {
@@ -552,15 +551,15 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         scheduleBootConfig(bootSession);
     }
 
-    public void onStatusNotification(StatusNotificationRequest request) {
+    public void onStatusNotification(StatusInfo status) {
         touch();
-        int connectorId = request.getConnectorId() == null ? 0 : request.getConnectorId();
+        int connectorId = status.connectorId();
         if (connectorId <= 0) {
             return; // connectorId 0 is a charger-wide status; no per-connector channel for it
         }
         OcppConnectorHandler connector = connectors.get(connectorId);
         if (connector != null) {
-            connector.onStatusNotification(request);
+            connector.onStatusNotification(status);
         } else {
             OcppServerBridgeHandler serverHandler = server;
             if (serverHandler != null) {
@@ -569,15 +568,15 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
     }
 
-    public void onMeterValues(MeterValuesRequest request) {
+    public void onMeterValues(MeterSample sample) {
         touch();
-        int connectorId = request.getConnectorId() == null ? 0 : request.getConnectorId();
+        int connectorId = sample.connectorId();
         if (connectorId <= 0) {
             return; // connector 0 addresses the charge point itself; nothing to route to
         }
         OcppConnectorHandler connector = connectors.get(connectorId);
         if (connector != null) {
-            connector.onMeterValues(request);
+            connector.onMeterValues(sample);
         } else {
             logger.debug("MeterValues for {} connector {} with no matching thing", chargePointId, connectorId);
         }
@@ -595,23 +594,22 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         return capabilities;
     }
 
-    public void onStartTransaction(StartTransactionRequest request, int transactionId) {
+    public void onTransactionStarted(TransactionEvent event) {
         touch();
-        int connectorId = request.getConnectorId() == null ? 0 : request.getConnectorId();
+        Integer eventConnector = event.connectorId();
+        int connectorId = eventConnector == null ? 0 : eventConnector;
+        int transactionId = event.transactionId();
         OcppConnectorHandler connector = connectors.get(connectorId);
         if (connector != null) {
             transactions.values().remove(connector);
             transactions.put(transactionId, connector);
-            connector.onTransactionStarted(request, transactionId);
+            connector.onTransactionStarted(event);
         }
     }
 
-    public void onStopTransaction(StopTransactionRequest request) {
+    public void onTransactionEnded(TransactionEvent event) {
         touch();
-        Integer transactionId = request.getTransactionId();
-        if (transactionId == null) {
-            return;
-        }
+        int transactionId = event.transactionId();
         OcppConnectorHandler connector = transactions.remove(transactionId);
         OcppServerBridgeHandler serverHandler = server;
         boolean ownsTransaction = connector != null;
@@ -624,7 +622,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             }
         }
         if (connector != null) {
-            connector.onTransactionStopped(request);
+            connector.onTransactionEnded(event);
         }
         if (ownsTransaction && serverHandler != null) {
             serverHandler.forgetTransaction(transactionId);

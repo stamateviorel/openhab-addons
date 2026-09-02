@@ -36,6 +36,10 @@ import org.openhab.binding.ocpp.internal.transport.ChargeTimeTransport;
 import org.openhab.binding.ocpp.internal.transport.OcppServerListener;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.binding.ocpp.internal.transport.TransactionStore;
+import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.library.types.DecimalType;
@@ -55,12 +59,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
-
-import eu.chargetime.ocpp.model.core.BootNotificationRequest;
-import eu.chargetime.ocpp.model.core.MeterValuesRequest;
-import eu.chargetime.ocpp.model.core.StartTransactionRequest;
-import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
-import eu.chargetime.ocpp.model.core.StopTransactionRequest;
 
 /**
  * Owns the OCPP JSON WebSocket endpoint and routes inbound traffic to the matching
@@ -310,18 +308,18 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     @Override
-    public void onBootNotification(UUID session, BootNotificationRequest request) {
+    public void onBootNotification(UUID session, BootInfo boot) {
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
-            handler.onBootNotification(request);
+            handler.onBootNotification(boot);
         }
     }
 
     @Override
-    public void onStatusNotification(UUID session, StatusNotificationRequest request) {
+    public void onStatusNotification(UUID session, StatusInfo status) {
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
-            handler.onStatusNotification(request);
+            handler.onStatusNotification(status);
         }
     }
 
@@ -349,10 +347,10 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     @Override
-    public void onMeterValues(UUID session, MeterValuesRequest request) {
+    public void onMeterValues(UUID session, MeterSample sample) {
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
-            handler.onMeterValues(request);
+            handler.onMeterValues(sample);
         }
     }
 
@@ -365,10 +363,20 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     @Override
-    public void onStartTransaction(UUID session, StartTransactionRequest request, int transactionId) {
-        enrollCard(request.getIdTag());
+    public void onTransactionEvent(UUID session, TransactionEvent event) {
+        switch (event.kind()) {
+            case STARTED -> onTransactionStarted(session, event);
+            case ENDED -> onTransactionEnded(session, event);
+            case UPDATED -> logger.debug("Transaction {} update on session {} carries no state to apply",
+                    event.transactionId(), session);
+        }
+    }
+
+    private void onTransactionStarted(UUID session, TransactionEvent event) {
+        int transactionId = event.transactionId();
+        enrollCard(event.idToken());
         String chargePointId = sessionChargePoints.get(session);
-        Integer connectorId = request.getConnectorId();
+        Integer connectorId = event.connectorId();
         if (chargePointId != null && connectorId != null) {
             // Persist at accept time so a later stop routes even before a Thing exists.
             rememberTransaction(transactionId, chargePointId, connectorId);
@@ -378,52 +386,49 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             OcppChargePointHandler.ExternalMeter meter = externalMeterFor(chargePointId, connectorId);
             Integer meterStart;
             if (meter == null) {
-                meterStart = request.getMeterStart();
+                meterStart = event.meterWh();
             } else if (meter.power()) {
                 startPowerTally(transactionId, meter);
                 meterStart = 0;
             } else {
                 Integer reading = energyMeterWh(meter);
-                meterStart = reading != null ? reading : request.getMeterStart();
+                meterStart = reading != null ? reading : event.meterWh();
             }
-            service.onTransactionStart(transactionId, request.getIdTag(), chargePointId, connectorId, meterStart,
-                    epochOf(request.getTimestamp()));
+            service.onTransactionStart(transactionId, event.idToken(), chargePointId, connectorId, meterStart,
+                    epochOf(event.timestamp()));
         }
         OcppChargePointHandler handler = chargePointId != null ? chargePoints.get(chargePointId) : null;
         if (handler != null) {
-            handler.onStartTransaction(request, transactionId);
+            handler.onTransactionStarted(event);
         }
     }
 
-    @Override
-    public void onStopTransaction(UUID session, StopTransactionRequest request) {
+    private void onTransactionEnded(UUID session, TransactionEvent event) {
+        int transactionId = event.transactionId();
         CpmsService service = cpms;
-        Integer stopTransactionId = request.getTransactionId();
-        if (service != null && stopTransactionId != null) {
+        if (service != null) {
             String cpId = sessionChargePoints.get(session);
-            Integer connId = cpId == null ? null : transactionConnector(stopTransactionId, cpId);
+            Integer connId = cpId == null ? null : transactionConnector(transactionId, cpId);
             OcppChargePointHandler.ExternalMeter meter = cpId != null && connId != null ? externalMeterFor(cpId, connId)
                     : null;
             Integer meterStop;
             if (meter == null) {
-                meterStop = request.getMeterStop();
+                meterStop = event.meterWh();
             } else if (meter.power()) {
-                meterStop = finishPowerTally(stopTransactionId);
+                meterStop = finishPowerTally(transactionId);
             } else {
                 Integer reading = energyMeterWh(meter);
-                meterStop = reading != null ? reading : request.getMeterStop();
+                meterStop = reading != null ? reading : event.meterWh();
             }
-            service.onTransactionStop(stopTransactionId, meterStop, epochOf(request.getTimestamp()));
+            service.onTransactionStop(transactionId, meterStop, epochOf(event.timestamp()));
         }
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
-            handler.onStopTransaction(request);
+            handler.onTransactionEnded(event);
             return;
         }
         String chargePointId = sessionChargePoints.get(session);
-        Integer transactionId = request.getTransactionId();
-        if (chargePointId != null && transactionId != null
-                && transactionConnector(transactionId, chargePointId) != null) {
+        if (chargePointId != null && transactionConnector(transactionId, chargePointId) != null) {
             forgetTransaction(transactionId);
         }
     }

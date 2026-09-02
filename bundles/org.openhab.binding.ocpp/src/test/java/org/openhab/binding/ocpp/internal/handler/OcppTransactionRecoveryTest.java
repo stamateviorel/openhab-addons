@@ -25,6 +25,8 @@ import java.util.Map;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ThingStatus;
@@ -72,12 +74,13 @@ class OcppTransactionRecoveryTest {
         handler.initialize();
     }
 
-    private static StartTransactionRequest start(int connectorId) {
-        return new StartTransactionRequest(connectorId, "tag", 0, ZonedDateTime.now());
+    private static TransactionEvent started(int connectorId, int transactionId) {
+        return Ocpp16Events.toStarted(new StartTransactionRequest(connectorId, "tag", 0, ZonedDateTime.now()),
+                transactionId);
     }
 
-    private static StopTransactionRequest stop(int transactionId) {
-        return new StopTransactionRequest(0, ZonedDateTime.now(), transactionId);
+    private static TransactionEvent ended(int transactionId) {
+        return Ocpp16Events.toEnded(new StopTransactionRequest(0, ZonedDateTime.now(), transactionId), transactionId);
     }
 
     @Test
@@ -85,9 +88,9 @@ class OcppTransactionRecoveryTest {
         OcppConnectorHandler connector = mock(OcppConnectorHandler.class);
         handler.registerConnector(1, connector);
 
-        handler.onStartTransaction(start(1), 100);
+        handler.onTransactionStarted(started(1, 100));
 
-        verify(connector).onTransactionStarted(any(), org.mockito.ArgumentMatchers.eq(100));
+        verify(connector).onTransactionStarted(any());
         // Persistence is the server bridge's job; the charge-point handler only routes in memory.
         verify(server, org.mockito.Mockito.never()).rememberTransaction(org.mockito.ArgumentMatchers.anyInt(), any(),
                 org.mockito.ArgumentMatchers.anyInt());
@@ -100,9 +103,9 @@ class OcppTransactionRecoveryTest {
         // No onStartTransaction here, so the in-memory map is empty, as after a restart.
         when(server.transactionConnector(100, "charger")).thenReturn(1);
 
-        handler.onStopTransaction(stop(100));
+        handler.onTransactionEnded(ended(100));
 
-        verify(connector).onTransactionStopped(any());
+        verify(connector).onTransactionEnded(any());
         verify(server).forgetTransaction(100);
     }
 
@@ -110,7 +113,7 @@ class OcppTransactionRecoveryTest {
     void aStopForAnotherChargersTransactionDoesNotClearItFromTheStore() {
         when(server.transactionConnector(500, "charger")).thenReturn(null);
 
-        handler.onStopTransaction(stop(500));
+        handler.onTransactionEnded(ended(500));
 
         verify(server, org.mockito.Mockito.never()).forgetTransaction(500);
     }
@@ -128,9 +131,10 @@ class OcppTransactionRecoveryTest {
         when(server.openTransactionFor("charger", 1)).thenReturn(55);
         OcppConnectorHandler connector = realConnector(1);
 
-        connector.onStatusNotification(new eu.chargetime.ocpp.model.core.StatusNotificationRequest(1,
-                eu.chargetime.ocpp.model.core.ChargePointErrorCode.NoError,
-                eu.chargetime.ocpp.model.core.ChargePointStatus.Available));
+        connector.onStatusNotification(
+                Ocpp16Events.toStatusInfo(new eu.chargetime.ocpp.model.core.StatusNotificationRequest(1,
+                        eu.chargetime.ocpp.model.core.ChargePointErrorCode.NoError,
+                        eu.chargetime.ocpp.model.core.ChargePointStatus.Available)));
 
         verify(server).forgetTransaction(55);
     }

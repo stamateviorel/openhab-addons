@@ -37,6 +37,7 @@ import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.OcppBindingConfig;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.items.ItemRegistry;
@@ -182,7 +183,8 @@ class OcppServerBridgeHandlerTest {
 
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null);
-        handler.onStartTransaction(session, new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77);
+        handler.onTransactionEvent(session,
+                Ocpp16Events.toStarted(new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77));
 
         assertEquals(Integer.valueOf(77), handler.openTransactionFor("charx", 2),
                 "the transaction must be recoverable even though no handler existed at accept time");
@@ -196,10 +198,12 @@ class OcppServerBridgeHandlerTest {
 
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null);
-        handler.onStartTransaction(session, new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77);
+        handler.onTransactionEvent(session,
+                Ocpp16Events.toStarted(new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77));
         assertEquals(Integer.valueOf(77), handler.openTransactionFor("charx", 2));
 
-        handler.onStopTransaction(session, new StopTransactionRequest(0, ZonedDateTime.now(), 77));
+        handler.onTransactionEvent(session,
+                Ocpp16Events.toEnded(new StopTransactionRequest(0, ZonedDateTime.now(), 77), 77));
 
         org.junit.jupiter.api.Assertions.assertNull(handler.openTransactionFor("charx", 2),
                 "a stop before the handler exists must clear the persisted transaction");
@@ -229,7 +233,8 @@ class OcppServerBridgeHandlerTest {
 
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "", null);
-        handler.onStartTransaction(session, new StartTransactionRequest(1, "tag", 0, ZonedDateTime.now()), 55);
+        handler.onTransactionEvent(session,
+                Ocpp16Events.toStarted(new StartTransactionRequest(1, "tag", 0, ZonedDateTime.now()), 55));
 
         org.junit.jupiter.api.Assertions.assertNull(handler.openTransactionFor("", 1),
                 "a session with no charge point id must be ignored, mapping nothing");

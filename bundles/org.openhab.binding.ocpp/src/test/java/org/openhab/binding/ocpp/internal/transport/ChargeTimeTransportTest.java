@@ -47,15 +47,14 @@ import org.java_websocket.handshake.ServerHandshake;
 import org.java_websocket.protocols.IProtocol;
 import org.java_websocket.protocols.Protocol;
 import org.junit.jupiter.api.Test;
+import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 
 import eu.chargetime.ocpp.NotConnectedException;
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
-import eu.chargetime.ocpp.model.core.BootNotificationRequest;
-import eu.chargetime.ocpp.model.core.MeterValuesRequest;
-import eu.chargetime.ocpp.model.core.StartTransactionRequest;
-import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
-import eu.chargetime.ocpp.model.core.StopTransactionRequest;
 import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequest;
 import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequestType;
 
@@ -85,15 +84,15 @@ class ChargeTimeTransportTest {
             }
 
             @Override
-            public void onBootNotification(UUID session, BootNotificationRequest request) {
+            public void onBootNotification(UUID session, BootInfo boot) {
             }
 
             @Override
-            public void onStatusNotification(UUID session, StatusNotificationRequest request) {
+            public void onStatusNotification(UUID session, StatusInfo status) {
             }
 
             @Override
-            public void onMeterValues(UUID session, MeterValuesRequest request) {
+            public void onMeterValues(UUID session, MeterSample sample) {
             }
 
             @Override
@@ -101,11 +100,7 @@ class ChargeTimeTransportTest {
             }
 
             @Override
-            public void onStartTransaction(UUID session, StartTransactionRequest request, int transactionId) {
-            }
-
-            @Override
-            public void onStopTransaction(UUID session, StopTransactionRequest request) {
+            public void onTransactionEvent(UUID session, TransactionEvent event) {
             }
 
             @Override

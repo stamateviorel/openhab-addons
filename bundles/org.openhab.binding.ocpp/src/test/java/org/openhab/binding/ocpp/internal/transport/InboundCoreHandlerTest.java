@@ -15,7 +15,6 @@ package org.openhab.binding.ocpp.internal.transport;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -99,7 +98,7 @@ class InboundCoreHandlerTest {
         assertEquals(AuthorizationStatus.Invalid, confirmation.getIdTagInfo().getStatus());
         // A transaction id is still required by the schema even when the tag is refused.
         assertNotNull(confirmation.getTransactionId());
-        verify(listener, never()).onStartTransaction(any(), any(), anyInt());
+        verify(listener, never()).onTransactionEvent(any(), any());
     }
 
     @Test
@@ -110,7 +109,7 @@ class InboundCoreHandlerTest {
         int second = handler.handleStartTransactionRequest(session, request).getTransactionId();
 
         assertEquals(first + 1, second, "each transaction must get its own id");
-        verify(listener, org.mockito.Mockito.times(2)).onStartTransaction(eq(session), any(), anyInt());
+        verify(listener, org.mockito.Mockito.times(2)).onTransactionEvent(eq(session), any());
     }
 
     @Test

@@ -34,6 +34,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.config.OcppServerConfiguration;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.thing.Bridge;
@@ -226,7 +227,7 @@ class OcppBootConfigTest {
 
     @Test
     void configurationIsSentWhenAChargerBoots() {
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
 
         verify(transport, timeout(2000)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
@@ -235,11 +236,11 @@ class OcppBootConfigTest {
 
     @Test
     void anAcceptedConfigurationIsNotSentAgainOnTheNextBoot() {
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         verify(transport, timeout(2000)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
 
         verify(transport, timeout(1000).times(1)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
@@ -253,10 +254,10 @@ class OcppBootConfigTest {
             return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Rejected));
         });
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         verify(transport, timeout(2000)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
 
         verify(transport, timeout(2000).times(2)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
@@ -270,7 +271,7 @@ class OcppBootConfigTest {
         });
 
         for (int boot = 0; boot < 6; boot++) {
-            handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+            handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         }
 
         verify(transport, timeout(3000).atLeast(1)).send(any(), any());
@@ -300,7 +301,7 @@ class OcppBootConfigTest {
         delayed.initialize();
         delayed.onConnected(UUID.randomUUID());
 
-        delayed.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        delayed.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         delayed.onConnected(UUID.randomUUID());
 
         verify(transport, org.mockito.Mockito.after(2000).never()).send(any(),
@@ -320,7 +321,7 @@ class OcppBootConfigTest {
             return firstStep;
         });
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         verify(transport, timeout(3000)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
 
@@ -331,7 +332,7 @@ class OcppBootConfigTest {
         verify(transport, org.mockito.Mockito.after(1500).never()).send(any(),
                 eq(new ChangeConfigurationRequest("VendorKey", "42")));
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("VendorKey", "42")));
     }
 
@@ -351,17 +352,17 @@ class OcppBootConfigTest {
 
     @Test
     void aChangedConfigurationIsSentAgainOnTheNextBoot() {
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         verify(transport, timeout(3000)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         verify(transport, org.mockito.Mockito.after(1500).times(1)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
 
         // The applied latch is keyed on the effective settings, so a changed value resends the burst.
         serverConfig.extraConfig = List.of("VendorKey=42");
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("VendorKey", "42")));
         verify(transport, timeout(3000).times(2)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
@@ -373,7 +374,7 @@ class OcppBootConfigTest {
         OcppConnectorHandler connector = mock(OcppConnectorHandler.class);
         handler.registerConnector(1, connector);
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
 
         verify(transport, org.mockito.Mockito.never()).send(any(), any());
         verify(connector, org.mockito.Mockito.never()).onChargePointReady();
@@ -397,7 +398,7 @@ class OcppBootConfigTest {
                     rejected ? ConfigurationStatus.Rejected : ConfigurationStatus.Accepted));
         });
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
 
         verify(transport, timeout(3000).atLeastOnce()).send(any(),
                 argThat(r -> r instanceof ChangeConfigurationRequest c && "MeterValuesAlignedData".equals(c.getKey())));
@@ -419,7 +420,7 @@ class OcppBootConfigTest {
                     rejected ? ConfigurationStatus.Rejected : ConfigurationStatus.Accepted));
         });
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
 
         verify(transport, timeout(3000).atLeast(2)).send(any(), any());
         List<String> tried = sentValuesFor("MeterValuesSampledData");
@@ -434,7 +435,7 @@ class OcppBootConfigTest {
         serverConfig.meterValuesData = "";
         realConnector(1);
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
 
         verify(transport, org.mockito.Mockito.after(600).never()).send(any(), any());
 
@@ -459,7 +460,7 @@ class OcppBootConfigTest {
             return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
         });
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         handler.onHeartbeat();
 
         verify(transport, timeout(2000)).send(any(), argThat(r -> isStatusTrigger(r) && Integer.valueOf(1)
@@ -483,7 +484,7 @@ class OcppBootConfigTest {
 
         handler.handleCommand(new org.openhab.core.thing.ChannelUID(CP_UID, "local-auth-list"),
                 new org.openhab.core.library.types.StringType("RFID-A"));
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         handler.onHeartbeat();
 
         verify(transport, org.mockito.Mockito.after(600).never()).send(any(),
@@ -511,7 +512,7 @@ class OcppBootConfigTest {
 
         handler.handleCommand(new org.openhab.core.thing.ChannelUID(CP_UID, "local-auth-list"),
                 new org.openhab.core.library.types.StringType("RFID-A, RFID-B"));
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         handler.onHeartbeat();
 
         verify(transport, timeout(2000)).send(any(),

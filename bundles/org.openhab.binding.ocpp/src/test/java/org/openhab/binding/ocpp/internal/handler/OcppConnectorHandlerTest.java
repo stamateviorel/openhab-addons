@@ -32,6 +32,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.StringType;
@@ -86,8 +89,8 @@ class OcppConnectorHandlerTest {
         handler.setCallback(callback);
     }
 
-    private static StatusNotificationRequest status(ChargePointStatus status) {
-        return new StatusNotificationRequest(1, ChargePointErrorCode.NoError, status);
+    private static StatusInfo status(ChargePointStatus status) {
+        return Ocpp16Events.toStatusInfo(new StatusNotificationRequest(1, ChargePointErrorCode.NoError, status));
     }
 
     private void assertChannel(String channelId, org.openhab.core.types.State expected) {
@@ -113,9 +116,9 @@ class OcppConnectorHandlerTest {
 
     @Test
     void availableClearsChargingEvenIfATransactionWasNeverStopped() {
-        handler.onTransactionStarted(
+        handler.onTransactionStarted(Ocpp16Events.toStarted(
                 new eu.chargetime.ocpp.model.core.StartTransactionRequest(1, "tag", 0, java.time.ZonedDateTime.now()),
-                7);
+                7));
 
         handler.onStatusNotification(status(ChargePointStatus.Available));
 
@@ -125,11 +128,11 @@ class OcppConnectorHandlerTest {
 
     @Test
     void sessionEnergyIsPublishedAtStopAsMeterStopMinusMeterStart() {
-        handler.onTransactionStarted(
+        handler.onTransactionStarted(Ocpp16Events.toStarted(
                 new eu.chargetime.ocpp.model.core.StartTransactionRequest(1, "tag", 100, java.time.ZonedDateTime.now()),
-                7);
-        handler.onTransactionStopped(
-                new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600, java.time.ZonedDateTime.now(), 7));
+                7));
+        handler.onTransactionEnded(Ocpp16Events.toEnded(
+                new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600, java.time.ZonedDateTime.now(), 7), 7));
 
         assertChannel(CHANNEL_SESSION_ENERGY,
                 new org.openhab.core.library.types.QuantityType<>(1500, org.openhab.core.library.unit.Units.WATT_HOUR));
@@ -183,8 +186,8 @@ class OcppConnectorHandlerTest {
         assertChannel(CHANNEL_AVAILABILITY, OnOffType.ON);
     }
 
-    private static eu.chargetime.ocpp.model.core.MeterValuesRequest meterValues(String measurand,
-            @org.eclipse.jdt.annotation.Nullable String phase, String unit, String value) {
+    private static MeterSample meterValues(String measurand, @org.eclipse.jdt.annotation.Nullable String phase,
+            String unit, String value) {
         eu.chargetime.ocpp.model.core.SampledValue sample = new eu.chargetime.ocpp.model.core.SampledValue(value);
         sample.setMeasurand(measurand);
         if (phase != null) {
@@ -196,7 +199,7 @@ class OcppConnectorHandlerTest {
         request.setMeterValue(
                 new eu.chargetime.ocpp.model.core.MeterValue[] { new eu.chargetime.ocpp.model.core.MeterValue(
                         java.time.ZonedDateTime.now(), new eu.chargetime.ocpp.model.core.SampledValue[] { sample }) });
-        return request;
+        return Ocpp16Events.toMeterSample(request);
     }
 
     @Test
@@ -236,7 +239,7 @@ class OcppConnectorHandlerTest {
                 new eu.chargetime.ocpp.model.core.MeterValue(newer,
                         new eu.chargetime.ocpp.model.core.SampledValue[] { second }) });
 
-        handler.onMeterValues(request);
+        handler.onMeterValues(Ocpp16Events.toMeterSample(request));
 
         assertChannel(CHANNEL_TIMESTAMP, new org.openhab.core.library.types.DateTimeType(newer));
     }
