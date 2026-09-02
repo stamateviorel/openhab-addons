@@ -44,16 +44,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import eu.chargetime.ocpp.AuthenticationException;
-import eu.chargetime.ocpp.FeatureRepository;
 import eu.chargetime.ocpp.ISession;
 import eu.chargetime.ocpp.JSONConfiguration;
+import eu.chargetime.ocpp.MultiProtocolFeatureRepository;
+import eu.chargetime.ocpp.MultiProtocolWebSocketListener;
 import eu.chargetime.ocpp.NotConnectedException;
 import eu.chargetime.ocpp.OccurenceConstraintException;
+import eu.chargetime.ocpp.ProtocolVersion;
 import eu.chargetime.ocpp.Server;
 import eu.chargetime.ocpp.ServerEvents;
-import eu.chargetime.ocpp.SessionFactory;
 import eu.chargetime.ocpp.UnsupportedFeatureException;
-import eu.chargetime.ocpp.WebSocketListener;
 import eu.chargetime.ocpp.WssListenerSupport;
 import eu.chargetime.ocpp.feature.profile.ServerCoreProfile;
 import eu.chargetime.ocpp.feature.profile.ServerLocalAuthListProfile;
@@ -65,7 +65,8 @@ import eu.chargetime.ocpp.model.SessionInformation;
 import eu.chargetime.ocpp.wss.BaseWssFactoryBuilder;
 
 /**
- * {@link OcppTransport} backed by the ChargeTime OCA-OCPP 1.6-J server.
+ * {@link OcppTransport} backed by the ChargeTime OCA-OCPP server, negotiating OCPP 1.6-J or 2.0.1 per
+ * connection.
  *
  * @author Stamate Viorel - Initial contribution
  */
@@ -79,7 +80,7 @@ public class ChargeTimeTransport implements OcppTransport {
 
     private final Logger logger = LoggerFactory.getLogger(ChargeTimeTransport.class);
     private final Server server;
-    private final WebSocketListener listener;
+    private final MultiProtocolWebSocketListener listener;
     private final OcppServerListener ocppListener;
     private final String authPassword;
     private volatile boolean started;
@@ -90,13 +91,15 @@ public class ChargeTimeTransport implements OcppTransport {
             String authPassword, String tlsKeystorePath, String tlsKeystorePassword) {
         this.ocppListener = ocppListener;
         this.authPassword = authPassword;
-        FeatureRepository featureRepository = new FeatureRepository();
+        MultiProtocolFeatureRepository featureRepository = new MultiProtocolFeatureRepository(
+                List.of(ProtocolVersion.OCPP1_6, ProtocolVersion.OCPP2_0_1));
         InboundCoreHandler coreHandler = new InboundCoreHandler(ocppListener);
-        featureRepository.addFeatureProfile(new ServerCoreProfile(coreHandler));
-        featureRepository.addFeatureProfile(new ServerSmartChargingProfile());
-        featureRepository.addFeatureProfile(new ServerRemoteTriggerProfile());
-        featureRepository.addFeatureProfile(new ServerLocalAuthListProfile());
-        featureRepository.addFeature(new TolerantBootNotificationFeature(coreHandler));
+        featureRepository.addFeatureProfile(ProtocolVersion.OCPP1_6, new ServerCoreProfile(coreHandler));
+        featureRepository.addFeatureProfile(ProtocolVersion.OCPP1_6, new ServerSmartChargingProfile());
+        featureRepository.addFeatureProfile(ProtocolVersion.OCPP1_6, new ServerRemoteTriggerProfile());
+        featureRepository.addFeatureProfile(ProtocolVersion.OCPP1_6, new ServerLocalAuthListProfile());
+        featureRepository.getFeatureRepository(ProtocolVersion.OCPP1_6)
+                .addFeature(new TolerantBootNotificationFeature(coreHandler));
 
         JSONConfiguration configuration = JSONConfiguration.get();
         configuration = configuration.setParameter(JSONConfiguration.REUSE_ADDR_PARAMETER, true);
@@ -109,11 +112,13 @@ public class ChargeTimeTransport implements OcppTransport {
             configuration = configuration.setParameter(MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY, Integer.MAX_VALUE);
         }
 
-        Draft draft = new Draft_6455(List.of(), List.<IProtocol> of(new Protocol("ocpp1.6"), new Protocol("")));
+        // The empty protocol stays last so a charger that offers no subprotocol is still accepted.
+        Draft draft = new Draft_6455(List.of(),
+                List.<IProtocol> of(new Protocol(ProtocolVersion.OCPP1_6.getSubProtocolName()),
+                        new Protocol(ProtocolVersion.OCPP2_0_1.getSubProtocolName()), new Protocol("")));
         Map<String, ISession> requestSessions = new ConcurrentHashMap<>();
-        this.listener = new WebSocketListener(
-                new TrackingSessionFactory(new SessionFactory(featureRepository), requestSessions), configuration,
-                draft);
+        this.listener = new MultiProtocolWebSocketListener(
+                new TrackingSessionFactory(featureRepository, requestSessions), configuration, draft);
         if (!tlsKeystorePath.isBlank()) {
             WssListenerSupport.enableWss(listener,
                     BaseWssFactoryBuilder.builder().sslContext(sslContext(tlsKeystorePath, tlsKeystorePassword)));

@@ -124,6 +124,56 @@ class ChargeTimeTransportTest {
         };
     }
 
+    @Test
+    void aChargerNegotiatingOcpp201IsAccepted() throws Exception {
+        assertNegotiated("ocpp2.0.1", "ocpp2.0.1");
+    }
+
+    @Test
+    void aChargerNegotiatingOcpp16IsStillAccepted() throws Exception {
+        assertNegotiated("ocpp1.6", "ocpp1.6");
+    }
+
+    @Test
+    void aChargerOfferingNoSubprotocolIsStillAccepted() throws Exception {
+        // The multi-protocol feature repository rejects a null version, so the session factory has
+        // to fall back to 1.6 for these; without that the connection is dropped.
+        assertNegotiated("", "");
+    }
+
+    private void assertNegotiated(String offered, String expected) throws Exception {
+        CountDownLatch opened = new CountDownLatch(1);
+        ChargeTimeTransport transport = new ChargeTimeTransport(listener(opened::countDown), 0, 30, "", "", "");
+        int port = findFreePort();
+        transport.start("127.0.0.1", port);
+        Draft_6455 draft = new Draft_6455(List.of(), List.<IProtocol> of(new Protocol(offered)));
+        WebSocketClient client = new WebSocketClient(new URI("ws://127.0.0.1:" + port + "/charger"), draft) {
+            @Override
+            public void onOpen(@Nullable ServerHandshake handshake) {
+            }
+
+            @Override
+            public void onMessage(@Nullable String message) {
+            }
+
+            @Override
+            public void onClose(int code, @Nullable String reason, boolean remote) {
+            }
+
+            @Override
+            public void onError(@Nullable Exception ex) {
+            }
+        };
+        try {
+            assertTrue(client.connectBlocking(5, TimeUnit.SECONDS), "the charger should connect");
+            assertTrue(opened.await(5, TimeUnit.SECONDS), "the session should reach the listener");
+            assertEquals(expected, client.getProtocol().getProvidedProtocol());
+        } finally {
+            client.closeBlocking();
+            transport.stop();
+        }
+    }
+
     private ChargeTimeTransport newTransport() {
         return new ChargeTimeTransport(noopListener(), 0, 30, "", "", "");
     }

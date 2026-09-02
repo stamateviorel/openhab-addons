@@ -20,8 +20,10 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import eu.chargetime.ocpp.Communicator;
 import eu.chargetime.ocpp.IFeatureRepository;
 import eu.chargetime.ocpp.ISession;
-import eu.chargetime.ocpp.ISessionFactory;
+import eu.chargetime.ocpp.MultiProtocolFeatureRepository;
+import eu.chargetime.ocpp.MultiProtocolSessionFactory;
 import eu.chargetime.ocpp.OccurenceConstraintException;
+import eu.chargetime.ocpp.ProtocolVersion;
 import eu.chargetime.ocpp.SessionEvents;
 import eu.chargetime.ocpp.UnsupportedFeatureException;
 import eu.chargetime.ocpp.model.Confirmation;
@@ -34,20 +36,32 @@ import eu.chargetime.ocpp.model.Request;
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-public class TrackingSessionFactory implements ISessionFactory {
+public class TrackingSessionFactory extends MultiProtocolSessionFactory {
 
-    private final ISessionFactory delegate;
     private final Map<String, ISession> requestSessions;
 
-    public TrackingSessionFactory(ISessionFactory delegate, Map<String, ISession> requestSessions) {
-        this.delegate = delegate;
+    public TrackingSessionFactory(MultiProtocolFeatureRepository featureRepository,
+            Map<String, ISession> requestSessions) {
+        super(featureRepository);
         this.requestSessions = requestSessions;
     }
 
     @Override
     @NonNullByDefault({})
     public ISession createSession(Communicator communicator) {
-        return new TrackingSession(delegate.createSession(communicator), requestSessions);
+        return new TrackingSession(super.createSession(communicator), requestSessions);
+    }
+
+    /**
+     * A charger that negotiated no subprotocol reports a null version, which the multi-protocol
+     * feature repository rejects outright. Treat it as 1.6, which is what it got before the server
+     * spoke more than one protocol.
+     */
+    @Override
+    @NonNullByDefault({})
+    public ISession createSession(Communicator communicator, ProtocolVersion protocolVersion) {
+        ProtocolVersion version = protocolVersion == null ? ProtocolVersion.OCPP1_6 : protocolVersion;
+        return new TrackingSession(super.createSession(communicator, version), requestSessions);
     }
 
     @NonNullByDefault({})

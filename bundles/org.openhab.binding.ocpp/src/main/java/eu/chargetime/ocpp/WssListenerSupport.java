@@ -17,7 +17,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import eu.chargetime.ocpp.wss.WssFactoryBuilder;
 
 /**
- * Same-package accessor for the library's package-private {@link WebSocketListener#enableWSS}.
+ * Same-package accessor for the library's package-private {@code enableWSS}.
  *
  * @author Stamate Viorel - Initial contribution
  */
@@ -28,6 +28,10 @@ public final class WssListenerSupport {
     }
 
     public static void enableWss(WebSocketListener listener, WssFactoryBuilder wssFactoryBuilder) {
+        listener.enableWSS(wssFactoryBuilder);
+    }
+
+    public static void enableWss(MultiProtocolWebSocketListener listener, WssFactoryBuilder wssFactoryBuilder) {
         listener.enableWSS(wssFactoryBuilder);
     }
 }
