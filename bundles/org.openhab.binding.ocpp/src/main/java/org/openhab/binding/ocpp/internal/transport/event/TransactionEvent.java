@@ -25,11 +25,18 @@ import org.eclipse.jdt.annotation.Nullable;
  * the same three kinds. {@code connectorId} is null where the protocol does not carry it — a 1.6
  * StopTransaction identifies the transaction only by id.
  *
+ * <p>
+ * {@code transactionId} is the binding's own id, kept numeric because the usage log is persisted
+ * under it. {@code remoteId} is the id as the charger states it, which a 2.0.1 RequestStopTransaction
+ * has to quote back verbatim. {@code chargingState} is 2.0.1 only: it carries the detail that 1.6
+ * puts in StatusNotification.
+ *
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-public record TransactionEvent(Kind kind, @Nullable Integer connectorId, int transactionId, @Nullable String idToken,
-        @Nullable Integer meterWh, @Nullable ZonedDateTime timestamp, @Nullable String reason) {
+public record TransactionEvent(Kind kind, @Nullable Integer connectorId, int transactionId, @Nullable String remoteId,
+        @Nullable String idToken, @Nullable Integer meterWh, @Nullable ZonedDateTime timestamp, @Nullable String reason,
+        @Nullable ConnectorStatus chargingState) {
 
     public enum Kind {
         STARTED,

@@ -62,6 +62,13 @@ import eu.chargetime.ocpp.feature.profile.ServerSmartChargingProfile;
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.SessionInformation;
+import eu.chargetime.ocpp.v201.feature.function.ServerAuthorizationFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerAvailabilityFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerMeterValuesFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerProvisioningFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerRemoteControlFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerSmartChargingFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerTransactionsFunction;
 import eu.chargetime.ocpp.wss.BaseWssFactoryBuilder;
 
 /**
@@ -100,6 +107,15 @@ public class ChargeTimeTransport implements OcppTransport {
         featureRepository.addFeatureProfile(ProtocolVersion.OCPP1_6, new ServerLocalAuthListProfile());
         featureRepository.getFeatureRepository(ProtocolVersion.OCPP1_6)
                 .addFeature(new TolerantBootNotificationFeature(coreHandler));
+
+        Ocpp201InboundHandler handler201 = new Ocpp201InboundHandler(ocppListener);
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerProvisioningFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerTransactionsFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerAvailabilityFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerMeterValuesFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerAuthorizationFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerRemoteControlFunction());
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerSmartChargingFunction(null));
 
         JSONConfiguration configuration = JSONConfiguration.get();
         configuration = configuration.setParameter(JSONConfiguration.REUSE_ADDR_PARAMETER, true);

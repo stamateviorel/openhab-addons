@@ -74,14 +74,15 @@ public final class Ocpp16Events {
 
     public static TransactionEvent toStarted(StartTransactionRequest request, int transactionId) {
         return new TransactionEvent(TransactionEvent.Kind.STARTED, request.getConnectorId(), transactionId,
-                request.getIdTag(), request.getMeterStart(), request.getTimestamp(), null);
+                String.valueOf(transactionId), request.getIdTag(), request.getMeterStart(), request.getTimestamp(),
+                null, null);
     }
 
     /** A 1.6 StopTransaction carries no connector id; the transaction id resolves it upstream. */
     public static TransactionEvent toEnded(StopTransactionRequest request, int transactionId) {
         String reason = request.getReason() == null ? null : request.getReason().name();
-        return new TransactionEvent(TransactionEvent.Kind.ENDED, null, transactionId, request.getIdTag(),
-                request.getMeterStop(), request.getTimestamp(), reason);
+        return new TransactionEvent(TransactionEvent.Kind.ENDED, null, transactionId, String.valueOf(transactionId),
+                request.getIdTag(), request.getMeterStop(), request.getTimestamp(), reason, null);
     }
 
     public static @Nullable ConnectorStatus toConnectorStatus(@Nullable ChargePointStatus status) {
