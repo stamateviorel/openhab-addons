@@ -66,6 +66,7 @@ class Ocpp201InboundHandlerTest {
     private @NonNullByDefault({}) OcppServerListener listener;
     private @NonNullByDefault({}) Ocpp201InboundHandler handler;
     private final UUID session = UUID.randomUUID();
+    private final AtomicInteger sequence = new AtomicInteger();
 
     @BeforeEach
     void setUp() {
@@ -131,6 +132,26 @@ class Ocpp201InboundHandlerTest {
         ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
         verify(listener, times(2)).onTransactionEvent(eq(session), captor.capture());
         assertEquals(2, captor.getAllValues().stream().map(TransactionEvent::transactionId).distinct().count());
+    }
+
+    @Test
+    void anEventReplayedAfterAnOutageIsNotCountedTwice() {
+        // A charger numbers a transaction's events from zero and re-sends any it could not deliver
+        // while offline; counting one twice would double it in the usage log.
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Updated, "abc", 1));
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Updated, "abc", 1));
+
+        verify(listener, times(2)).onTransactionEvent(eq(session), any());
+    }
+
+    @Test
+    void aFreshTransactionStartsCountingAgain() {
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Ended, "abc", 1));
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
+
+        verify(listener, times(3)).onTransactionEvent(eq(session), any());
     }
 
     @Test
@@ -200,11 +221,18 @@ class Ocpp201InboundHandlerTest {
         assertEquals("", captor.getValue().remoteId());
     }
 
+    private TransactionEventRequest seq(TransactionEventEnum kind, String transactionId, int seqNo) {
+        TransactionEventRequest request = transaction(kind, transactionId, null);
+        request.setSeqNo(seqNo);
+        return request;
+    }
+
     private TransactionEventRequest transaction(TransactionEventEnum kind, @Nullable String transactionId,
             SampledValue @Nullable [] samples) {
         Transaction info = new Transaction(transactionId == null ? "" : transactionId);
+        // A charger numbers a transaction's events in order; reusing one would look like a replay.
         TransactionEventRequest request = new TransactionEventRequest(kind, ZonedDateTime.now(),
-                TriggerReasonEnum.Authorized, 0, info);
+                TriggerReasonEnum.Authorized, sequence.getAndIncrement(), info);
         IdToken idToken = new IdToken("CARD1", IdTokenEnum.ISO14443);
         request.setIdToken(idToken);
         EVSE evse = new EVSE(1);

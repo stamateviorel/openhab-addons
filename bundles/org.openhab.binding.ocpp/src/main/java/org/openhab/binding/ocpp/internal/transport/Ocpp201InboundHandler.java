@@ -70,7 +70,9 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
     // 2.0.1 names transactions with a string the charger picks; the binding logs usage under a
     // number, so each one is given an id on its first event and it is held until the transaction ends.
     private final Map<String, Integer> transactionIds = new ConcurrentHashMap<>();
-    private final Map<UUID, DeviceModelReport> reports = new ConcurrentHashMap<>();
+    private final Map<String, DeviceModelReport> reports = new ConcurrentHashMap<>();
+    // The last event seen per transaction, so a replayed or duplicated one is not counted twice.
+    private final Map<String, Integer> lastSeqNo = new ConcurrentHashMap<>();
 
     public Ocpp201InboundHandler(OcppServerListener listener) {
         this.listener = listener;
@@ -98,19 +100,21 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
     @NonNullByDefault({})
     public NotifyReportResponse handleNotifyReportRequest(UUID sessionIndex, NotifyReportRequest request) {
         logger.debug("NotifyReport from session {} seq {} tbc {}", sessionIndex, request.getSeqNo(), request.getTbc());
-        DeviceModelReport report = reports.computeIfAbsent(sessionIndex, key -> new DeviceModelReport());
+        // A charger can have more than one report in flight; requestId says which this belongs to.
+        String key = sessionIndex + "/" + request.getRequestId();
+        DeviceModelReport report = reports.computeIfAbsent(key, ignored -> new DeviceModelReport());
         boolean complete = report.add(request);
         if (complete) {
-            reports.remove(sessionIndex);
+            reports.remove(key);
             Map<String, String> keys = report.asConfigurationKeys();
             deliver("NotifyReport", sessionIndex, () -> listener.onCapabilities(sessionIndex, keys));
         }
         return new NotifyReportResponse();
     }
 
-    /** Drops a half-received report when its session goes away. */
+    /** Drops half-received reports when a session goes away. */
     public void forget(UUID session) {
-        reports.remove(session);
+        reports.keySet().removeIf(key -> key.startsWith(session + "/"));
     }
 
     @Override
@@ -164,6 +168,11 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
             case Updated -> TransactionEvent.Kind.UPDATED;
         };
 
+        if (remoteId != null && isReplay(remoteId, request.getSeqNo())) {
+            logger.debug("TransactionEvent {} for {} seq {} already seen; not counted again", kind, remoteId,
+                    request.getSeqNo());
+            return new TransactionEventResponse();
+        }
         boolean authorized = kind != TransactionEvent.Kind.STARTED || listener.isTagAuthorized(idToken);
         int transactionId = idFor(remoteId);
         logger.debug("TransactionEvent {} from session {} tx {} -> id {} ({})", kind, sessionIndex, remoteId,
@@ -195,6 +204,7 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
         }
         if (kind == TransactionEvent.Kind.ENDED && remoteId != null) {
             transactionIds.remove(remoteId);
+            lastSeqNo.remove(remoteId);
         }
 
         TransactionEventResponse response = new TransactionEventResponse();
@@ -203,6 +213,23 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
                     new IdTokenInfo(authorized ? AuthorizationStatusEnum.Accepted : AuthorizationStatusEnum.Invalid));
         }
         return response;
+    }
+
+    /**
+     * A charger numbers the events of a transaction from zero and replays any it could not deliver
+     * while offline, so the same one can arrive twice. Anything not newer than what has already been
+     * accounted for is dropped rather than counted again.
+     */
+    private boolean isReplay(String remoteId, @Nullable Integer seqNo) {
+        if (seqNo == null) {
+            return false;
+        }
+        Integer previous = lastSeqNo.get(remoteId);
+        if (previous != null && seqNo <= previous) {
+            return true;
+        }
+        lastSeqNo.put(remoteId, seqNo);
+        return false;
     }
 
     private int idFor(@Nullable String remoteId) {
