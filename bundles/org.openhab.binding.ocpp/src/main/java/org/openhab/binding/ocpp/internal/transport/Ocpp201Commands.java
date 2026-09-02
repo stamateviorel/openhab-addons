@@ -12,6 +12,7 @@
  */
 package org.openhab.binding.ocpp.internal.transport;
 
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -30,6 +31,8 @@ import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionResponse;
 import eu.chargetime.ocpp.v201.model.messages.ResetRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileResponse;
+import eu.chargetime.ocpp.v201.model.messages.SetVariablesRequest;
+import eu.chargetime.ocpp.v201.model.messages.SetVariablesResponse;
 import eu.chargetime.ocpp.v201.model.messages.TriggerMessageRequest;
 import eu.chargetime.ocpp.v201.model.messages.TriggerMessageResponse;
 import eu.chargetime.ocpp.v201.model.messages.UnlockConnectorRequest;
@@ -42,6 +45,7 @@ import eu.chargetime.ocpp.v201.model.types.ChargingSchedule;
 import eu.chargetime.ocpp.v201.model.types.ChargingSchedulePeriod;
 import eu.chargetime.ocpp.v201.model.types.ClearChargingProfile;
 import eu.chargetime.ocpp.v201.model.types.ClearChargingProfileStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.Component;
 import eu.chargetime.ocpp.v201.model.types.EVSE;
 import eu.chargetime.ocpp.v201.model.types.IdToken;
 import eu.chargetime.ocpp.v201.model.types.IdTokenEnum;
@@ -49,7 +53,11 @@ import eu.chargetime.ocpp.v201.model.types.MessageTriggerEnum;
 import eu.chargetime.ocpp.v201.model.types.OperationalStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.RequestStartStopStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetEnum;
+import eu.chargetime.ocpp.v201.model.types.SetVariableData;
+import eu.chargetime.ocpp.v201.model.types.SetVariableResult;
+import eu.chargetime.ocpp.v201.model.types.SetVariableStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.TriggerMessageStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.Variable;
 
 /**
  * Outbound requests in the OCPP 2.0.1 dialect.
@@ -149,8 +157,42 @@ public class Ocpp201Commands implements OcppCommands {
                 eu.chargetime.ocpp.v201.model.types.ReportBaseEnum.FullInventory);
     }
 
+    /**
+     * The 1.6 settings the binding pushes, named in the 2.0.1 device model. An extraConfig entry can
+     * address anything else by giving its key as {@code Component.Variable}.
+     */
+    private static final Map<String, String> VARIABLES = Map.of("MeterValueSampleInterval",
+            "SampledDataCtrlr.TxUpdatedInterval", "MeterValuesSampledData", "SampledDataCtrlr.TxUpdatedMeasurands",
+            "MeterValuesAlignedData", "AlignedDataCtrlr.Measurands", "ClockAlignedDataInterval",
+            "AlignedDataCtrlr.Interval", "AuthorizeRemoteTxRequests", "AuthCtrlr.AuthorizeRemoteStart");
+
+    @Override
+    public @Nullable Request setConfiguration(String key, String value) {
+        String path = VARIABLES.getOrDefault(key, key);
+        int dot = path.indexOf('.');
+        if (dot <= 0 || dot == path.length() - 1) {
+            return null;
+        }
+        SetVariableData data = new SetVariableData(value, new Component(path.substring(0, dot)),
+                new Variable(path.substring(dot + 1)));
+        return new SetVariablesRequest(new SetVariableData[] { data });
+    }
+
     @Override
     public boolean isAccepted(@Nullable Confirmation confirmation) {
+        if (confirmation instanceof SetVariablesResponse variables) {
+            SetVariableResult[] results = variables.getSetVariableResult();
+            if (results == null || results.length == 0) {
+                return false;
+            }
+            for (SetVariableResult result : results) {
+                if (result.getAttributeStatus() != SetVariableStatusEnum.Accepted
+                        && result.getAttributeStatus() != SetVariableStatusEnum.RebootRequired) {
+                    return false;
+                }
+            }
+            return true;
+        }
         if (confirmation instanceof SetChargingProfileResponse profile) {
             return profile.getStatus() == ChargingProfileStatusEnum.Accepted;
         }

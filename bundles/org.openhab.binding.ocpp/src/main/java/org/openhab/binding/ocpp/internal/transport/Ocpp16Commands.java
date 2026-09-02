@@ -22,6 +22,7 @@ import eu.chargetime.ocpp.model.core.AvailabilityType;
 import eu.chargetime.ocpp.model.core.ChangeAvailabilityConfirmation;
 import eu.chargetime.ocpp.model.core.ChangeAvailabilityRequest;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
+import eu.chargetime.ocpp.model.core.ChangeConfigurationRequest;
 import eu.chargetime.ocpp.model.core.ChargingRateUnitType;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 import eu.chargetime.ocpp.model.core.RemoteStartStopStatus;
@@ -104,6 +105,11 @@ public class Ocpp16Commands implements OcppCommands {
     @Override
     public Request readCapabilities() {
         return new eu.chargetime.ocpp.model.core.GetConfigurationRequest();
+    }
+
+    @Override
+    public @Nullable Request setConfiguration(String key, String value) {
+        return new ChangeConfigurationRequest(key, value);
     }
 
     @Override

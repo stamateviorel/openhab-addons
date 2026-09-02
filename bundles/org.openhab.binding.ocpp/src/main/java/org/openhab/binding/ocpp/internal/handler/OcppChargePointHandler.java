@@ -65,7 +65,6 @@ import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.core.AuthorizationStatus;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
-import eu.chargetime.ocpp.model.core.ChangeConfigurationRequest;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 import eu.chargetime.ocpp.model.core.GetConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
@@ -894,7 +893,12 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private CompletableFuture<Confirmation> sendConfig(String key, String value) {
-        return send(new ChangeConfigurationRequest(key, value)).toCompletableFuture();
+        Request request = commands().setConfiguration(key, value);
+        if (request == null) {
+            logger.debug("Charge point {} has no {} setting to write on {}", chargePointId, key, version);
+            return CompletableFuture.failedFuture(new UnsupportedOperationException(key + " is not settable"));
+        }
+        return send(request).toCompletableFuture();
     }
 
     private CompletableFuture<Confirmation> negotiateMeasurand(String key, String value) {
@@ -904,21 +908,27 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private void attemptMeasurand(String key, String value, CompletableFuture<Confirmation> result) {
-        send(new ChangeConfigurationRequest(key, value)).whenComplete((confirmation, ex) -> {
+        Request request = commands().setConfiguration(key, value);
+        if (request == null) {
+            logger.debug("Charge point {} has no {} setting to write on {}", chargePointId, key, version);
+            result.completeExceptionally(new UnsupportedOperationException(key + " is not settable"));
+            return;
+        }
+        send(request).whenComplete((confirmation, ex) -> {
             if (ex != null) {
                 result.completeExceptionally(ex);
                 return;
             }
-            if (confirmation instanceof ChangeConfigurationConfirmation change) {
-                if (change.getStatus() == ConfigurationStatus.Rejected) {
-                    String shorter = Measurands.dropLast(value);
-                    if (!shorter.isEmpty() && !shorter.equals(value)) {
-                        logger.debug("Charger {} rejected {}={}, retrying with {}", chargePointId, key, value, shorter);
-                        attemptMeasurand(key, shorter, result);
-                        return;
-                    }
-                } else if (change.getStatus() == ConfigurationStatus.Accepted) {
-                    acceptedMeasurands.put(key, value);
+            // A charger that turns the measurand list down is offered a shorter one; both versions
+            // report that the same way once isAccepted has read their own status enum.
+            if (commands().isAccepted(confirmation)) {
+                acceptedMeasurands.put(key, value);
+            } else {
+                String shorter = Measurands.dropLast(value);
+                if (!shorter.isEmpty() && !shorter.equals(value)) {
+                    logger.debug("Charger {} rejected {}={}, retrying with {}", chargePointId, key, value, shorter);
+                    attemptMeasurand(key, shorter, result);
+                    return;
                 }
             }
             result.complete(confirmation);

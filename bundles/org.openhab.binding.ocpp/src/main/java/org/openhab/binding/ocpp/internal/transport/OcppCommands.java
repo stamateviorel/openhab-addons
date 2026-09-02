@@ -60,6 +60,13 @@ public interface OcppCommands {
      */
     Request readCapabilities();
 
+    /**
+     * Set one configuration value, named by its OCPP 1.6 key. Returns null when the version has no
+     * way to express that key, which the caller treats as nothing to do rather than a failure.
+     */
+    @Nullable
+    Request setConfiguration(String key, String value);
+
     /** Whether a confirmation reports the command as accepted, across both versions' status enums. */
     boolean isAccepted(@Nullable Confirmation confirmation);
 }

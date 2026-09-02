@@ -15,6 +15,7 @@ package org.openhab.binding.ocpp.internal.transport;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -26,12 +27,18 @@ import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
 import eu.chargetime.ocpp.v201.model.messages.ResetRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileResponse;
+import eu.chargetime.ocpp.v201.model.messages.SetVariablesRequest;
+import eu.chargetime.ocpp.v201.model.messages.SetVariablesResponse;
 import eu.chargetime.ocpp.v201.model.types.ChargingProfilePurposeEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingProfileStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingRateUnitEnum;
 import eu.chargetime.ocpp.v201.model.types.ClearChargingProfileStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.Component;
 import eu.chargetime.ocpp.v201.model.types.OperationalStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetEnum;
+import eu.chargetime.ocpp.v201.model.types.SetVariableResult;
+import eu.chargetime.ocpp.v201.model.types.SetVariableStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.Variable;
 
 /**
  * The OCPP 2.0.1 shape of the outbound commands.
@@ -109,6 +116,45 @@ class Ocpp201CommandsTest {
 
         assertEquals(OperationalStatusEnum.Inoperative, request.getOperationalStatus());
         assertEquals(2, request.getEvse().getId());
+    }
+
+    @Test
+    void aKnownSettingIsWrittenToItsDeviceModelVariable() {
+        SetVariablesRequest request = assertInstanceOf(SetVariablesRequest.class,
+                commands.setConfiguration("MeterValueSampleInterval", "15"));
+
+        assertEquals("SampledDataCtrlr", request.getSetVariableData()[0].getComponent().getName());
+        assertEquals("TxUpdatedInterval", request.getSetVariableData()[0].getVariable().getName());
+        assertEquals("15", request.getSetVariableData()[0].getAttributeValue());
+    }
+
+    @Test
+    void anExtraSettingCanNameItsOwnComponentAndVariable() {
+        SetVariablesRequest request = assertInstanceOf(SetVariablesRequest.class,
+                commands.setConfiguration("SecurityCtrlr.OrganizationName", "interni"));
+
+        assertEquals("SecurityCtrlr", request.getSetVariableData()[0].getComponent().getName());
+        assertEquals("OrganizationName", request.getSetVariableData()[0].getVariable().getName());
+    }
+
+    @Test
+    void aSettingWithNoDeviceModelEquivalentIsSkippedRatherThanSentWrong() {
+        // A bare 1.6 key the mapping does not know cannot be addressed in the component tree.
+        assertNull(commands.setConfiguration("SomeVendorKey", "1"));
+    }
+
+    @Test
+    void aVariableWriteCountsOnlyIfEveryResultAccepted() {
+        assertTrue(commands.isAccepted(
+                new SetVariablesResponse(new SetVariableResult[] { result(SetVariableStatusEnum.Accepted) })));
+        assertTrue(commands.isAccepted(
+                new SetVariablesResponse(new SetVariableResult[] { result(SetVariableStatusEnum.RebootRequired) })));
+        assertFalse(commands.isAccepted(new SetVariablesResponse(new SetVariableResult[] {
+                result(SetVariableStatusEnum.Accepted), result(SetVariableStatusEnum.UnknownVariable) })));
+    }
+
+    private static SetVariableResult result(SetVariableStatusEnum status) {
+        return new SetVariableResult(status, new Component("SampledDataCtrlr"), new Variable("TxUpdatedInterval"));
     }
 
     @Test
