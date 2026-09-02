@@ -12,6 +12,8 @@
  */
 package org.openhab.binding.ocpp.internal.config;
 
+import java.util.List;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
@@ -26,4 +28,5 @@ public class OcppChargePointConfiguration {
     public int configSettleSeconds = 0;
     public boolean meterless = false;
     public int heartbeat = 0;
+    public List<String> extraConfig = List.of();
 }

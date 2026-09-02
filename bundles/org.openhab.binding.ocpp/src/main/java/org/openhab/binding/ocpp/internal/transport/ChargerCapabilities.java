@@ -47,9 +47,15 @@ public final class ChargerCapabilities {
     private static final String RATE_UNIT_POWER = "Power";
 
     private final Map<String, String> raw;
+    private final Set<String> readOnlyKeys;
 
     private ChargerCapabilities(Map<String, String> raw) {
+        this(raw, Set.of());
+    }
+
+    private ChargerCapabilities(Map<String, String> raw, Set<String> readOnlyKeys) {
         this.raw = raw;
+        this.readOnlyKeys = readOnlyKeys;
     }
 
     /** The capabilities of a charger that has not been successfully queried. */
@@ -72,6 +78,7 @@ public final class ChargerCapabilities {
             return unknown();
         }
         Map<String, String> map = new LinkedHashMap<>();
+        Set<String> readOnly = new LinkedHashSet<>();
         for (@Nullable
         KeyValueType entry : keys) {
             if (entry == null) {
@@ -81,9 +88,17 @@ public final class ChargerCapabilities {
             String value = entry.getValue();
             if (key != null && !key.isBlank() && value != null) {
                 map.put(key, value);
+                if (Boolean.TRUE.equals(entry.getReadonly())) {
+                    readOnly.add(key);
+                }
             }
         }
-        return new ChargerCapabilities(Collections.unmodifiableMap(map));
+        return new ChargerCapabilities(Collections.unmodifiableMap(map), Set.copyOf(readOnly));
+    }
+
+    /** Whether the charger said this setting can be written, as far as it reported one. */
+    public boolean isWritable(String key) {
+        return raw.containsKey(key) && !readOnlyKeys.contains(key);
     }
 
     public Map<String, String> raw() {

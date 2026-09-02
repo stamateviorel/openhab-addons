@@ -159,6 +159,14 @@
 				<default>0</default>
 				<advanced>true</advanced>
 			</parameter>
+			<parameter name="extraConfig" type="text" multiple="true">
+				<label>Extra Configuration</label>
+				<description>Extra ChangeConfiguration entries as key=value, applied to this charger on boot, after any
+					set on the
+					server. On a 2.0.1 charger a key the binding does not know has to be given as
+					Component.Variable.</description>
+				<advanced>true</advanced>
+			</parameter>
 		</config-description>
 	</bridge-type>
 

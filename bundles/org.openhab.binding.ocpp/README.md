@@ -96,6 +96,7 @@ Card authorization is edited under Settings → Add-on Settings → OCPP Binding
 | configSettleSeconds | integer | Delay after BootNotification before the configuration above is sent. Some chargers are not ready to answer immediately                  | 0       | no       | yes      |
 | meterless           | boolean | The charger has no internal meter: skip measurand configuration and disable clock-aligned sampling                                      | false   | no       | yes      |
 | heartbeat           | integer | Per-charger heartbeat interval (s), overriding the server default. Also sizes this charger's liveness window. 0 uses the server default | 0       | no       | yes      |
+| extraConfig         | text[]  | Extra ChangeConfiguration entries as key=value for this charger alone, applied after any set on the server                               | (empty) | no       | yes      |
 
 ### `connector`
 
@@ -116,6 +117,8 @@ Card authorization is edited under Settings → Add-on Settings → OCPP Binding
 
 Most connectors need no configuration beyond `connectorId`.
 The rest cover specific charger behaviors.
+The charge point's own `extraConfig` is for a setting that belongs to one charger rather than the site — a vendor key, or something you want to change on a single unit. Its entries are sent after the server's, so a key set in both is left at the charger's value. A charger reports which of its settings are writable, and the ones it calls read-only are logged as such when the binding reads its configuration.
+
 `forceTxDefaultProfile` is for chargers that reject a `TxProfile` when no transaction is active — a Phoenix CHARX does: the charge limit is then sent as a `TxDefaultProfile`, which such chargers accept and apply through their own load management.
 `profileMinIntervalMs` coalesces rapid limit changes into at most one `SetChargingProfile` per interval, which keeps a solar-tracking rule that adjusts the limit every few seconds from flooding the charger.
 `refreshInterval` actively polls a connector for `MeterValues` for chargers that do not push them on their own; a poll is skipped while the previous one is still outstanding, so a charger that stops answering cannot build a backlog.

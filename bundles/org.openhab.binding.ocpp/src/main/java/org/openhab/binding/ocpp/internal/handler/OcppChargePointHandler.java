@@ -113,6 +113,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private volatile String chargePointId = "";
     private volatile int configSettleSeconds;
     private volatile boolean meterless;
+    private volatile List<String> extraConfig = List.of();
     private volatile int heartbeat;
 
     private volatile @Nullable OcppServerBridgeHandler server;
@@ -178,6 +179,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         chargePointId = config.chargePointId;
         configSettleSeconds = config.configSettleSeconds;
         meterless = config.meterless;
+        extraConfig = config.extraConfig;
         heartbeat = config.heartbeat;
         String savedAuthList = getThing().getProperties().get(PROPERTY_LOCAL_AUTH_LIST);
         if (savedAuthList != null && !savedAuthList.isBlank()) {
@@ -723,7 +725,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
         logger.info("Charge point {} capabilities: {}", chargePointId, caps.summary());
         if (logger.isDebugEnabled()) {
-            caps.raw().forEach((key, value) -> logger.debug("  {} {} = {}", chargePointId, key, value));
+            caps.raw().forEach((key, value) -> logger.debug("  {} {} = {}{}", chargePointId, key, value,
+                    caps.isWritable(key) ? "" : "  (read-only)"));
         }
         caps.featureProfiles()
                 .ifPresent(profiles -> updateProperty("ocppSupportedFeatureProfiles", String.join(", ", profiles)));
@@ -781,7 +784,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         if (config.disableRemoteTxAuthorization) {
             steps.add(() -> sendConfig("AuthorizeRemoteTxRequests", "false"));
         }
-        for (String pair : config.extraConfig) {
+        // The charger's own entries come last so they win over a site-wide setting of the same key.
+        for (String pair : concat(config.extraConfig, extraConfig)) {
             int equals = pair.indexOf('=');
             if (equals > 0) {
                 String key = pair.substring(0, equals).trim();
@@ -799,7 +803,17 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private String configFingerprint(OcppServerConfiguration config) {
         return chargePointId + "|" + meterless + "|" + config.meterValueSampleInterval + "|"
                 + config.clockAlignedDataInterval + "|" + config.meterValuesData + "|"
-                + config.disableRemoteTxAuthorization + "|" + String.join(",", config.extraConfig);
+                + config.disableRemoteTxAuthorization + "|" + String.join(",", config.extraConfig) + "|"
+                + String.join(",", extraConfig);
+    }
+
+    private static List<String> concat(List<String> first, List<String> second) {
+        if (second.isEmpty()) {
+            return first;
+        }
+        List<String> all = new ArrayList<>(first);
+        all.addAll(second);
+        return all;
     }
 
     private CompletableFuture<Confirmation> provisionLocalAuthList(List<String> tags) {
