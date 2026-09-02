@@ -48,6 +48,12 @@ public interface OcppServerListener {
 
     void onHeartbeat(UUID session);
 
+    /**
+     * Capabilities a charger reported out of band. 1.6 answers GetConfiguration directly, but 2.0.1
+     * sends its device model as a separate stream of NotifyReport messages.
+     */
+    void onCapabilities(UUID session, java.util.Map<String, String> configurationKeys);
+
     void onTransactionEvent(UUID session, TransactionEvent event);
 
     void onAuthorize(UUID session, @Nullable String idToken);

@@ -102,6 +102,11 @@ public class Ocpp16Commands implements OcppCommands {
     }
 
     @Override
+    public Request readCapabilities() {
+        return new eu.chargetime.ocpp.model.core.GetConfigurationRequest();
+    }
+
+    @Override
     public boolean isAccepted(@Nullable Confirmation confirmation) {
         if (confirmation instanceof SetChargingProfileConfirmation profile) {
             return profile.getStatus() == ChargingProfileStatus.Accepted;

@@ -54,6 +54,12 @@ public interface OcppCommands {
 
     Request clearChargingProfile(int connectorId);
 
+    /**
+     * Ask the charger what it supports. 1.6 answers in the response; 2.0.1 accepts the request and
+     * then streams its device model as NotifyReport messages.
+     */
+    Request readCapabilities();
+
     /** Whether a confirmation reports the command as accepted, across both versions' status enums. */
     boolean isAccepted(@Nullable Confirmation confirmation);
 }

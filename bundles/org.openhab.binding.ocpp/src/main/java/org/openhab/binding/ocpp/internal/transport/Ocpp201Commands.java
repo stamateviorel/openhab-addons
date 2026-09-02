@@ -65,6 +65,7 @@ public class Ocpp201Commands implements OcppCommands {
     private static final int STACK_LEVEL = 0;
     private static final int PROFILE_ID_STRIDE = 10;
     private final AtomicInteger remoteStartIds = new AtomicInteger();
+    private final AtomicInteger reportIds = new AtomicInteger();
 
     @Override
     public Request remoteStart(int connectorId, String idToken) {
@@ -140,6 +141,12 @@ public class Ocpp201Commands implements OcppCommands {
         ClearChargingProfileRequest request = new ClearChargingProfileRequest();
         request.setChargingProfileCriteria(criteria);
         return request;
+    }
+
+    @Override
+    public Request readCapabilities() {
+        return new eu.chargetime.ocpp.v201.model.messages.GetBaseReportRequest(reportIds.incrementAndGet(),
+                eu.chargetime.ocpp.v201.model.types.ReportBaseEnum.FullInventory);
     }
 
     @Override

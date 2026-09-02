@@ -70,6 +70,7 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
     // 2.0.1 names transactions with a string the charger picks; the binding logs usage under a
     // number, so each one is given an id on its first event and it is held until the transaction ends.
     private final Map<String, Integer> transactionIds = new ConcurrentHashMap<>();
+    private final Map<UUID, DeviceModelReport> reports = new ConcurrentHashMap<>();
 
     public Ocpp201InboundHandler(OcppServerListener listener) {
         this.listener = listener;
@@ -96,8 +97,20 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
     @Override
     @NonNullByDefault({})
     public NotifyReportResponse handleNotifyReportRequest(UUID sessionIndex, NotifyReportRequest request) {
-        logger.debug("NotifyReport from session {} seq {}", sessionIndex, request.getSeqNo());
+        logger.debug("NotifyReport from session {} seq {} tbc {}", sessionIndex, request.getSeqNo(), request.getTbc());
+        DeviceModelReport report = reports.computeIfAbsent(sessionIndex, key -> new DeviceModelReport());
+        boolean complete = report.add(request);
+        if (complete) {
+            reports.remove(sessionIndex);
+            Map<String, String> keys = report.asConfigurationKeys();
+            deliver("NotifyReport", sessionIndex, () -> listener.onCapabilities(sessionIndex, keys));
+        }
         return new NotifyReportResponse();
+    }
+
+    /** Drops a half-received report when its session goes away. */
+    public void forget(UUID session) {
+        reports.remove(session);
     }
 
     @Override

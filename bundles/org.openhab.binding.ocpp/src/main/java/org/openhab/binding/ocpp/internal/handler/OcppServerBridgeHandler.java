@@ -360,6 +360,14 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     @Override
+    public void onCapabilities(UUID session, Map<String, String> configurationKeys) {
+        OcppChargePointHandler handler = resolve(session);
+        if (handler != null) {
+            handler.onCapabilities(configurationKeys);
+        }
+    }
+
+    @Override
     public void onHeartbeat(UUID session) {
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {

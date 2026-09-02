@@ -104,6 +104,10 @@ class ChargeTimeTransportTest {
             }
 
             @Override
+            public void onCapabilities(UUID session, java.util.Map<String, String> configurationKeys) {
+            }
+
+            @Override
             public void onTransactionEvent(UUID session, TransactionEvent event) {
             }
 

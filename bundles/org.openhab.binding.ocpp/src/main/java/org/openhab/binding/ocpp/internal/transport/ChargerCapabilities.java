@@ -57,6 +57,11 @@ public final class ChargerCapabilities {
         return new ChargerCapabilities(Map.of());
     }
 
+    /** Build from already-flattened keys, as the 2.0.1 device model reports them. */
+    public static ChargerCapabilities fromKeys(Map<String, String> keys) {
+        return new ChargerCapabilities(Map.copyOf(keys));
+    }
+
     /** Build from a {@code GetConfiguration} response. */
     public static ChargerCapabilities from(@Nullable GetConfigurationConfirmation confirmation) {
         if (confirmation == null) {

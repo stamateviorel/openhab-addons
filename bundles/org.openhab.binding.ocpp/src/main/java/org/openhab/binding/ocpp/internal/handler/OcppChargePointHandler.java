@@ -670,7 +670,19 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         readCapabilities(bootSession);
     }
 
+    /** Capabilities reported out of band, which is how 2.0.1 answers. */
+    public void onCapabilities(Map<String, String> configurationKeys) {
+        capabilities = ChargerCapabilities.fromKeys(configurationKeys);
+        publishCapabilities(capabilities);
+    }
+
     private void readCapabilities(UUID bootSession) {
+        if (version == OcppVersion.V2_0_1) {
+            // The device model arrives as NotifyReport messages, so the burst cannot wait on this.
+            send(commands().readCapabilities());
+            runBootConfigBurst(bootSession);
+            return;
+        }
         send(new GetConfigurationRequest()).whenComplete((confirmation, ex) -> {
             if (!bootSession.equals(session)) {
                 return;
@@ -681,6 +693,10 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private void readCapabilitiesNow(UUID connectedSession) {
+        if (version == OcppVersion.V2_0_1) {
+            sendNow(commands().readCapabilities());
+            return;
+        }
         sendNow(new GetConfigurationRequest()).whenComplete((confirmation, ex) -> {
             if (!connectedSession.equals(session)) {
                 return;
