@@ -50,6 +50,7 @@ public class DeviceModelReport {
     private final Map<String, String> values = new LinkedHashMap<>();
     private final Set<Integer> evseIds = new TreeSet<>();
     private final Set<String> featureProfiles = new LinkedHashSet<>();
+    private boolean sawController;
 
     /** Absorb one NotifyReport. Returns true once the charger says no more are coming. */
     public boolean add(NotifyReportRequest request) {
@@ -86,25 +87,47 @@ public class DeviceModelReport {
     }
 
     private void translate(String component, String variable, String value) {
-        boolean enabled = Boolean.parseBoolean(value);
+        // A controller states both Available and Enabled. Available is the honest answer about
+        // support; where a charger omits it, Enabled is the only thing left to go on.
+        boolean available = Boolean.parseBoolean(value);
         switch (component + "." + variable) {
             case SMART_CHARGING_CTRLR + ".Available" -> {
-                if (enabled) {
-                    featureProfiles.add("SmartCharging");
+                sawController = true;
+                profile("SmartCharging", available);
+            }
+            case SMART_CHARGING_CTRLR + ".Enabled" -> {
+                sawController = true;
+                if (!values.containsKey(SMART_CHARGING_CTRLR + ".Available")) {
+                    profile("SmartCharging", available);
                 }
             }
             case LOCAL_AUTH_CTRLR + ".Available" -> {
-                if (enabled) {
-                    featureProfiles.add("LocalAuthListManagement");
+                sawController = true;
+                profile("LocalAuthListManagement", available);
+            }
+            case LOCAL_AUTH_CTRLR + ".Enabled" -> {
+                sawController = true;
+                if (!values.containsKey(LOCAL_AUTH_CTRLR + ".Available")) {
+                    profile("LocalAuthListManagement", available);
                 }
             }
-            case SMART_CHARGING_CTRLR + ".ACPhaseSwitchingSupported" ->
+            // Alfen names these Phases3to1 and RateUnit rather than the longer spec names, and both
+            // spellings have been seen in the field.
+            case SMART_CHARGING_CTRLR + ".Phases3to1", SMART_CHARGING_CTRLR + ".ACPhaseSwitchingSupported" ->
                 values.put("ConnectorSwitch3to1PhaseSupported", value);
-            case SMART_CHARGING_CTRLR + ".ChargingScheduleChargingRateUnit" ->
+            case SMART_CHARGING_CTRLR + ".RateUnit", SMART_CHARGING_CTRLR + ".ChargingScheduleChargingRateUnit" ->
                 values.put("ChargingScheduleAllowedChargingRateUnit", rateUnits(value));
             case OCPP_COMM_CTRLR + ".HeartbeatInterval" -> values.put("HeartbeatInterval", value);
             default -> {
             }
+        }
+    }
+
+    private void profile(String name, boolean supported) {
+        if (supported) {
+            featureProfiles.add(name);
+        } else {
+            featureProfiles.remove(name);
         }
     }
 
@@ -146,7 +169,9 @@ public class DeviceModelReport {
     /** The report so far, in the flat form {@link ChargerCapabilities} consumes. */
     public Map<String, String> asConfigurationKeys() {
         Map<String, String> keys = new LinkedHashMap<>(values);
-        if (!featureProfiles.isEmpty()) {
+        if (sawController) {
+            // Stated even when empty: a charger that says a controller is unavailable has answered
+            // the question, and leaving the key out would read as "not known" instead.
             keys.put("SupportedFeatureProfiles", String.join(",", featureProfiles));
         }
         if (!evseIds.isEmpty()) {

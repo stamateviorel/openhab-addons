@@ -63,11 +63,41 @@ class DeviceModelReportTest {
     }
 
     @Test
-    void aControllerThatIsNotAvailableContributesNoProfile() {
+    void aControllerReportedUnavailableIsAnAnswer() {
+        // Distinct from a charger that never mentioned it: the key is present but does not list the
+        // profile, so the binding reads "not supported" rather than "not known".
         DeviceModelReport report = new DeviceModelReport();
         report.add(notifyReport(false, data("SmartChargingCtrlr", "Available", "false", null)));
 
+        String profiles = report.asConfigurationKeys().get("SupportedFeatureProfiles");
+        assertEquals("", profiles);
+    }
+
+    @Test
+    void aChargerThatMentionsNoControllerLeavesTheProfilesUnknown() {
+        DeviceModelReport report = new DeviceModelReport();
+        report.add(notifyReport(false, data("AlignedDataCtrlr", "Interval", "900", null)));
+
         assertFalse(report.asConfigurationKeys().containsKey("SupportedFeatureProfiles"));
+    }
+
+    @Test
+    void alfensOwnSpellingOfTheSmartChargingVariablesIsUnderstood() {
+        // Seen on an Alfen NG: RateUnit and Phases3to1 rather than the longer names in the spec.
+        DeviceModelReport report = new DeviceModelReport();
+        report.add(notifyReport(false, data("SmartChargingCtrlr", "RateUnit", "A", null),
+                data("SmartChargingCtrlr", "Phases3to1", "false", null)));
+
+        assertEquals("Current", report.asConfigurationKeys().get("ChargingScheduleAllowedChargingRateUnit"));
+        assertEquals("false", report.asConfigurationKeys().get("ConnectorSwitch3to1PhaseSupported"));
+    }
+
+    @Test
+    void enabledStandsInForAvailableWhenAChargerOmitsIt() {
+        DeviceModelReport report = new DeviceModelReport();
+        report.add(notifyReport(false, data("LocalAuthListCtrlr", "Enabled", "true", null)));
+
+        assertTrue(report.asConfigurationKeys().get("SupportedFeatureProfiles").contains("LocalAuthListManagement"));
     }
 
     @Test

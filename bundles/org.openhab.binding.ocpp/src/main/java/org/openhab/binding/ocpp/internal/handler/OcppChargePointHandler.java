@@ -149,6 +149,10 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 send(commands().reset()).whenComplete((confirmation, ex) -> {
                     if (ex != null) {
                         logger.warn("Reset of {} failed: {}", chargePointId, ex.getMessage());
+                    } else if (!commands().isAccepted(confirmation)) {
+                        logger.warn("Charge point {} refused the reset: {}", chargePointId, confirmation);
+                    } else {
+                        logger.info("Charge point {} accepted the reset", chargePointId);
                     }
                 });
             } else {

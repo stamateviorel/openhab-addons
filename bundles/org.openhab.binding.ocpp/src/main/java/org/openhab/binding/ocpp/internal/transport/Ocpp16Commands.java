@@ -125,6 +125,9 @@ public class Ocpp16Commands implements OcppCommands {
             return availability.getStatus() == AvailabilityStatus.Accepted
                     || availability.getStatus() == AvailabilityStatus.Scheduled;
         }
+        if (confirmation instanceof eu.chargetime.ocpp.model.core.ResetConfirmation reset) {
+            return reset.getStatus() == eu.chargetime.ocpp.model.core.ResetStatus.Accepted;
+        }
         if (confirmation instanceof TriggerMessageConfirmation trigger) {
             return trigger.getStatus() == TriggerMessageStatus.Accepted;
         }

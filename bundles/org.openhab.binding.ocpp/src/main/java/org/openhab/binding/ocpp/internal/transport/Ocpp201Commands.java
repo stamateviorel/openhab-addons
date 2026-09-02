@@ -204,6 +204,9 @@ public class Ocpp201Commands implements OcppCommands {
             return availability
                     .getStatus() != eu.chargetime.ocpp.v201.model.types.ChangeAvailabilityStatusEnum.Rejected;
         }
+        if (confirmation instanceof eu.chargetime.ocpp.v201.model.messages.ResetResponse reset) {
+            return reset.getStatus() != eu.chargetime.ocpp.v201.model.types.ResetStatusEnum.Rejected;
+        }
         if (confirmation instanceof TriggerMessageResponse trigger) {
             return trigger.getStatus() == TriggerMessageStatusEnum.Accepted;
         }
