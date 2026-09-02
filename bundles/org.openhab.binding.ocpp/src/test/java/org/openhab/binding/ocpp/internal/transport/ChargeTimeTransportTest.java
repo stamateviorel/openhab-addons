@@ -49,6 +49,7 @@ import org.java_websocket.protocols.Protocol;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 
@@ -71,11 +72,14 @@ class ChargeTimeTransportTest {
         });
     }
 
+    private final java.util.concurrent.atomic.AtomicReference<OcppVersion> negotiatedVersion = new java.util.concurrent.atomic.AtomicReference<>();
+
     private OcppServerListener listener(Runnable onOpen) {
         return new OcppServerListener() {
             @Override
             public void onSessionOpened(UUID session, @Nullable String chargePointId,
-                    @Nullable InetSocketAddress remote) {
+                    @Nullable InetSocketAddress remote, OcppVersion version) {
+                negotiatedVersion.set(version);
                 onOpen.run();
             }
 
@@ -126,22 +130,22 @@ class ChargeTimeTransportTest {
 
     @Test
     void aChargerNegotiatingOcpp201IsAccepted() throws Exception {
-        assertNegotiated("ocpp2.0.1", "ocpp2.0.1");
+        assertNegotiated("ocpp2.0.1", "ocpp2.0.1", OcppVersion.V2_0_1);
     }
 
     @Test
     void aChargerNegotiatingOcpp16IsStillAccepted() throws Exception {
-        assertNegotiated("ocpp1.6", "ocpp1.6");
+        assertNegotiated("ocpp1.6", "ocpp1.6", OcppVersion.V1_6);
     }
 
     @Test
     void aChargerOfferingNoSubprotocolIsStillAccepted() throws Exception {
         // The multi-protocol feature repository rejects a null version, so the session factory has
         // to fall back to 1.6 for these; without that the connection is dropped.
-        assertNegotiated("", "");
+        assertNegotiated("", "", OcppVersion.V1_6);
     }
 
-    private void assertNegotiated(String offered, String expected) throws Exception {
+    private void assertNegotiated(String offered, String expected, OcppVersion expectedVersion) throws Exception {
         CountDownLatch opened = new CountDownLatch(1);
         ChargeTimeTransport transport = new ChargeTimeTransport(listener(opened::countDown), 0, 30, "", "", "");
         int port = findFreePort();
@@ -168,6 +172,7 @@ class ChargeTimeTransportTest {
             assertTrue(client.connectBlocking(5, TimeUnit.SECONDS), "the charger should connect");
             assertTrue(opened.await(5, TimeUnit.SECONDS), "the session should reach the listener");
             assertEquals(expected, client.getProtocol().getProvidedProtocol());
+            assertEquals(expectedVersion, negotiatedVersion.get(), "the server must route the session by version");
         } finally {
             client.closeBlocking();
             transport.stop();

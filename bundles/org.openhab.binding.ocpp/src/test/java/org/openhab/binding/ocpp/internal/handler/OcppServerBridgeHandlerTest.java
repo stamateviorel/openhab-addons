@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.OcppBindingConfig;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.library.types.DecimalType;
@@ -182,7 +183,7 @@ class OcppServerBridgeHandlerTest {
                 argThat(status -> status.getStatus() == ThingStatus.ONLINE));
 
         UUID session = UUID.randomUUID();
-        handler.onSessionOpened(session, "charx", null);
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
         handler.onTransactionEvent(session,
                 Ocpp16Events.toStarted(new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77));
 
@@ -197,7 +198,7 @@ class OcppServerBridgeHandlerTest {
                 argThat(status -> status.getStatus() == ThingStatus.ONLINE));
 
         UUID session = UUID.randomUUID();
-        handler.onSessionOpened(session, "charx", null);
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
         handler.onTransactionEvent(session,
                 Ocpp16Events.toStarted(new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77));
         assertEquals(Integer.valueOf(77), handler.openTransactionFor("charx", 2));
@@ -217,8 +218,8 @@ class OcppServerBridgeHandlerTest {
 
         UUID first = UUID.randomUUID();
         UUID second = UUID.randomUUID();
-        handler.onSessionOpened(first, "charx", null);
-        handler.onSessionOpened(second, "charx", null);
+        handler.onSessionOpened(first, "charx", null, OcppVersion.V1_6);
+        handler.onSessionOpened(second, "charx", null, OcppVersion.V1_6);
 
         verify(transport).closeSession(first);
         verify(transport, never()).closeSession(second);
@@ -232,7 +233,7 @@ class OcppServerBridgeHandlerTest {
                 argThat(status -> status.getStatus() == ThingStatus.ONLINE));
 
         UUID session = UUID.randomUUID();
-        handler.onSessionOpened(session, "", null);
+        handler.onSessionOpened(session, "", null, OcppVersion.V1_6);
         handler.onTransactionEvent(session,
                 Ocpp16Events.toStarted(new StartTransactionRequest(1, "tag", 0, ZonedDateTime.now()), 55));
 
@@ -247,7 +248,7 @@ class OcppServerBridgeHandlerTest {
                 argThat(status -> status.getStatus() == ThingStatus.ONLINE));
 
         UUID session = UUID.randomUUID();
-        handler.onSessionOpened(session, "", null);
+        handler.onSessionOpened(session, "", null, OcppVersion.V1_6);
 
         verify(transport).closeSession(session);
     }

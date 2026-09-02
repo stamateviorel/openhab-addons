@@ -28,6 +28,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ThingStatus;
@@ -153,7 +154,7 @@ class OcppChargePointHandlerTest {
 
     @Test
     void aChargePointIsNotReadyUntilItHasBooted() throws InterruptedException {
-        handler.onConnected(UUID.randomUUID());
+        handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
         assertFalse(handler.isReady(), "a just-connected charger has not booted yet");
 
         handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
@@ -164,7 +165,7 @@ class OcppChargePointHandlerTest {
 
     @Test
     void becomingReadyReleasesConnectorsThatDeferredASend() {
-        handler.onConnected(UUID.randomUUID());
+        handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
         // A heartbeat also proves the charger booted (socket reopened, no fresh BootNotification); release is async.
         handler.onHeartbeat();
 
@@ -175,7 +176,7 @@ class OcppChargePointHandlerTest {
     @Test
     void aDisconnectMakesItNotReadyAgain() throws InterruptedException {
         UUID session = UUID.randomUUID();
-        handler.onConnected(session);
+        handler.onConnected(session, OcppVersion.V1_6);
         handler.onHeartbeat();
         awaitReady();
 

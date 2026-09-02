@@ -36,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.config.OcppServerConfiguration;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.Thing;
@@ -98,7 +99,7 @@ class OcppBootConfigTest {
         handler = new OcppChargePointHandler(cpThing);
         handler.setCallback(callback);
         handler.initialize();
-        handler.onConnected(UUID.randomUUID());
+        handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
     }
 
     private void acceptEverything() {
@@ -181,7 +182,7 @@ class OcppBootConfigTest {
                 .toCompletableFuture();
         verify(transport, timeout(1000)).send(any(), eq(first));
 
-        handler.onConnected(UUID.randomUUID());
+        handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
         assertTrue(firstResult.isCompletedExceptionally(),
                 "the in-flight request must be abandoned on the session change");
 
@@ -206,7 +207,7 @@ class OcppBootConfigTest {
         handler.send(r1);
         verify(transport, timeout(1000)).send(any(), eq(r1));
 
-        handler.onConnected(UUID.randomUUID());
+        handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
         handler.onHeartbeat();
         awaitReady();
 
@@ -299,10 +300,10 @@ class OcppBootConfigTest {
         OcppChargePointHandler delayed = new OcppChargePointHandler(cpThing);
         delayed.setCallback(callback);
         delayed.initialize();
-        delayed.onConnected(UUID.randomUUID());
+        delayed.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
 
         delayed.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
-        delayed.onConnected(UUID.randomUUID());
+        delayed.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
 
         verify(transport, org.mockito.Mockito.after(2000).never()).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
@@ -325,7 +326,7 @@ class OcppBootConfigTest {
         verify(transport, timeout(3000)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
 
-        handler.onConnected(UUID.randomUUID());
+        handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
         handler.onHeartbeat();
 
         firstStep.complete(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
@@ -342,7 +343,7 @@ class OcppBootConfigTest {
                 .send(new ChangeConfigurationRequest("Key", "1")).toCompletableFuture();
         assertFalse(queued.isDone());
 
-        handler.onConnected(UUID.randomUUID());
+        handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
         assertTrue(queued.isCompletedExceptionally(), "a request queued on a superseded session must fail");
 
         handler.onHeartbeat();

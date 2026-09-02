@@ -39,6 +39,7 @@ import org.java_websocket.drafts.Draft;
 import org.java_websocket.drafts.Draft_6455;
 import org.java_websocket.protocols.IProtocol;
 import org.java_websocket.protocols.Protocol;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.core.common.ThreadPoolManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -182,9 +183,11 @@ public class ChargeTimeTransport implements OcppTransport {
                     return;
                 }
                 String identifier = normalizeIdentifier(information != null ? information.getIdentifier() : null);
-                logger.debug("Charger session opened: {} (id={})", sessionIndex, identifier);
+                ProtocolVersion negotiated = information == null ? null : information.getProtocolVersion();
+                OcppVersion version = negotiated == ProtocolVersion.OCPP2_0_1 ? OcppVersion.V2_0_1 : OcppVersion.V1_6;
+                logger.debug("Charger session opened: {} (id={}, {})", sessionIndex, identifier, version);
                 ocppListener.onSessionOpened(sessionIndex, identifier,
-                        information != null ? information.getAddress() : null);
+                        information != null ? information.getAddress() : null, version);
             }
 
             @Override

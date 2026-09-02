@@ -38,6 +38,7 @@ import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.binding.ocpp.internal.transport.TransactionStore;
 import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.items.ItemNotFoundException;
@@ -74,6 +75,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private static final long POWER_SAMPLE_SECONDS = 30;
 
     private final Map<UUID, String> sessionChargePoints = new ConcurrentHashMap<>();
+    private final Map<UUID, OcppVersion> sessionVersions = new ConcurrentHashMap<>();
     private final Map<String, OcppChargePointHandler> chargePoints = new ConcurrentHashMap<>();
     private final Map<Integer, PowerTally> powerTallies = new ConcurrentHashMap<>();
     private volatile @Nullable ScheduledFuture<?> powerSampler;
@@ -229,7 +231,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         chargePoints.put(chargePointId, handler);
         for (Map.Entry<UUID, String> entry : sessionChargePoints.entrySet()) {
             if (chargePointId.equals(entry.getValue())) {
-                handler.onConnected(entry.getKey());
+                handler.onConnected(entry.getKey(), sessionVersions.getOrDefault(entry.getKey(), OcppVersion.V1_6));
                 return;
             }
         }
@@ -248,7 +250,8 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     @Override
-    public void onSessionOpened(UUID session, @Nullable String chargePointId, @Nullable InetSocketAddress remote) {
+    public void onSessionOpened(UUID session, @Nullable String chargePointId, @Nullable InetSocketAddress remote,
+            OcppVersion version) {
         if (chargePointId == null || chargePointId.isBlank()) {
             Object peer = remote != null ? remote : session;
             logger.warn(
@@ -278,16 +281,17 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             return false;
         });
         sessionChargePoints.put(session, chargePointId);
+        sessionVersions.put(session, version);
         OcppTransport localTransport = transport;
         if (localTransport != null) {
             for (UUID stale : staleSessions) {
                 localTransport.closeSession(stale);
             }
         }
-        logger.debug("Charger connected: id={} session={} from={}", chargePointId, session, remote);
+        logger.debug("Charger connected: id={} session={} from={} ({})", chargePointId, session, remote, version);
         OcppChargePointHandler handler = chargePoints.get(chargePointId);
         if (handler != null) {
-            handler.onConnected(session);
+            handler.onConnected(session, version);
         } else {
             OcppDiscoveryService discovery = discoveryService;
             if (discovery != null) {
@@ -298,6 +302,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     @Override
     public void onSessionClosed(UUID session) {
+        sessionVersions.remove(session);
         String chargePointId = sessionChargePoints.remove(session);
         if (chargePointId != null) {
             OcppChargePointHandler handler = chargePoints.get(chargePointId);

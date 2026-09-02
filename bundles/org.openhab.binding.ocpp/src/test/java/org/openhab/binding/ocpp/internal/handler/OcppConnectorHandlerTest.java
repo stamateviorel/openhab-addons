@@ -32,6 +32,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Commands;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
@@ -145,6 +146,7 @@ class OcppConnectorHandlerTest {
         when(thing.getConfiguration()).thenReturn(new org.openhab.core.config.core.Configuration(
                 java.util.Map.of("remoteStartRetries", new java.math.BigDecimal(1))));
         OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
         when(chargePoint.isReady()).thenReturn(true);
         when(chargePoint.getChargePointId()).thenReturn("charger");
         when(chargePoint.recoverTransactionId(org.mockito.ArgumentMatchers.anyInt())).thenReturn(null);
@@ -265,6 +267,7 @@ class OcppConnectorHandlerTest {
         ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
         when(thing.getBridgeUID()).thenReturn(chargePointUID);
         OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
         when(chargePoint.isReady()).thenReturn(true);
         when(chargePoint.getCapabilities()).thenReturn(ChargerCapabilities.unknown());
         when(chargePoint.send(any())).thenAnswer(invocation -> {

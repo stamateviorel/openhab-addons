@@ -37,9 +37,13 @@ import org.openhab.binding.ocpp.internal.config.OcppChargePointConfiguration;
 import org.openhab.binding.ocpp.internal.config.OcppServerConfiguration;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
 import org.openhab.binding.ocpp.internal.transport.Measurands;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Commands;
+import org.openhab.binding.ocpp.internal.transport.Ocpp201Commands;
+import org.openhab.binding.ocpp.internal.transport.OcppCommands;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.library.types.DateTimeType;
@@ -66,15 +70,11 @@ import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 import eu.chargetime.ocpp.model.core.GetConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
 import eu.chargetime.ocpp.model.core.IdTagInfo;
-import eu.chargetime.ocpp.model.core.ResetRequest;
-import eu.chargetime.ocpp.model.core.ResetType;
 import eu.chargetime.ocpp.model.localauthlist.AuthorizationData;
 import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionConfirmation;
 import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest;
 import eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest;
 import eu.chargetime.ocpp.model.localauthlist.UpdateType;
-import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequest;
-import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequestType;
 
 /**
  * Represents one physical charger: tracks its session and routes its OCPP messages to the connectors.
@@ -118,6 +118,9 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
 
     private volatile @Nullable OcppServerBridgeHandler server;
     private volatile @Nullable UUID session;
+    private volatile OcppVersion version = OcppVersion.V1_6;
+    private static final OcppCommands COMMANDS_16 = new Ocpp16Commands();
+    private static final OcppCommands COMMANDS_201 = new Ocpp201Commands();
     private volatile boolean operational;
     private final Map<String, String> acceptedMeasurands = new ConcurrentHashMap<>();
     private volatile ChargerCapabilities capabilities = ChargerCapabilities.unknown();
@@ -143,7 +146,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     public void handleCommand(ChannelUID channelUID, Command command) {
         if (CHANNEL_RESET.equals(channelUID.getId()) && command == OnOffType.ON) {
             if (isReady()) {
-                send(new ResetRequest(ResetType.Soft)).whenComplete((confirmation, ex) -> {
+                send(commands().reset()).whenComplete((confirmation, ex) -> {
                     if (ex != null) {
                         logger.warn("Reset of {} failed: {}", chargePointId, ex.getMessage());
                     }
@@ -458,15 +461,26 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
     }
 
+    /** The OCPP version this charger negotiated; it decides which dialect outbound commands use. */
+    public OcppVersion getVersion() {
+        return version;
+    }
+
+    /** The outbound dialect for the version this charger negotiated. */
+    public OcppCommands commands() {
+        return version == OcppVersion.V2_0_1 ? COMMANDS_201 : COMMANDS_16;
+    }
+
     public boolean isReady() {
         return session != null && operational;
     }
 
-    public void onConnected(UUID session) {
+    public void onConnected(UUID session, OcppVersion version) {
         synchronized (stateLock) {
             bootAccepted = false;
             operational = false;
             this.session = session;
+            this.version = version;
         }
         failPendingSends();
         cancel(readyTask);
@@ -507,8 +521,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 continue;
             }
             int connectorId = id;
-            TriggerMessageRequest request = new TriggerMessageRequest(TriggerMessageRequestType.StatusNotification);
-            request.setConnectorId(connectorId);
+            Request request = commands().triggerStatusNotification(connectorId);
             CompletionStage<Confirmation> result = bypassReadiness ? sendNow(request) : send(request);
             result.whenComplete((confirmation, ex) -> {
                 if (ex != null) {

@@ -19,6 +19,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 
@@ -34,7 +35,8 @@ import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 @NonNullByDefault
 public interface OcppServerListener {
 
-    void onSessionOpened(UUID session, @Nullable String chargePointId, @Nullable InetSocketAddress remote);
+    void onSessionOpened(UUID session, @Nullable String chargePointId, @Nullable InetSocketAddress remote,
+            OcppVersion version);
 
     void onSessionClosed(UUID session);
 

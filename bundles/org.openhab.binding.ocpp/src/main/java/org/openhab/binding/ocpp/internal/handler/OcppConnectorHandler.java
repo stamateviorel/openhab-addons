@@ -29,8 +29,9 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.ocpp.internal.config.OcppConnectorConfiguration;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
-import org.openhab.binding.ocpp.internal.transport.ChargingProfileBuilder;
 import org.openhab.binding.ocpp.internal.transport.MeterValueMapper;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Commands;
+import org.openhab.binding.ocpp.internal.transport.OcppCommands;
 import org.openhab.binding.ocpp.internal.transport.event.ConnectorStatus;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
@@ -60,23 +61,10 @@ import org.openhab.core.types.UnDefType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import eu.chargetime.ocpp.model.core.AvailabilityStatus;
-import eu.chargetime.ocpp.model.core.AvailabilityType;
-import eu.chargetime.ocpp.model.core.ChangeAvailabilityConfirmation;
-import eu.chargetime.ocpp.model.core.ChangeAvailabilityRequest;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationRequest;
 import eu.chargetime.ocpp.model.core.ChargingRateUnitType;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
-import eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest;
-import eu.chargetime.ocpp.model.core.RemoteStopTransactionRequest;
-import eu.chargetime.ocpp.model.core.UnlockConnectorRequest;
-import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequest;
-import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequestType;
-import eu.chargetime.ocpp.model.smartcharging.ChargingProfileStatus;
-import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileConfirmation;
-import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileStatus;
-import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
 
 /**
  * Handles one connector (outlet) of a charger: status, metering and transaction channels plus the
@@ -153,6 +141,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     private volatile @Nullable OcppChargePointHandler chargePoint;
     private volatile @Nullable Integer transactionId;
+    // 2.0.1 stops a transaction by the id the charger chose, so it is kept alongside the numeric one.
+    private volatile @Nullable String remoteTransactionId;
     private volatile @Nullable Integer meterStart;
     private volatile double currentLimitAmps;
     private volatile double powerLimitWatts;
@@ -164,6 +154,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     // Dedicated lock: the base class synchronizes on the handler monitor.
     private final Object lock = new Object();
+    private static final OcppCommands FALLBACK_COMMANDS = new Ocpp16Commands();
 
     private double pendingLimitAmps;
     private long lastProfileSentAt;
@@ -357,7 +348,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 break;
             case CHANNEL_UNLOCK:
                 if (command == OnOffType.ON) {
-                    dispatchIfReady(new UnlockConnectorRequest(connectorId), "UnlockConnector");
+                    dispatchIfReady(commands().unlock(connectorId), "UnlockConnector");
                     updateState(CHANNEL_UNLOCK, OnOffType.OFF);
                 }
                 break;
@@ -400,6 +391,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
             limitDeferred = false;
             applyLimit();
         }
+    }
+
+    private OcppCommands commands() {
+        OcppChargePointHandler cp = chargePoint;
+        return cp == null ? FALLBACK_COMMANDS : cp.commands();
     }
 
     private boolean isReadyToSend() {
@@ -490,10 +486,13 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     private void setProfile(ProfileClaim claim) {
-        dispatch(ChargingProfileBuilder.limit(connectorId, claim.wireUnit(), claim.wireValue(), claim.numberPhases(),
-                forceTxDefaultProfile, transactionId), "SetChargingProfile").whenComplete((confirmation, ex) -> {
-                    if (ex == null && confirmation instanceof SetChargingProfileConfirmation profile
-                            && profile.getStatus() == ChargingProfileStatus.Accepted) {
+        OcppCommands commands = commands();
+        Integer phases = claim.numberPhases();
+        dispatch(
+                commands.setChargingProfile(connectorId, claim.wireValue(), claim.wireUnit() == ChargingRateUnitType.W,
+                        phases == null ? 0 : phases, forceTxDefaultProfile, transactionId, remoteTransactionId),
+                "SetChargingProfile").whenComplete((confirmation, ex) -> {
+                    if (ex == null && commands.isAccepted(confirmation)) {
                         if (claimPublication(claim)) {
                             publishAcceptedLimit(claim);
                         } else {
@@ -521,11 +520,10 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     private void clearProfile(ProfileClaim claim) {
-        dispatch(ChargingProfileBuilder.clearLimit(connectorId), "ClearChargingProfile")
+        OcppCommands commands = commands();
+        dispatch(commands.clearChargingProfile(connectorId), "ClearChargingProfile")
                 .whenComplete((confirmation, ex) -> {
-                    if (ex == null && confirmation instanceof ClearChargingProfileConfirmation cleared
-                            && (cleared.getStatus() == ClearChargingProfileStatus.Accepted
-                                    || cleared.getStatus() == ClearChargingProfileStatus.Unknown)) {
+                    if (ex == null && commands.isAccepted(confirmation)) {
                         if (claimPublication(claim)) {
                             updateState(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
                             updateState(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
@@ -554,20 +552,19 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     private void attemptRemoteStart(int remaining) {
-        RemoteStartTransactionRequest request = new RemoteStartTransactionRequest(remoteStartTag);
-        request.setConnectorId(connectorId);
-        dispatch(request, "RemoteStart").whenComplete((confirmation, ex) -> {
-            if (ex == null || remaining <= 0 || transactionId != null || !isReadyToSend()) {
-                return;
-            }
-            logger.info("RemoteStart on connector {} did not answer; retrying ({} attempt(s) left)", connectorId,
-                    remaining);
-            remoteStartRetryTask = scheduler.schedule(() -> {
-                if (transactionId == null && isReadyToSend()) {
-                    attemptRemoteStart(remaining - 1);
-                }
-            }, REMOTE_START_RETRY_DELAY_SECONDS, TimeUnit.SECONDS);
-        });
+        dispatch(commands().remoteStart(connectorId, remoteStartTag), "RemoteStart")
+                .whenComplete((confirmation, ex) -> {
+                    if (ex == null || remaining <= 0 || transactionId != null || !isReadyToSend()) {
+                        return;
+                    }
+                    logger.info("RemoteStart on connector {} did not answer; retrying ({} attempt(s) left)",
+                            connectorId, remaining);
+                    remoteStartRetryTask = scheduler.schedule(() -> {
+                        if (transactionId == null && isReadyToSend()) {
+                            attemptRemoteStart(remaining - 1);
+                        }
+                    }, REMOTE_START_RETRY_DELAY_SECONDS, TimeUnit.SECONDS);
+                });
     }
 
     private void remoteStop() {
@@ -578,7 +575,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
             logger.debug("No active transaction to stop on connector {}", connectorId);
             return;
         }
-        dispatchIfReady(new RemoteStopTransactionRequest(transaction), "RemoteStop");
+        dispatchIfReady(commands().remoteStop(transaction, remoteTransactionId), "RemoteStop");
     }
 
     private void changeAvailability(boolean operative) {
@@ -586,11 +583,10 @@ public class OcppConnectorHandler extends BaseThingHandler {
             logger.debug("ChangeAvailability on connector {} skipped — charge point not ready", connectorId);
             return;
         }
-        AvailabilityType type = operative ? AvailabilityType.Operative : AvailabilityType.Inoperative;
-        dispatch(new ChangeAvailabilityRequest(connectorId, type), "ChangeAvailability")
+        OcppCommands commands = commands();
+        dispatch(commands.changeAvailability(connectorId, operative), "ChangeAvailability")
                 .whenComplete((confirmation, ex) -> {
-                    if (ex == null && confirmation instanceof ChangeAvailabilityConfirmation change
-                            && change.getStatus() == AvailabilityStatus.Accepted) {
+                    if (ex == null && commands.isAccepted(confirmation)) {
                         updateState(CHANNEL_AVAILABILITY, OnOffType.from(operative));
                     }
                 });
@@ -630,9 +626,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
                     connectorId);
             return;
         }
-        TriggerMessageRequest request = new TriggerMessageRequest(TriggerMessageRequestType.MeterValues);
-        request.setConnectorId(connectorId);
-        pendingPoll = dispatch(request, "TriggerMessage[MeterValues]").toCompletableFuture();
+        pendingPoll = dispatch(commands().triggerMeterValues(connectorId), "TriggerMessage[MeterValues]")
+                .toCompletableFuture();
     }
 
     public void requestStatus() {
@@ -648,8 +643,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (cp == null) {
             return;
         }
-        TriggerMessageRequest request = new TriggerMessageRequest(TriggerMessageRequestType.StatusNotification);
-        request.setConnectorId(connectorId);
+        eu.chargetime.ocpp.model.Request request = cp.commands().triggerStatusNotification(connectorId);
         CompletionStage<eu.chargetime.ocpp.model.Confirmation> result = bypassReadiness ? cp.sendNow(request)
                 : cp.send(request);
         result.whenComplete((confirmation, ex) -> {
@@ -798,6 +792,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         remoteStartRetryTask = null;
         int transactionId = event.transactionId();
         this.transactionId = transactionId;
+        this.remoteTransactionId = event.remoteId();
         updateState(CHANNEL_TRANSACTION_ID, new DecimalType(transactionId));
         String idTag = event.idToken();
         if (idTag != null) {
@@ -816,6 +811,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     public void onTransactionEnded(TransactionEvent event) {
         this.transactionId = null;
+        this.remoteTransactionId = null;
         updateState(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
         Integer meterStop = event.meterWh();
         if (meterStop != null) {
@@ -849,7 +845,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private void onStuck(ConnectorStatus status) {
         logger.warn("Connector {} stuck in {} for over {}s; sending UnlockConnector", connectorId, status,
                 STUCK_STATE_SECONDS);
-        dispatch(new UnlockConnectorRequest(connectorId), "UnlockConnector[stuck-recovery]");
+        dispatch(commands().unlock(connectorId), "UnlockConnector[stuck-recovery]");
     }
 
     private static void cancel(@Nullable ScheduledFuture<?> task) {
