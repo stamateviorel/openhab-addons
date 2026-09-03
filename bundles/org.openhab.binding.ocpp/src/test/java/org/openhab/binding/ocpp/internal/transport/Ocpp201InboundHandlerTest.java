@@ -15,6 +15,8 @@ package org.openhab.binding.ocpp.internal.transport;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -78,6 +80,9 @@ class Ocpp201InboundHandlerTest {
         listener = mock(OcppServerListener.class);
         when(listener.isTagAuthorized(any())).thenReturn(true);
         when(listener.heartbeatFor(any())).thenReturn(300);
+        // Mockito answers 0 for a boxed Integer, which would read as a known transaction.
+        when(listener.knownTransactionId(any(), any())).thenReturn(null);
+        when(listener.knownConnector(any(), anyInt())).thenReturn(null);
         AtomicInteger sequence = new AtomicInteger();
         when(listener.nextTransactionId()).thenAnswer(invocation -> sequence.incrementAndGet());
         handler = new Ocpp201InboundHandler(listener);
@@ -328,6 +333,36 @@ class Ocpp201InboundHandlerTest {
         ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
         verify(listener).onTransactionEvent(eq(session), captor.capture());
         assertEquals(1500, captor.getValue().meterWh());
+    }
+
+    @Test
+    void anUpdateWithoutAnEvseIsPlacedOnTheConnectorTheTransactionStartedOn() {
+        handler.handleTransactionEventRequest(session, transaction(TransactionEventEnum.Started, "abc", null));
+        TransactionEventRequest update = transaction(TransactionEventEnum.Updated, "abc", null);
+        update.setEvse(null);
+        update.getTransactionInfo().setChargingState(ChargingStateEnum.Charging);
+
+        handler.handleTransactionEventRequest(session, update);
+
+        verify(listener).onStatusNotification(eq(session),
+                argThat(status -> status.connectorId() == 1 && status.status() == ConnectorStatus.CHARGING));
+    }
+
+    @Test
+    void aTransactionThatBeganBeforeARestartKeepsItsIdAndConnector() {
+        when(listener.knownTransactionId(session, "abc")).thenReturn(42);
+        when(listener.knownConnector(session, 42)).thenReturn(2);
+        TransactionEventRequest update = transaction(TransactionEventEnum.Updated, "abc", null);
+        update.setEvse(null);
+        update.getTransactionInfo().setChargingState(ChargingStateEnum.SuspendedEV);
+
+        handler.handleTransactionEventRequest(session, update);
+
+        ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener).onTransactionEvent(eq(session), captor.capture());
+        assertEquals(42, captor.getValue().transactionId());
+        assertEquals(Integer.valueOf(2), captor.getValue().connectorId());
+        verify(listener, never()).nextTransactionId();
     }
 
     private TransactionEventRequest transaction(TransactionEventEnum kind, @Nullable String transactionId,

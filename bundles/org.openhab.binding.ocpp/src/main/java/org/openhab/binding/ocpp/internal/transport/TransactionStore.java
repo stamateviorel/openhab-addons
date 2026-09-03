@@ -26,7 +26,10 @@ import org.openhab.core.storage.Storage;
 @NonNullByDefault
 public class TransactionStore {
 
-    public record Location(String chargePointId, int connectorId) {
+    public record Location(String chargePointId, int connectorId, @Nullable String remoteId) {
+        public Location(String chargePointId, int connectorId) {
+            this(chargePointId, connectorId, null);
+        }
     }
 
     private static final String SEQUENCE_KEY = "sequence";
@@ -60,8 +63,33 @@ public class TransactionStore {
     }
 
     public synchronized void begin(int transactionId, String chargePointId, int connectorId) {
+        begin(transactionId, chargePointId, connectorId, null);
+    }
+
+    /** {@code remoteId} is the name the charger itself gives the transaction, where it has one. */
+    public synchronized void begin(int transactionId, String chargePointId, int connectorId,
+            @Nullable String remoteId) {
         clear(chargePointId, connectorId);
-        storage.put(TX_PREFIX + transactionId, chargePointId + SEPARATOR + connectorId);
+        storage.put(TX_PREFIX + transactionId,
+                chargePointId + SEPARATOR + connectorId + (remoteId == null ? "" : SEPARATOR + remoteId));
+    }
+
+    /** The id the binding gave the transaction a charger names {@code remoteId}, if it is still open. */
+    public synchronized @Nullable Integer byRemoteId(String chargePointId, String remoteId) {
+        for (String key : storage.getKeys()) {
+            if (!key.startsWith(TX_PREFIX)) {
+                continue;
+            }
+            Location location = parse(storage.get(key));
+            if (location != null && chargePointId.equals(location.chargePointId())
+                    && remoteId.equals(location.remoteId())) {
+                try {
+                    return Integer.parseInt(key.substring(TX_PREFIX.length()));
+                } catch (NumberFormatException e) {
+                }
+            }
+        }
+        return null;
     }
 
     public synchronized void end(int transactionId) {
@@ -102,13 +130,13 @@ public class TransactionStore {
         if (value == null) {
             return null;
         }
-        // Split on the last separator so a chargePointId containing one stays intact.
-        int split = value.lastIndexOf(SEPARATOR);
-        if (split < 0) {
+        // chargePointId, connectorId and, for a charger that names its transactions, that name.
+        String[] fields = value.split(String.valueOf(SEPARATOR), 3);
+        if (fields.length < 2) {
             return null;
         }
         try {
-            return new Location(value.substring(0, split), Integer.parseInt(value.substring(split + 1)));
+            return new Location(fields[0], Integer.parseInt(fields[1]), fields.length > 2 ? fields[2] : null);
         } catch (NumberFormatException e) {
             return null;
         }

@@ -94,6 +94,8 @@ public class Ocpp201InboundHandler
     // 2.0.1 names transactions with a string the charger picks; the binding logs usage under a
     // number, so each one is given an id on its first event and it is held until the transaction ends.
     private final Map<String, Integer> transactionIds = new ConcurrentHashMap<>();
+    // A charger need not repeat the EVSE on every event of a transaction; this keeps the one it started on.
+    private final Map<String, Integer> transactionConnectors = new ConcurrentHashMap<>();
     private final Map<String, DeviceModelReport> reports = new ConcurrentHashMap<>();
     // The last event seen per transaction, so a replayed or duplicated one is not counted twice.
     private final Map<String, Integer> lastSeqNo = new ConcurrentHashMap<>();
@@ -262,15 +264,14 @@ public class Ocpp201InboundHandler
         // A plug-first session starts with no token and presents one in a later update, so whichever
         // event carries a token is the one that is answered; without one there is nothing to refuse.
         boolean authorized = idToken == null || listener.isTagAuthorized(idToken);
-        int transactionId = idFor(remoteId);
+        int transactionId = idFor(sessionIndex, remoteId);
         logger.debug("TransactionEvent {} from session {} tx {} -> id {} ({})", kind, sessionIndex, remoteId,
                 transactionId, authorized ? "accepted" : "invalid");
 
         // A refused token only keeps a session from starting; a refusal on a later event is answered
         // but the event itself still counts, or the transaction would never be seen to end.
         if (authorized || kind != TransactionEvent.Kind.STARTED) {
-            EVSE evse = request.getEvse();
-            Integer connectorId = evse == null ? null : evse.getId();
+            Integer connectorId = connectorOf(sessionIndex, request.getEvse(), remoteId, transactionId);
             ConnectorStatus chargingState = info == null ? null
                     : Ocpp201Events.toConnectorStatus(info.getChargingState());
             Integer meterWh = meterWhOf(request);
@@ -295,6 +296,7 @@ public class Ocpp201InboundHandler
         }
         if (kind == TransactionEvent.Kind.ENDED && remoteId != null) {
             transactionIds.remove(remoteId);
+            transactionConnectors.remove(remoteId);
             lastSeqNo.remove(remoteId);
         }
 
@@ -323,11 +325,27 @@ public class Ocpp201InboundHandler
         return false;
     }
 
-    private int idFor(@Nullable String remoteId) {
+    private int idFor(UUID session, @Nullable String remoteId) {
         if (remoteId == null) {
             return listener.nextTransactionId();
         }
-        return Objects.requireNonNull(transactionIds.computeIfAbsent(remoteId, key -> listener.nextTransactionId()));
+        return Objects.requireNonNull(transactionIds.computeIfAbsent(remoteId, key -> {
+            // A transaction that began before a restart already has an id on record.
+            Integer known = listener.knownTransactionId(session, key);
+            return known != null ? known : listener.nextTransactionId();
+        }));
+    }
+
+    private @Nullable Integer connectorOf(UUID session, @Nullable EVSE evse, @Nullable String remoteId,
+            int transactionId) {
+        if (evse != null) {
+            if (remoteId != null) {
+                transactionConnectors.put(remoteId, evse.getId());
+            }
+            return evse.getId();
+        }
+        Integer remembered = remoteId == null ? null : transactionConnectors.get(remoteId);
+        return remembered != null ? remembered : listener.knownConnector(session, transactionId);
     }
 
     /** The energy register, which is what the usage log and the session-energy channel are built on. */

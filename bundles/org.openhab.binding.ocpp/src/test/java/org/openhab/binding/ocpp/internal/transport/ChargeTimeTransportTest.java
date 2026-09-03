@@ -130,6 +130,16 @@ class ChargeTimeTransportTest {
             public int nextTransactionId() {
                 return 1;
             }
+
+            @Override
+            public @Nullable Integer knownTransactionId(UUID session, String remoteId) {
+                return null;
+            }
+
+            @Override
+            public @Nullable Integer knownConnector(UUID session, int transactionId) {
+                return null;
+            }
         };
     }
 

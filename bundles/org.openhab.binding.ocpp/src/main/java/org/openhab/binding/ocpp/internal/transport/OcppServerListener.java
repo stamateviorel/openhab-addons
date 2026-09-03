@@ -64,4 +64,15 @@ public interface OcppServerListener {
     int heartbeatFor(UUID session);
 
     int nextTransactionId();
+
+    /**
+     * The id already given to the transaction a charger names {@code remoteId}, if any. It lets a
+     * transaction that began before the binding restarted keep its id and its connector.
+     */
+    @Nullable
+    Integer knownTransactionId(UUID session, String remoteId);
+
+    /** The connector a known transaction runs on, for an event that does not say. */
+    @Nullable
+    Integer knownConnector(UUID session, int transactionId);
 }

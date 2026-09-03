@@ -395,7 +395,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         Integer connectorId = event.connectorId();
         if (chargePointId != null && connectorId != null) {
             // Persist at accept time so a later stop routes even before a Thing exists.
-            rememberTransaction(transactionId, chargePointId, connectorId);
+            rememberTransaction(transactionId, chargePointId, connectorId, event.remoteId());
         }
         CpmsService service = cpms;
         if (service != null && chargePointId != null && connectorId != null) {
@@ -660,10 +660,28 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     public void rememberTransaction(int transactionId, String chargePointId, int connectorId) {
+        rememberTransaction(transactionId, chargePointId, connectorId, null);
+    }
+
+    public void rememberTransaction(int transactionId, String chargePointId, int connectorId,
+            @Nullable String remoteId) {
         TransactionStore store = transactionStore;
         if (store != null) {
-            store.begin(transactionId, chargePointId, connectorId);
+            store.begin(transactionId, chargePointId, connectorId, remoteId);
         }
+    }
+
+    @Override
+    public @Nullable Integer knownTransactionId(UUID session, String remoteId) {
+        TransactionStore store = transactionStore;
+        String chargePointId = sessionChargePoints.get(session);
+        return store != null && chargePointId != null ? store.byRemoteId(chargePointId, remoteId) : null;
+    }
+
+    @Override
+    public @Nullable Integer knownConnector(UUID session, int transactionId) {
+        String chargePointId = sessionChargePoints.get(session);
+        return chargePointId == null ? null : transactionConnector(transactionId, chargePointId);
     }
 
     public void forgetTransaction(int transactionId) {

@@ -212,6 +212,26 @@ class OcppServerBridgeHandlerTest {
     }
 
     @Test
+    void aTransactionKeepsItsIdAcrossARestartByTheNameTheChargerGaveIt() {
+        handler.initialize();
+        verify(callback, timeout(2000)).statusUpdated(any(),
+                argThat(status -> status.getStatus() == ThingStatus.ONLINE));
+        UUID session = UUID.randomUUID();
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V2_0_1);
+        handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
+                TokenType.CARD, null, null, null, null));
+
+        OcppServerBridgeHandler restarted = new TestableBridgeHandler(thing, storageService, transport);
+        restarted.setCallback(callback);
+        restarted.initialize();
+        UUID newSession = UUID.randomUUID();
+        restarted.onSessionOpened(newSession, "charx", null, OcppVersion.V2_0_1);
+
+        assertEquals(Integer.valueOf(77), restarted.knownTransactionId(newSession, "t1"));
+        assertEquals(Integer.valueOf(2), restarted.knownConnector(newSession, 77));
+    }
+
+    @Test
     void aTransactionAcceptedBeforeItsHandlerExistsIsStillPersisted() {
         handler.initialize();
         verify(callback, timeout(2000)).statusUpdated(any(),
