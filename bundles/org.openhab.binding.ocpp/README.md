@@ -119,6 +119,7 @@ Card authorization is edited under Settings → Add-on Settings → OCPP Binding
 
 Most connectors need no configuration beyond `connectorId`.
 The rest cover specific charger behaviors.
+Entries are sent when a charger boots, and again when one reconnects without booting — which is what happens after openHAB restarts — so a changed entry reaches a charger that stayed on without waiting for its next reboot.
 The charge point's own `extraConfig` is for a setting that belongs to one charger rather than the site — a vendor key, or something you want to change on a single unit. Its entries are sent after the server's, so a key set in both is left at the charger's value. A charger reports which of its settings are writable, and the ones it calls read-only are logged as such when the binding reads its configuration.
 
 `forceTxDefaultProfile` is for chargers that reject a `TxProfile` when no transaction is active — a Phoenix CHARX does: the charge limit is then sent as a `TxDefaultProfile`, which such chargers accept and apply through their own load management.

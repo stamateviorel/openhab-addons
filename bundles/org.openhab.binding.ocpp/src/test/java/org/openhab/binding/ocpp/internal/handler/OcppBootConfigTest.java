@@ -227,6 +227,23 @@ class OcppBootConfigTest {
     }
 
     @Test
+    void aChargerThatReconnectsWithoutBootingIsReadyAndGetsItsConfiguration() throws InterruptedException {
+        // The binding restarted, not the charger: it reconnects and never sends a BootNotification.
+        UUID session = UUID.randomUUID();
+        handler.onConnected(session, OcppVersion.V1_6);
+        assertFalse(handler.isReady());
+
+        handler.reconnectedWithoutBoot(session);
+
+        assertTrue(handler.isReady());
+        long deadline = System.currentTimeMillis() + 3000;
+        while (sentValuesFor("AuthorizeRemoteTxRequests").isEmpty() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertEquals(List.of("false"), sentValuesFor("AuthorizeRemoteTxRequests"));
+    }
+
+    @Test
     void configurationIsSentWhenAChargerBoots() {
         handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
 

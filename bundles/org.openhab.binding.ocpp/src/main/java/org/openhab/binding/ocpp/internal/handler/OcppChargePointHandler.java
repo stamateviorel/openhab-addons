@@ -582,8 +582,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         UUID connectedSession = session;
         statusFallbackTask = scheduler.schedule(() -> {
             if (!bootAccepted) {
-                readCapabilitiesNow(connectedSession);
-                requestConnectorStatusesNow();
+                reconnectedWithoutBoot(connectedSession);
             }
         }, STATUS_FALLBACK_SECONDS, TimeUnit.SECONDS);
     }
@@ -788,17 +787,20 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         });
     }
 
-    private void readCapabilitiesNow(UUID connectedSession) {
-        if (version == OcppVersion.V2_0_1) {
-            sendNow(commands().readCapabilities());
+    /**
+     * A charger that reconnects without booting is one that was already up, typically because the
+     * binding restarted rather than the charger. Its BootNotification is not coming, so it is taken
+     * as ready here, and its configuration is read and applied the same way a boot would, which
+     * also lets a setting changed while it was connected reach it.
+     */
+    void reconnectedWithoutBoot(UUID connectedSession) {
+        if (!connectedSession.equals(session)) {
             return;
         }
-        sendNow(new GetConfigurationRequest()).whenComplete((confirmation, ex) -> {
-            if (!connectedSession.equals(session)) {
-                return;
-            }
-            applyCapabilities(confirmation, ex);
-        });
+        logger.debug("Charge point {} reconnected without booting; treating it as ready", chargePointId);
+        becomeReady(connectedSession);
+        readCapabilities(connectedSession);
+        requestConnectorStatusesNow();
     }
 
     private void applyCapabilities(@Nullable Confirmation confirmation, @Nullable Throwable ex) {
