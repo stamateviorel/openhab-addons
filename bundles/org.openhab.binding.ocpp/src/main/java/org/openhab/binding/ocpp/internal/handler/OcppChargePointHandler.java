@@ -61,6 +61,11 @@ import org.openhab.core.types.Command;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.core.AuthorizationStatus;
@@ -70,10 +75,6 @@ import eu.chargetime.ocpp.model.core.GetConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
 import eu.chargetime.ocpp.model.core.IdTagInfo;
 import eu.chargetime.ocpp.model.localauthlist.AuthorizationData;
-import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionConfirmation;
-import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest;
-import eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest;
-import eu.chargetime.ocpp.model.localauthlist.UpdateType;
 
 /**
  * Represents one physical charger: tracks its session and routes its OCPP messages to the connectors.
@@ -119,6 +120,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private volatile @Nullable OcppServerBridgeHandler server;
     private volatile @Nullable UUID session;
     private volatile OcppVersion version = OcppVersion.V1_6;
+    private static final Gson GSON = new Gson();
     private static final OcppCommands COMMANDS_16 = new Ocpp16Commands();
     private static final OcppCommands COMMANDS_201 = new Ocpp201Commands();
     private volatile boolean operational;
@@ -161,7 +163,63 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             updateState(CHANNEL_RESET, OnOffType.OFF);
         } else if (CHANNEL_LOCAL_AUTH_LIST.equals(channelUID.getId()) && command instanceof StringType text) {
             setLocalAuthList(parseTagList(text.toString()));
+        } else if (CHANNEL_CUSTOM_MESSAGE.equals(channelUID.getId()) && command instanceof StringType text) {
+            sendCustomMessage(text.toString());
         }
+    }
+
+    /**
+     * Sends a vendor-specific message, given as {@code {"vendorId":…,"messageId":…,"data":…}}. The
+     * charger's answer is published back on the channel so a rule can read what came of it.
+     */
+    private void sendCustomMessage(String request) {
+        JsonObject json;
+        try {
+            json = JsonParser.parseString(request).getAsJsonObject();
+        } catch (RuntimeException e) {
+            logger.warn("Custom message for {} is not a JSON object: {}", chargePointId, request);
+            return;
+        }
+        JsonElement vendor = json.get("vendorId");
+        if (vendor == null || !vendor.isJsonPrimitive()) {
+            logger.warn("Custom message for {} needs a vendorId", chargePointId);
+            return;
+        }
+        JsonElement messageId = json.get("messageId");
+        JsonElement data = json.get("data");
+        Request message = commands().customMessage(vendor.getAsString(),
+                messageId == null || messageId.isJsonNull() ? null : messageId.getAsString(),
+                data == null || data.isJsonNull() ? null : data);
+        if (message == null) {
+            logger.warn("Charge point {} speaks {}; custom messages are offered for 2.0.1 only", chargePointId,
+                    version);
+            return;
+        }
+        if (!isReady()) {
+            logger.debug("Custom message for {} skipped — charge point not ready", chargePointId);
+            return;
+        }
+        send(message).whenComplete((confirmation, ex) -> {
+            if (ex != null) {
+                logger.warn("Custom message to {} failed: {}", chargePointId, ex.getMessage());
+                return;
+            }
+            updateState(CHANNEL_CUSTOM_MESSAGE, new StringType(describeCustomResponse(confirmation)));
+        });
+    }
+
+    private static String describeCustomResponse(@Nullable Confirmation confirmation) {
+        JsonObject answer = new JsonObject();
+        if (confirmation instanceof eu.chargetime.ocpp.v201.model.messages.DataTransferResponse response) {
+            answer.addProperty("status", String.valueOf(response.getStatus()));
+            Object data = response.getData();
+            if (data != null) {
+                answer.add("data", GSON.toJsonTree(data));
+            }
+        } else {
+            answer.addProperty("status", String.valueOf(confirmation));
+        }
+        return answer.toString();
     }
 
     private void setLocalAuthList(List<String> tags) {
@@ -822,14 +880,12 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
 
     private CompletableFuture<Confirmation> provisionLocalAuthList(List<String> tags) {
         int version = localAuthListVersion(tags);
-        return send(new GetLocalListVersionRequest()).thenCompose(current -> {
-            if (current instanceof GetLocalListVersionConfirmation reported
-                    && Integer.valueOf(version).equals(reported.getListVersion())) {
+        OcppCommands commands = commands();
+        return send(commands.readLocalListVersion()).thenCompose(current -> {
+            if (Integer.valueOf(version).equals(commands.localListVersionOf(current))) {
                 return CompletableFuture.completedFuture(current);
             }
-            SendLocalListRequest request = new SendLocalListRequest(version, UpdateType.Full);
-            request.setLocalAuthorizationList(authorizationData(tags));
-            return send(request).thenApply(result -> {
+            return send(commands.sendLocalList(version, tags)).thenApply(result -> {
                 logger.info("Local authorization list sent to {}: version {}, {} tag(s), {}", chargePointId, version,
                         tags.size(), result);
                 return result;

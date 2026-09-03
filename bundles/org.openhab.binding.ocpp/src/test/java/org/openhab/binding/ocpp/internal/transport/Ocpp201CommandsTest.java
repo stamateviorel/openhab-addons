@@ -18,17 +18,24 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
 
 import eu.chargetime.ocpp.v201.model.messages.ChangeAvailabilityRequest;
 import eu.chargetime.ocpp.v201.model.messages.ClearChargingProfileResponse;
+import eu.chargetime.ocpp.v201.model.messages.DataTransferRequest;
+import eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionResponse;
 import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
 import eu.chargetime.ocpp.v201.model.messages.ResetRequest;
+import eu.chargetime.ocpp.v201.model.messages.ResetResponse;
+import eu.chargetime.ocpp.v201.model.messages.SendLocalListRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileResponse;
 import eu.chargetime.ocpp.v201.model.messages.SetVariablesRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetVariablesResponse;
+import eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingProfilePurposeEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingProfileStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingRateUnitEnum;
@@ -36,8 +43,10 @@ import eu.chargetime.ocpp.v201.model.types.ClearChargingProfileStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.Component;
 import eu.chargetime.ocpp.v201.model.types.OperationalStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetEnum;
+import eu.chargetime.ocpp.v201.model.types.ResetStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.SetVariableResult;
 import eu.chargetime.ocpp.v201.model.types.SetVariableStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.UpdateEnum;
 import eu.chargetime.ocpp.v201.model.types.Variable;
 
 /**
@@ -155,6 +164,45 @@ class Ocpp201CommandsTest {
 
     private static SetVariableResult result(SetVariableStatusEnum status) {
         return new SetVariableResult(status, new Component("SampledDataCtrlr"), new Variable("TxUpdatedInterval"));
+    }
+
+    @Test
+    void aCustomMessageIsSentAsADataTransfer() {
+        DataTransferRequest request = assertInstanceOf(DataTransferRequest.class,
+                commands.customMessage("Alfen", "SetSetting", "{\"key\":1}"));
+
+        assertEquals("Alfen", request.getVendorId());
+        assertEquals("SetSetting", request.getMessageId());
+        assertEquals("{\"key\":1}", request.getData());
+    }
+
+    @Test
+    void aCustomMessageNeedsOnlyAVendor() {
+        DataTransferRequest request = assertInstanceOf(DataTransferRequest.class,
+                commands.customMessage("Alfen", null, null));
+
+        assertEquals("Alfen", request.getVendorId());
+        assertNull(request.getMessageId());
+        assertNull(request.getData());
+    }
+
+    @Test
+    void theLocalListIsSentWithEveryTokenAccepted() {
+        SendLocalListRequest request = assertInstanceOf(SendLocalListRequest.class,
+                commands.sendLocalList(7, List.of("CARD1", "CARD2")));
+
+        assertEquals(7, request.getVersionNumber());
+        assertEquals(UpdateEnum.Full, request.getUpdateType());
+        assertEquals(2, request.getLocalAuthorizationList().length);
+        assertEquals("CARD1", request.getLocalAuthorizationList()[0].getIdToken().getIdToken());
+        assertEquals(AuthorizationStatusEnum.Accepted,
+                request.getLocalAuthorizationList()[0].getIdTokenInfo().getStatus());
+    }
+
+    @Test
+    void theReportedLocalListVersionIsReadBack() {
+        assertEquals(9, commands.localListVersionOf(new GetLocalListVersionResponse(9)));
+        assertNull(commands.localListVersionOf(new ResetResponse(ResetStatusEnum.Accepted)));
     }
 
     @Test

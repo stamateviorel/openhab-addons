@@ -67,6 +67,20 @@ public interface OcppCommands {
     @Nullable
     Request setConfiguration(String key, String value);
 
+    Request readLocalListVersion();
+
+    Request sendLocalList(int versionNumber, java.util.List<String> idTokens);
+
+    /** The list version a {@code readLocalListVersion} answer reports, or null if it did not. */
+    @Nullable
+    Integer localListVersionOf(@Nullable Confirmation confirmation);
+
+    /**
+     * A vendor-specific message. Returns null on a version this binding does not offer it for.
+     */
+    @Nullable
+    Request customMessage(String vendorId, @Nullable String messageId, @Nullable Object data);
+
     /** Whether a confirmation reports the command as accepted, across both versions' status enums. */
     boolean isAccepted(@Nullable Confirmation confirmation);
 }

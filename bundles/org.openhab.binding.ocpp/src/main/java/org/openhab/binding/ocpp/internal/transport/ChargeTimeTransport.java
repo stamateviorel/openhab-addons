@@ -65,9 +65,12 @@ import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.SessionInformation;
 import eu.chargetime.ocpp.v201.feature.function.ServerAuthorizationFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerAvailabilityFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerDataTransferFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerLocalAuthorizationListManagementFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerMeterValuesFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerProvisioningFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerRemoteControlFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerSecurityFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerSmartChargingFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerTransactionsFunction;
 import eu.chargetime.ocpp.wss.BaseWssFactoryBuilder;
@@ -119,6 +122,10 @@ public class ChargeTimeTransport implements OcppTransport {
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerAuthorizationFunction(handler201));
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerRemoteControlFunction());
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerSmartChargingFunction(null));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerDataTransferFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerSecurityFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1,
+                new ServerLocalAuthorizationListManagementFunction());
 
         JSONConfiguration configuration = JSONConfiguration.get();
         configuration = configuration.setParameter(JSONConfiguration.REUSE_ADDR_PARAMETER, true);

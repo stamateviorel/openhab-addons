@@ -179,6 +179,44 @@ public class Ocpp201Commands implements OcppCommands {
     }
 
     @Override
+    public Request readLocalListVersion() {
+        return new eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionRequest();
+    }
+
+    @Override
+    public Request sendLocalList(int versionNumber, java.util.List<String> idTokens) {
+        eu.chargetime.ocpp.v201.model.messages.SendLocalListRequest request = new eu.chargetime.ocpp.v201.model.messages.SendLocalListRequest(
+                versionNumber, eu.chargetime.ocpp.v201.model.types.UpdateEnum.Full);
+        eu.chargetime.ocpp.v201.model.types.AuthorizationData[] entries = idTokens.stream().map(
+                tag -> new eu.chargetime.ocpp.v201.model.types.AuthorizationData(new IdToken(tag, IdTokenEnum.ISO14443))
+                        .withIdTokenInfo(new eu.chargetime.ocpp.v201.model.types.IdTokenInfo(
+                                eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum.Accepted)))
+                .toArray(eu.chargetime.ocpp.v201.model.types.AuthorizationData[]::new);
+        request.setLocalAuthorizationList(entries);
+        return request;
+    }
+
+    @Override
+    public @Nullable Integer localListVersionOf(@Nullable Confirmation confirmation) {
+        return confirmation instanceof eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionResponse reported
+                ? reported.getVersionNumber()
+                : null;
+    }
+
+    @Override
+    public @Nullable Request customMessage(String vendorId, @Nullable String messageId, @Nullable Object data) {
+        eu.chargetime.ocpp.v201.model.messages.DataTransferRequest request = new eu.chargetime.ocpp.v201.model.messages.DataTransferRequest(
+                vendorId);
+        if (messageId != null) {
+            request.setMessageId(messageId);
+        }
+        if (data != null) {
+            request.setData(data);
+        }
+        return request;
+    }
+
+    @Override
     public boolean isAccepted(@Nullable Confirmation confirmation) {
         if (confirmation instanceof SetVariablesResponse variables) {
             SetVariableResult[] results = variables.getSetVariableResult();

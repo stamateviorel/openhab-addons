@@ -29,8 +29,10 @@ import org.slf4j.LoggerFactory;
 
 import eu.chargetime.ocpp.v201.feature.function.ServerAuthorizationEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerAvailabilityEventHandler;
+import eu.chargetime.ocpp.v201.feature.function.ServerDataTransferEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerMeterValuesEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerProvisioningEventHandler;
+import eu.chargetime.ocpp.v201.feature.function.ServerSecurityEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerTransactionsEventHandler;
 import eu.chargetime.ocpp.v201.model.messages.AuthorizeRequest;
 import eu.chargetime.ocpp.v201.model.messages.AuthorizeResponse;
@@ -63,7 +65,8 @@ import eu.chargetime.ocpp.v201.model.types.Transaction;
  */
 @NonNullByDefault
 public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, ServerTransactionsEventHandler,
-        ServerAvailabilityEventHandler, ServerMeterValuesEventHandler, ServerAuthorizationEventHandler {
+        ServerAvailabilityEventHandler, ServerMeterValuesEventHandler, ServerAuthorizationEventHandler,
+        ServerDataTransferEventHandler, ServerSecurityEventHandler {
 
     private final Logger logger = LoggerFactory.getLogger(Ocpp201InboundHandler.class);
     private final OcppServerListener listener;
@@ -110,6 +113,37 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
             deliver("NotifyReport", sessionIndex, () -> listener.onCapabilities(sessionIndex, keys));
         }
         return new NotifyReportResponse();
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public eu.chargetime.ocpp.v201.model.messages.DataTransferResponse handleDataTransferRequest(UUID sessionIndex,
+            eu.chargetime.ocpp.v201.model.messages.DataTransferRequest request) {
+        // Vendor-specific traffic the binding has no meaning for; answered so the charger is not
+        // left waiting, and logged so it can be seen.
+        logger.debug("DataTransfer from session {} vendor {} message {}: {}", sessionIndex, request.getVendorId(),
+                request.getMessageId(), request.getData());
+        return new eu.chargetime.ocpp.v201.model.messages.DataTransferResponse(
+                eu.chargetime.ocpp.v201.model.types.DataTransferStatusEnum.UnknownVendorId);
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public eu.chargetime.ocpp.v201.model.messages.SecurityEventNotificationResponse handleSecurityEventNotificationRequest(
+            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.SecurityEventNotificationRequest request) {
+        logger.info("Security event from session {}: {} at {} ({})", sessionIndex, request.getType(),
+                request.getTimestamp(), request.getTechInfo());
+        return new eu.chargetime.ocpp.v201.model.messages.SecurityEventNotificationResponse();
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public eu.chargetime.ocpp.v201.model.messages.SignCertificateResponse handleSignCertificateRequest(
+            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.SignCertificateRequest request) {
+        // Signing a charger's certificate needs a CA this binding does not have.
+        logger.debug("SignCertificate from session {} refused — no certificate authority", sessionIndex);
+        return new eu.chargetime.ocpp.v201.model.messages.SignCertificateResponse(
+                eu.chargetime.ocpp.v201.model.types.GenericStatusEnum.Rejected);
     }
 
     /** Drops half-received reports when a session goes away. */

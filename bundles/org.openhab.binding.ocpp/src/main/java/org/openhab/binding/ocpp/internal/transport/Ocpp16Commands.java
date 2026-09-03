@@ -113,6 +113,39 @@ public class Ocpp16Commands implements OcppCommands {
     }
 
     @Override
+    public Request readLocalListVersion() {
+        return new eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest();
+    }
+
+    @Override
+    public Request sendLocalList(int versionNumber, java.util.List<String> idTokens) {
+        eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest request = new eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest(
+                versionNumber, eu.chargetime.ocpp.model.localauthlist.UpdateType.Full);
+        eu.chargetime.ocpp.model.localauthlist.AuthorizationData[] entries = idTokens.stream().map(tag -> {
+            eu.chargetime.ocpp.model.localauthlist.AuthorizationData entry = new eu.chargetime.ocpp.model.localauthlist.AuthorizationData();
+            entry.setIdTag(tag);
+            entry.setIdTagInfo(new eu.chargetime.ocpp.model.core.IdTagInfo(
+                    eu.chargetime.ocpp.model.core.AuthorizationStatus.Accepted));
+            return entry;
+        }).toArray(eu.chargetime.ocpp.model.localauthlist.AuthorizationData[]::new);
+        request.setLocalAuthorizationList(entries);
+        return request;
+    }
+
+    @Override
+    public @Nullable Integer localListVersionOf(@Nullable Confirmation confirmation) {
+        return confirmation instanceof eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionConfirmation reported
+                ? reported.getListVersion()
+                : null;
+    }
+
+    @Override
+    public @Nullable Request customMessage(String vendorId, @Nullable String messageId, @Nullable Object data) {
+        // Deliberately 1.6-less: the custom-message channel is offered for 2.0.1 only.
+        return null;
+    }
+
+    @Override
     public boolean isAccepted(@Nullable Confirmation confirmation) {
         if (confirmation instanceof SetChargingProfileConfirmation profile) {
             return profile.getStatus() == ChargingProfileStatus.Accepted;

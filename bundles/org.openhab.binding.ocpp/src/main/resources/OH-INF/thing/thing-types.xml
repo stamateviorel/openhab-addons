@@ -123,6 +123,7 @@
 			<channel id="last-seen" typeId="last-seen"/>
 			<channel id="reset" typeId="reset"/>
 			<channel id="local-auth-list" typeId="local-auth-list"/>
+			<channel id="custom-message" typeId="custom-message"/>
 		</channels>
 
 		<properties>
@@ -377,6 +378,16 @@
 	</thing-type>
 
 	<!-- Channel types -->
+	<channel-type id="custom-message" advanced="true">
+		<item-type>String</item-type>
+		<label>Custom Message</label>
+		<description>Sends a vendor-specific OCPP 2.0.1 DataTransfer to the charger, as
+			{"vendorId":"...","messageId":"...","data":...} — messageId and data are optional. The charger's answer is
+			published
+			back here as {"status":"...","data":...}. OCPP 2.0.1 only.</description>
+		<state pattern="%s"/>
+	</channel-type>
+
 	<channel-type id="connected">
 		<item-type>Switch</item-type>
 		<label>Connected</label>
