@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.core.storage.Storage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -69,6 +70,19 @@ public class CpmsService {
 
     public List<CpmsUser> users() {
         return new ArrayList<>(userRegistry.values());
+    }
+
+    /** What kind of token this is, as far as the enrolled users say. */
+    public TokenType tokenTypeOf(String token) {
+        for (CpmsUser user : users()) {
+            if (user.vehicles().contains(token)) {
+                return TokenType.VEHICLE;
+            }
+            if (user.cards().contains(token)) {
+                return TokenType.CARD;
+            }
+        }
+        return TokenType.UNKNOWN;
     }
 
     public @Nullable CpmsUser userForCard(String idTag) {

@@ -12,8 +12,11 @@
  */
 package org.openhab.binding.ocpp.internal.transport;
 
+import java.util.Map;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
@@ -31,7 +34,8 @@ import eu.chargetime.ocpp.model.Request;
 @NonNullByDefault
 public interface OcppCommands {
 
-    Request remoteStart(int connectorId, String idToken);
+    /** The type says how the charger should read the token: a card, or a vehicle's own identity. */
+    Request remoteStart(int connectorId, String idToken, TokenType type);
 
     Request remoteStop(int transactionId, @Nullable String remoteId);
 
@@ -69,7 +73,7 @@ public interface OcppCommands {
 
     Request readLocalListVersion();
 
-    Request sendLocalList(int versionNumber, java.util.List<String> idTokens);
+    Request sendLocalList(int versionNumber, Map<String, TokenType> idTokens);
 
     /** The list version a {@code readLocalListVersion} answer reports, or null if it did not. */
     @Nullable

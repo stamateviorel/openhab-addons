@@ -12,8 +12,11 @@
  */
 package org.openhab.binding.ocpp.internal.transport;
 
+import java.util.Map;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
@@ -61,7 +64,8 @@ import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
 public class Ocpp16Commands implements OcppCommands {
 
     @Override
-    public Request remoteStart(int connectorId, String idToken) {
+    public Request remoteStart(int connectorId, String idToken, TokenType type) {
+        // 1.6 has one kind of idTag; a vehicle's identity goes in the same field.
         RemoteStartTransactionRequest request = new RemoteStartTransactionRequest(idToken);
         request.setConnectorId(connectorId);
         return request;
@@ -130,9 +134,9 @@ public class Ocpp16Commands implements OcppCommands {
     }
 
     @Override
-    public Request sendLocalList(int versionNumber, java.util.List<String> idTokens) {
+    public Request sendLocalList(int versionNumber, Map<String, TokenType> idTokens) {
         SendLocalListRequest request = new SendLocalListRequest(versionNumber, UpdateType.Full);
-        AuthorizationData[] entries = idTokens.stream().map(tag -> {
+        AuthorizationData[] entries = idTokens.keySet().stream().map(tag -> {
             AuthorizationData entry = new AuthorizationData(tag);
             entry.setIdTagInfo(new IdTagInfo(AuthorizationStatus.Accepted));
             return entry;

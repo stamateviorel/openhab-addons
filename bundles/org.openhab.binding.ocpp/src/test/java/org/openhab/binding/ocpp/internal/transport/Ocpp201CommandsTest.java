@@ -18,16 +18,19 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 
 import eu.chargetime.ocpp.v201.model.messages.ChangeAvailabilityRequest;
 import eu.chargetime.ocpp.v201.model.messages.ClearChargingProfileResponse;
 import eu.chargetime.ocpp.v201.model.messages.ClearDisplayMessageRequest;
 import eu.chargetime.ocpp.v201.model.messages.DataTransferRequest;
 import eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionResponse;
+import eu.chargetime.ocpp.v201.model.messages.RequestStartTransactionRequest;
 import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
 import eu.chargetime.ocpp.v201.model.messages.ResetRequest;
 import eu.chargetime.ocpp.v201.model.messages.ResetResponse;
@@ -43,6 +46,7 @@ import eu.chargetime.ocpp.v201.model.types.ChargingProfileStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingRateUnitEnum;
 import eu.chargetime.ocpp.v201.model.types.ClearChargingProfileStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.Component;
+import eu.chargetime.ocpp.v201.model.types.IdTokenEnum;
 import eu.chargetime.ocpp.v201.model.types.MessageFormatEnum;
 import eu.chargetime.ocpp.v201.model.types.OperationalStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetEnum;
@@ -192,7 +196,7 @@ class Ocpp201CommandsTest {
     @Test
     void theLocalListIsSentWithEveryTokenAccepted() {
         SendLocalListRequest request = assertInstanceOf(SendLocalListRequest.class,
-                commands.sendLocalList(7, List.of("CARD1", "CARD2")));
+                commands.sendLocalList(7, tokens("CARD1", "CARD2")));
 
         assertEquals(7, request.getVersionNumber());
         assertEquals(UpdateEnum.Full, request.getUpdateType());
@@ -239,5 +243,30 @@ class Ocpp201CommandsTest {
     void aRejectedProfileIsNotAccepted() {
         assertFalse(commands.isAccepted(new SetChargingProfileResponse(ChargingProfileStatusEnum.Rejected)));
         assertTrue(commands.isAccepted(new SetChargingProfileResponse(ChargingProfileStatusEnum.Accepted)));
+    }
+
+    @Test
+    void aVehicleTokenIsPresentedAsAMacAddress() {
+        RequestStartTransactionRequest start = (RequestStartTransactionRequest) commands.remoteStart(1,
+                "AA:BB:CC:DD:EE:FF", TokenType.VEHICLE);
+        assertEquals(IdTokenEnum.MacAddress, start.getIdToken().getType());
+        assertEquals(IdTokenEnum.ISO14443,
+                ((RequestStartTransactionRequest) commands.remoteStart(1, "CARD", TokenType.UNKNOWN)).getIdToken()
+                        .getType());
+
+        Map<String, TokenType> mixed = new LinkedHashMap<>();
+        mixed.put("CARD1", TokenType.CARD);
+        mixed.put("AA:BB:CC:DD:EE:FF", TokenType.VEHICLE);
+        SendLocalListRequest list = (SendLocalListRequest) commands.sendLocalList(3, mixed);
+        assertEquals(IdTokenEnum.ISO14443, list.getLocalAuthorizationList()[0].getIdToken().getType());
+        assertEquals(IdTokenEnum.MacAddress, list.getLocalAuthorizationList()[1].getIdToken().getType());
+    }
+
+    private static Map<String, TokenType> tokens(String... ids) {
+        Map<String, TokenType> map = new LinkedHashMap<>();
+        for (String id : ids) {
+            map.put(id, TokenType.CARD);
+        }
+        return map;
     }
 }

@@ -18,10 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 
 import eu.chargetime.ocpp.model.core.AuthorizationStatus;
 import eu.chargetime.ocpp.model.core.AvailabilityStatus;
@@ -65,7 +67,7 @@ class Ocpp16CommandsTest {
     @Test
     void aRemoteStartNamesTheConnectorAndTheTag() {
         RemoteStartTransactionRequest request = assertInstanceOf(RemoteStartTransactionRequest.class,
-                commands.remoteStart(2, "openhab"));
+                commands.remoteStart(2, "openhab", TokenType.CARD));
 
         assertEquals(2, request.getConnectorId());
         assertEquals("openhab", request.getIdTag());
@@ -163,7 +165,7 @@ class Ocpp16CommandsTest {
     void theLocalListIsSentWithEveryTagAccepted() {
         assertInstanceOf(GetLocalListVersionRequest.class, commands.readLocalListVersion());
         SendLocalListRequest request = assertInstanceOf(SendLocalListRequest.class,
-                commands.sendLocalList(7, List.of("CARD1", "CARD2")));
+                commands.sendLocalList(7, tokens("CARD1", "CARD2")));
 
         assertEquals(7, request.getListVersion());
         assertEquals(UpdateType.Full, request.getUpdateType());
@@ -187,5 +189,13 @@ class Ocpp16CommandsTest {
         assertFalse(commands.isAccepted(new ResetConfirmation(ResetStatus.Rejected)));
         assertTrue(commands.isAccepted(new ChangeAvailabilityConfirmation(AvailabilityStatus.Scheduled)),
                 "scheduled is the charger agreeing to do it once the connector is free");
+    }
+
+    private static Map<String, TokenType> tokens(String... ids) {
+        Map<String, TokenType> map = new LinkedHashMap<>();
+        for (String id : ids) {
+            map.put(id, TokenType.CARD);
+        }
+        return map;
     }
 }

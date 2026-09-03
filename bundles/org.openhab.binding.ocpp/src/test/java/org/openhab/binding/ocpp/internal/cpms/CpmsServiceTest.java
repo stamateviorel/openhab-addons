@@ -29,6 +29,7 @@ import java.util.Map;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.Test;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.core.storage.Storage;
 
 /**
@@ -95,6 +96,15 @@ class CpmsServiceTest {
 
         assertTrue(cpms.transactions().isEmpty());
         assertNull(storage.get("open:10"));
+    }
+
+    @Test
+    void aTokenIsTypedByWhereAUserListsIt() {
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of("AA:BB:CC:DD:EE:FF")));
+
+        assertEquals(TokenType.CARD, cpms.tokenTypeOf("CARD-A"));
+        assertEquals(TokenType.VEHICLE, cpms.tokenTypeOf("AA:BB:CC:DD:EE:FF"));
+        assertEquals(TokenType.UNKNOWN, cpms.tokenTypeOf("nobody"));
     }
 
     @Test

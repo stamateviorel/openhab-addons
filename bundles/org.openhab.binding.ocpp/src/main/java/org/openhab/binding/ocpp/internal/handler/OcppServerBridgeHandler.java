@@ -466,6 +466,12 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
     }
 
+    /** A vehicle token is sent as such; without users to say, a token is treated as a card. */
+    public TokenType tokenTypeOf(String token) {
+        CpmsService service = cpms;
+        return service == null ? TokenType.UNKNOWN : service.tokenTypeOf(token);
+    }
+
     /** The charger's label if it has a Thing, else its id, plus the connector when one is known. */
     private String whereOf(UUID session, @Nullable Integer connectorId) {
         String chargePointId = sessionChargePoints.get(session);

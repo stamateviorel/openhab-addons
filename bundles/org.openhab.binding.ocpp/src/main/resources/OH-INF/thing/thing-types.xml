@@ -756,8 +756,7 @@
 	<channel-type id="id-tag">
 		<item-type>String</item-type>
 		<label>Id Tag</label>
-		<description>The idTag of the active transaction.</description>
-		<state readOnly="true"/>
+		<description>The token of the active transaction. A command sets the token the next remote start is sent with.</description>
 	</channel-type>
 
 	<channel-type id="transaction-id">

@@ -17,6 +17,7 @@ import static org.openhab.binding.ocpp.internal.OcppBindingConstants.*;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
@@ -45,6 +46,7 @@ import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.library.types.OnOffType;
@@ -916,12 +918,19 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             if (Integer.valueOf(version).equals(commands.localListVersionOf(current))) {
                 return CompletableFuture.completedFuture(current);
             }
-            return send(commands.sendLocalList(version, tags)).thenApply(result -> {
+            Map<String, TokenType> tokens = new LinkedHashMap<>();
+            tags.forEach(tag -> tokens.put(tag, tokenTypeOf(tag)));
+            return send(commands.sendLocalList(version, tokens)).thenApply(result -> {
                 logger.info("Local authorization list sent to {}: version {}, {} tag(s), {}", chargePointId, version,
                         tags.size(), result);
                 return result;
             });
         }).toCompletableFuture();
+    }
+
+    public TokenType tokenTypeOf(String token) {
+        OcppServerBridgeHandler server = serverHandler();
+        return server == null ? TokenType.UNKNOWN : server.tokenTypeOf(token);
     }
 
     private static int localAuthListVersion(List<String> tags) {

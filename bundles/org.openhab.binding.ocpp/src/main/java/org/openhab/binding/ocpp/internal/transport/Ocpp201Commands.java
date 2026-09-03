@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
@@ -99,9 +100,9 @@ public class Ocpp201Commands implements OcppCommands {
     private final AtomicInteger reportIds = new AtomicInteger();
 
     @Override
-    public Request remoteStart(int connectorId, String idToken) {
-        RequestStartTransactionRequest request = new RequestStartTransactionRequest(
-                new IdToken(idToken, IdTokenEnum.ISO14443), remoteStartIds.incrementAndGet());
+    public Request remoteStart(int connectorId, String idToken, TokenType type) {
+        RequestStartTransactionRequest request = new RequestStartTransactionRequest(idTokenOf(idToken, type),
+                remoteStartIds.incrementAndGet());
         request.setEvseId(connectorId);
         return request;
     }
@@ -206,10 +207,10 @@ public class Ocpp201Commands implements OcppCommands {
     }
 
     @Override
-    public Request sendLocalList(int versionNumber, java.util.List<String> idTokens) {
+    public Request sendLocalList(int versionNumber, Map<String, TokenType> idTokens) {
         SendLocalListRequest request = new SendLocalListRequest(versionNumber, UpdateEnum.Full);
-        AuthorizationData[] entries = idTokens.stream()
-                .map(tag -> new AuthorizationData(new IdToken(tag, IdTokenEnum.ISO14443))
+        AuthorizationData[] entries = idTokens.entrySet().stream()
+                .map(entry -> new AuthorizationData(idTokenOf(entry.getKey(), entry.getValue()))
                         .withIdTokenInfo(new IdTokenInfo(AuthorizationStatusEnum.Accepted)))
                 .toArray(AuthorizationData[]::new);
         request.setLocalAuthorizationList(entries);
@@ -287,6 +288,11 @@ public class Ocpp201Commands implements OcppCommands {
         }
         return confirmation instanceof RequestStopTransactionResponse stop
                 && stop.getStatus() == RequestStartStopStatusEnum.Accepted;
+    }
+
+    /** A vehicle identifies itself by MAC address; anything else is presented as an RFID card. */
+    private static IdToken idTokenOf(String idToken, TokenType type) {
+        return new IdToken(idToken, type == TokenType.VEHICLE ? IdTokenEnum.MacAddress : IdTokenEnum.ISO14443);
     }
 
     static int profileId(int connectorId, boolean txProfile) {

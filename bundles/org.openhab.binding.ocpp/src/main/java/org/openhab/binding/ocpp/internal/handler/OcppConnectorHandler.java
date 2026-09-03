@@ -35,6 +35,7 @@ import org.openhab.binding.ocpp.internal.transport.OcppCommands;
 import org.openhab.binding.ocpp.internal.transport.event.ConnectorStatus;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.library.types.DecimalType;
@@ -332,6 +333,13 @@ public class OcppConnectorHandler extends BaseThingHandler {
                     applyLimit();
                 }
                 break;
+            case CHANNEL_ID_TAG:
+                // Chooses the token the next remote start presents, so a session can be started as a
+                // given card or vehicle rather than the configured default.
+                if (command instanceof StringType tag && !tag.toString().isBlank()) {
+                    remoteStartTag = tag.toString().trim();
+                }
+                break;
             case CHANNEL_CHARGING:
                 if (command instanceof OnOffType onOff) {
                     if (onOff == OnOffType.ON) {
@@ -552,19 +560,21 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     private void attemptRemoteStart(int remaining) {
-        dispatch(commands().remoteStart(connectorId, remoteStartTag), "RemoteStart")
-                .whenComplete((confirmation, ex) -> {
-                    if (ex == null || remaining <= 0 || transactionId != null || !isReadyToSend()) {
-                        return;
-                    }
-                    logger.info("RemoteStart on connector {} did not answer; retrying ({} attempt(s) left)",
-                            connectorId, remaining);
-                    remoteStartRetryTask = scheduler.schedule(() -> {
-                        if (transactionId == null && isReadyToSend()) {
-                            attemptRemoteStart(remaining - 1);
-                        }
-                    }, REMOTE_START_RETRY_DELAY_SECONDS, TimeUnit.SECONDS);
-                });
+        String tag = remoteStartTag;
+        OcppChargePointHandler parent = chargePointHandler();
+        TokenType type = parent == null ? TokenType.UNKNOWN : parent.tokenTypeOf(tag);
+        dispatch(commands().remoteStart(connectorId, tag, type), "RemoteStart").whenComplete((confirmation, ex) -> {
+            if (ex == null || remaining <= 0 || transactionId != null || !isReadyToSend()) {
+                return;
+            }
+            logger.info("RemoteStart on connector {} did not answer; retrying ({} attempt(s) left)", connectorId,
+                    remaining);
+            remoteStartRetryTask = scheduler.schedule(() -> {
+                if (transactionId == null && isReadyToSend()) {
+                    attemptRemoteStart(remaining - 1);
+                }
+            }, REMOTE_START_RETRY_DELAY_SECONDS, TimeUnit.SECONDS);
+        });
     }
 
     private void remoteStop() {
