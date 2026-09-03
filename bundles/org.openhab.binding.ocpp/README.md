@@ -226,7 +226,7 @@ The session log is append-only and never trimmed, so month and year totals stay 
 
 To add someone without typing card ids, turn on Discover New Cards in Add-on Settings, have them tap their card, and it appears in the inbox as a new user pre-filled with that card, labelled with the charger, the connector where one is known, and the time it was seen — accept it and give it their name. Turn Discover off again once everyone is enrolled. You can also add a `cpms-user` by hand and type the cards in.
 
-Once at least one user exists, the binding serves a **Charging** sidebar page (no setup, no items to wire) listing each person's month and year kWh and the most recent charging sessions. The page appears only while users exist — for a site with no users it stays hidden.
+Once at least one user exists, the binding serves an **OCPP Charging** dashboard in the sidebar (no setup, no items to wire): the month's and year's totals, a stacked chart of the last twelve months per person, the split per charger, the people with their month, year and cap, and the recent sessions. Tapping a person opens their own page with the same figures, chart and session history for them alone. The pages appear only while users exist — for a site with no users they stay hidden.
 
 ## Full Example
 
