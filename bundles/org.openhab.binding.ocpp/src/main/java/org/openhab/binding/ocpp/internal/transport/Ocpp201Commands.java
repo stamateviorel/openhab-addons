@@ -72,6 +72,8 @@ public class Ocpp201Commands implements OcppCommands {
 
     private static final int STACK_LEVEL = 0;
     private static final int PROFILE_ID_STRIDE = 10;
+    // One id the binding owns, so setting a new message replaces its last one rather than stacking.
+    private static final int DISPLAY_MESSAGE_ID = 1;
     private final AtomicInteger remoteStartIds = new AtomicInteger();
     private final AtomicInteger reportIds = new AtomicInteger();
 
@@ -217,6 +219,18 @@ public class Ocpp201Commands implements OcppCommands {
     }
 
     @Override
+    public @Nullable Request displayMessage(String text) {
+        if (text.isBlank()) {
+            return new eu.chargetime.ocpp.v201.model.messages.ClearDisplayMessageRequest(DISPLAY_MESSAGE_ID);
+        }
+        eu.chargetime.ocpp.v201.model.types.MessageInfo info = new eu.chargetime.ocpp.v201.model.types.MessageInfo(
+                DISPLAY_MESSAGE_ID, eu.chargetime.ocpp.v201.model.types.MessagePriorityEnum.NormalCycle,
+                new eu.chargetime.ocpp.v201.model.types.MessageContent(
+                        eu.chargetime.ocpp.v201.model.types.MessageFormatEnum.UTF8, text));
+        return new eu.chargetime.ocpp.v201.model.messages.SetDisplayMessageRequest(info);
+    }
+
+    @Override
     public boolean isAccepted(@Nullable Confirmation confirmation) {
         if (confirmation instanceof SetVariablesResponse variables) {
             SetVariableResult[] results = variables.getSetVariableResult();
@@ -244,6 +258,9 @@ public class Ocpp201Commands implements OcppCommands {
         }
         if (confirmation instanceof eu.chargetime.ocpp.v201.model.messages.ResetResponse reset) {
             return reset.getStatus() != eu.chargetime.ocpp.v201.model.types.ResetStatusEnum.Rejected;
+        }
+        if (confirmation instanceof eu.chargetime.ocpp.v201.model.messages.SetDisplayMessageResponse display) {
+            return display.getStatus() == eu.chargetime.ocpp.v201.model.types.DisplayMessageStatusEnum.Accepted;
         }
         if (confirmation instanceof TriggerMessageResponse trigger) {
             return trigger.getStatus() == TriggerMessageStatusEnum.Accepted;

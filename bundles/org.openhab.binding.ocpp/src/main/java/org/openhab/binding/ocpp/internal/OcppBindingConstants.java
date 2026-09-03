@@ -84,6 +84,7 @@ public class OcppBindingConstants {
     public static final String CHANNEL_ID_TAG = "id-tag";
     public static final String CHANNEL_LOCAL_AUTH_LIST = "local-auth-list";
     public static final String CHANNEL_CUSTOM_MESSAGE = "custom-message";
+    public static final String CHANNEL_DISPLAY_MESSAGE = "display-message";
     // Persisted local authorization list (comma-separated idTags).
     public static final String PROPERTY_LOCAL_AUTH_LIST = "localAuthList";
     public static final String CHANNEL_TRANSACTION_ID = "transaction-id";

@@ -139,8 +139,11 @@ The charge point's own `extraConfig` is for a setting that belongs to one charge
 | reset           | Switch   | W          | Momentary — soft reset the charge point                                                                           |
 | local-auth-list | String   | RW         | The charger's local authorization list (comma-separated idTags), persisted — set it to push cards for offline use |
 | custom-message  | String   | RW         | Sends a vendor-specific message and shows the answer. OCPP 2.0.1 only                                             |
+| display-message | String   | RW         | Text to show on the charger's own screen; empty clears it. OCPP 2.0.1 only                                        |
 
 Vendor, model, firmware version and serial number are published as thing properties from the charger's BootNotification.
+
+`display-message` writes a line to the charger's own screen and clears it again when set to an empty string. The binding keeps one message of its own, so setting new text replaces the last rather than stacking another on top, and a charger that will not take the message says so instead of failing quietly.
 
 `custom-message` carries a vendor-specific OCPP 2.0.1 `DataTransfer`, for a setting or command a charger only exposes its own way. Send it a JSON object naming the vendor, and optionally a message id and a payload:
 
@@ -150,7 +153,9 @@ Vendor, model, firmware version and serial number are published as thing propert
 
 The charger's answer is published back on the same channel as `{"status":"Accepted","data":…}`, so a rule can read what came of it. `UnknownVendorId` or `UnknownMessageId` means the charger did not recognise what was sent, which is its answer rather than a failure. The channel is offered for 2.0.1 only; on a 1.6 charger a command to it is logged and dropped. Vendor messages are not portable between charger makes, so anything sent here is specific to the hardware in front of you.
 
-Inbound vendor messages are answered with `UnknownVendorId` and logged rather than acted on, and a charger's security events are logged as they arrive.
+Inbound vendor messages are answered with `UnknownVendorId` and logged rather than acted on, and a charger's security events, log-upload progress, monitoring reports and customer-information answers are logged as they arrive.
+
+Plug & Charge is answered but not performed: a charger asking the binding to check a certificate's status, or to fetch a vehicle's contract certificate, is refused. Both need trust material and a link to an e-mobility operator that the binding has no way to hold, and a refusal leaves the charger free to fall back on its own decision rather than waiting for one that will not come.
 
 The local authorization list lets a cached RFID card start a charge while openHAB or the network is offline, on a charger that supports `LocalAuthListManagement`.
 The list lives on the `local-auth-list` channel as a comma-separated set of idTags: set it (from a rule or the UI) and the binding pushes it to the charger with `SendLocalList`, versioned by content so it is not rewritten on every boot. It is persisted on the charge point thing, so it survives an openHAB restart. A charger that does not advertise the profile is left untouched.

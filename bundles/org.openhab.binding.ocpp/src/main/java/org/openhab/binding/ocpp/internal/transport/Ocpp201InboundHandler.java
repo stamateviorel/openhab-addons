@@ -30,6 +30,9 @@ import org.slf4j.LoggerFactory;
 import eu.chargetime.ocpp.v201.feature.function.ServerAuthorizationEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerAvailabilityEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerDataTransferEventHandler;
+import eu.chargetime.ocpp.v201.feature.function.ServerDiagnosticsEventHandler;
+import eu.chargetime.ocpp.v201.feature.function.ServerDisplayMessageEventHandler;
+import eu.chargetime.ocpp.v201.feature.function.ServerISO15118CertificateManagementEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerMeterValuesEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerProvisioningEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerSecurityEventHandler;
@@ -66,7 +69,8 @@ import eu.chargetime.ocpp.v201.model.types.Transaction;
 @NonNullByDefault
 public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, ServerTransactionsEventHandler,
         ServerAvailabilityEventHandler, ServerMeterValuesEventHandler, ServerAuthorizationEventHandler,
-        ServerDataTransferEventHandler, ServerSecurityEventHandler {
+        ServerDataTransferEventHandler, ServerSecurityEventHandler, ServerDisplayMessageEventHandler,
+        ServerDiagnosticsEventHandler, ServerISO15118CertificateManagementEventHandler {
 
     private final Logger logger = LoggerFactory.getLogger(Ocpp201InboundHandler.class);
     private final OcppServerListener listener;
@@ -144,6 +148,64 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
         logger.debug("SignCertificate from session {} refused — no certificate authority", sessionIndex);
         return new eu.chargetime.ocpp.v201.model.messages.SignCertificateResponse(
                 eu.chargetime.ocpp.v201.model.types.GenericStatusEnum.Rejected);
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public eu.chargetime.ocpp.v201.model.messages.NotifyDisplayMessagesResponse handleNotifyDisplayMessagesRequest(
+            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.NotifyDisplayMessagesRequest request) {
+        logger.debug("NotifyDisplayMessages from session {} request {}: {} message(s)", sessionIndex,
+                request.getRequestId(), request.getMessageInfo() == null ? 0 : request.getMessageInfo().length);
+        return new eu.chargetime.ocpp.v201.model.messages.NotifyDisplayMessagesResponse();
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public eu.chargetime.ocpp.v201.model.messages.LogStatusNotificationResponse handleLogStatusNotificationRequest(
+            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.LogStatusNotificationRequest request) {
+        logger.info("Log upload on session {}: {}", sessionIndex, request.getStatus());
+        return new eu.chargetime.ocpp.v201.model.messages.LogStatusNotificationResponse();
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public eu.chargetime.ocpp.v201.model.messages.NotifyCustomerInformationResponse handleNotifyCustomerInformationRequest(
+            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.NotifyCustomerInformationRequest request) {
+        logger.debug("CustomerInformation from session {} request {}", sessionIndex, request.getRequestId());
+        return new eu.chargetime.ocpp.v201.model.messages.NotifyCustomerInformationResponse();
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportResponse handleNotifyMonitoringReportRequest(
+            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportRequest request) {
+        logger.debug("MonitoringReport from session {} request {} seq {}", sessionIndex, request.getRequestId(),
+                request.getSeqNo());
+        return new eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportResponse();
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public eu.chargetime.ocpp.v201.model.messages.GetCertificateStatusResponse handleGetCertificateStatusRequest(
+            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.GetCertificateStatusRequest request) {
+        // Answering this means fetching an OCSP response from the certificate's authority, which
+        // needs trust material the binding does not hold. Failed is the honest answer, and it leaves
+        // the charger free to fall back to its own decision rather than waiting on one.
+        logger.debug("GetCertificateStatus from session {} answered Failed — no certificate authority configured",
+                sessionIndex);
+        return new eu.chargetime.ocpp.v201.model.messages.GetCertificateStatusResponse(
+                eu.chargetime.ocpp.v201.model.types.GetCertificateStatusEnum.Failed);
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public eu.chargetime.ocpp.v201.model.messages.Get15118EVCertificateResponse handleGet15118EVCertificateRequest(
+            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.Get15118EVCertificateRequest request) {
+        // Plug & Charge: the vehicle's contract certificate is fetched from an e-mobility operator
+        // the binding has no link to. Refused rather than answered with something invented.
+        logger.debug("Get15118EVCertificate from session {} refused — no e-mobility operator configured", sessionIndex);
+        return new eu.chargetime.ocpp.v201.model.messages.Get15118EVCertificateResponse(
+                eu.chargetime.ocpp.v201.model.types.Iso15118EVCertificateStatusEnum.Failed, "");
     }
 
     /** Drops half-received reports when a session goes away. */

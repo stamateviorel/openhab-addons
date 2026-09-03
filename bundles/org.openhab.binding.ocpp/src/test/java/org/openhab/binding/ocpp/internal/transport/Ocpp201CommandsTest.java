@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import eu.chargetime.ocpp.v201.model.messages.ChangeAvailabilityRequest;
 import eu.chargetime.ocpp.v201.model.messages.ClearChargingProfileResponse;
+import eu.chargetime.ocpp.v201.model.messages.ClearDisplayMessageRequest;
 import eu.chargetime.ocpp.v201.model.messages.DataTransferRequest;
 import eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionResponse;
 import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
@@ -33,6 +34,7 @@ import eu.chargetime.ocpp.v201.model.messages.ResetResponse;
 import eu.chargetime.ocpp.v201.model.messages.SendLocalListRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileResponse;
+import eu.chargetime.ocpp.v201.model.messages.SetDisplayMessageRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetVariablesRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetVariablesResponse;
 import eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum;
@@ -41,6 +43,7 @@ import eu.chargetime.ocpp.v201.model.types.ChargingProfileStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingRateUnitEnum;
 import eu.chargetime.ocpp.v201.model.types.ClearChargingProfileStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.Component;
+import eu.chargetime.ocpp.v201.model.types.MessageFormatEnum;
 import eu.chargetime.ocpp.v201.model.types.OperationalStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetStatusEnum;
@@ -203,6 +206,25 @@ class Ocpp201CommandsTest {
     void theReportedLocalListVersionIsReadBack() {
         assertEquals(9, commands.localListVersionOf(new GetLocalListVersionResponse(9)));
         assertNull(commands.localListVersionOf(new ResetResponse(ResetStatusEnum.Accepted)));
+    }
+
+    @Test
+    void textIsPutOnTheChargersScreen() {
+        SetDisplayMessageRequest request = assertInstanceOf(SetDisplayMessageRequest.class,
+                commands.displayMessage("Reserved for site staff"));
+
+        assertEquals("Reserved for site staff", request.getMessage().getMessage().getContent());
+        assertEquals(MessageFormatEnum.UTF8, request.getMessage().getMessage().getFormat());
+    }
+
+    @Test
+    void anEmptyStringClearsTheScreenInsteadOfShowingNothing() {
+        ClearDisplayMessageRequest request = assertInstanceOf(ClearDisplayMessageRequest.class,
+                commands.displayMessage(""));
+
+        assertEquals(
+                assertInstanceOf(SetDisplayMessageRequest.class, commands.displayMessage("x")).getMessage().getId(),
+                request.getId(), "the clear must name the id the binding sets its message under");
     }
 
     @Test

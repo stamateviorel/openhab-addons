@@ -124,6 +124,7 @@
 			<channel id="reset" typeId="reset"/>
 			<channel id="local-auth-list" typeId="local-auth-list"/>
 			<channel id="custom-message" typeId="custom-message"/>
+			<channel id="display-message" typeId="display-message"/>
 		</channels>
 
 		<properties>
@@ -378,6 +379,14 @@
 	</thing-type>
 
 	<!-- Channel types -->
+	<channel-type id="display-message" advanced="true">
+		<item-type>String</item-type>
+		<label>Display Message</label>
+		<description>Text to show on the charger's own screen. An empty string clears it again. OCPP 2.0.1
+			only.</description>
+		<state pattern="%s"/>
+	</channel-type>
+
 	<channel-type id="custom-message" advanced="true">
 		<item-type>String</item-type>
 		<label>Custom Message</label>

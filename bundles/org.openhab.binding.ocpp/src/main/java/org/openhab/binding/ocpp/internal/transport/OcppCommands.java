@@ -81,6 +81,13 @@ public interface OcppCommands {
     @Nullable
     Request customMessage(String vendorId, @Nullable String messageId, @Nullable Object data);
 
+    /**
+     * Puts a message on the charger's own display, or clears it when the text is empty. Returns null
+     * on a version with no such message.
+     */
+    @Nullable
+    Request displayMessage(String text);
+
     /** Whether a confirmation reports the command as accepted, across both versions' status enums. */
     boolean isAccepted(@Nullable Confirmation confirmation);
 }

@@ -146,6 +146,12 @@ public class Ocpp16Commands implements OcppCommands {
     }
 
     @Override
+    public @Nullable Request displayMessage(String text) {
+        // 1.6 has no display message; the charge point's own firmware owns the screen.
+        return null;
+    }
+
+    @Override
     public boolean isAccepted(@Nullable Confirmation confirmation) {
         if (confirmation instanceof SetChargingProfileConfirmation profile) {
             return profile.getStatus() == ChargingProfileStatus.Accepted;

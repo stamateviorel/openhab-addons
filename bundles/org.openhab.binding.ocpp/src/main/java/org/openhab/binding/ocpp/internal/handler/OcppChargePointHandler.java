@@ -165,7 +165,32 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             setLocalAuthList(parseTagList(text.toString()));
         } else if (CHANNEL_CUSTOM_MESSAGE.equals(channelUID.getId()) && command instanceof StringType text) {
             sendCustomMessage(text.toString());
+        } else if (CHANNEL_DISPLAY_MESSAGE.equals(channelUID.getId()) && command instanceof StringType text) {
+            sendDisplayMessage(text.toString());
         }
+    }
+
+    private void sendDisplayMessage(String text) {
+        Request message = commands().displayMessage(text);
+        if (message == null) {
+            logger.warn("Charge point {} speaks {}; display messages are offered for 2.0.1 only", chargePointId,
+                    version);
+            return;
+        }
+        if (!isReady()) {
+            logger.debug("Display message for {} skipped — charge point not ready", chargePointId);
+            return;
+        }
+        OcppCommands commands = commands();
+        send(message).whenComplete((confirmation, ex) -> {
+            if (ex != null) {
+                logger.warn("Display message to {} failed: {}", chargePointId, ex.getMessage());
+            } else if (commands.isAccepted(confirmation)) {
+                updateState(CHANNEL_DISPLAY_MESSAGE, new StringType(text));
+            } else {
+                logger.info("Charge point {} refused the display message: {}", chargePointId, confirmation);
+            }
+        });
     }
 
     /**

@@ -66,6 +66,9 @@ import eu.chargetime.ocpp.model.SessionInformation;
 import eu.chargetime.ocpp.v201.feature.function.ServerAuthorizationFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerAvailabilityFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerDataTransferFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerDiagnosticsFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerDisplayMessageFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerISO15118CertificateManagementFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerLocalAuthorizationListManagementFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerMeterValuesFunction;
 import eu.chargetime.ocpp.v201.feature.function.ServerProvisioningFunction;
@@ -126,6 +129,10 @@ public class ChargeTimeTransport implements OcppTransport {
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerSecurityFunction(handler201));
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1,
                 new ServerLocalAuthorizationListManagementFunction());
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerDisplayMessageFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerDiagnosticsFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1,
+                new ServerISO15118CertificateManagementFunction(handler201));
 
         JSONConfiguration configuration = JSONConfiguration.get();
         configuration = configuration.setParameter(JSONConfiguration.REUSE_ADDR_PARAMETER, true);
