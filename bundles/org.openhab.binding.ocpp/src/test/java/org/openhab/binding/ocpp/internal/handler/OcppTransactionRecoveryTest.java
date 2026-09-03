@@ -26,6 +26,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.thing.Bridge;
@@ -116,6 +117,24 @@ class OcppTransactionRecoveryTest {
         handler.onTransactionEnded(ended(500));
 
         verify(server, org.mockito.Mockito.never()).forgetTransaction(500);
+    }
+
+    @Test
+    void aConnectorRecoversTheNameTheChargerGaveItsTransaction() {
+        when(server.remoteIdOf(55, "charger")).thenReturn("10848555779671014738");
+        assertEquals("10848555779671014738", handler.recoverRemoteId(55));
+    }
+
+    @Test
+    void anUpdateForATransactionNeverSeenToStartIsRoutedByItsConnector() {
+        OcppConnectorHandler connector = mock(OcppConnectorHandler.class);
+        handler.registerConnector(1, connector);
+        TransactionEvent update = new TransactionEvent(TransactionEvent.Kind.UPDATED, 1, 60, "t9", null,
+                TokenType.UNKNOWN, null, null, null, null);
+
+        handler.onTransactionUpdated(update);
+
+        verify(connector).onTransactionUpdated(update);
     }
 
     @Test

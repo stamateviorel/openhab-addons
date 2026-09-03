@@ -212,6 +212,23 @@ class OcppServerBridgeHandlerTest {
     }
 
     @Test
+    void anUpdateWithoutATokenStillReachesTheChargePoint() {
+        handler.initialize();
+        verify(callback, timeout(2000)).statusUpdated(any(),
+                argThat(status -> status.getStatus() == ThingStatus.ONLINE));
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        handler.registerChargePoint("charx", chargePoint);
+        UUID session = UUID.randomUUID();
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V2_0_1);
+        TransactionEvent update = new TransactionEvent(TransactionEvent.Kind.UPDATED, 2, 5, "t1", null,
+                TokenType.UNKNOWN, null, null, null, null);
+
+        handler.onTransactionEvent(session, update);
+
+        verify(chargePoint).onTransactionUpdated(update);
+    }
+
+    @Test
     void aTransactionKeepsItsIdAcrossARestartByTheNameTheChargerGaveIt() {
         handler.initialize();
         verify(callback, timeout(2000)).statusUpdated(any(),

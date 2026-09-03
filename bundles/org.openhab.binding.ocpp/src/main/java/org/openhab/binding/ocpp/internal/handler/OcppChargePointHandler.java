@@ -709,7 +709,17 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
 
     public void onTransactionUpdated(TransactionEvent event) {
         touch();
-        OcppConnectorHandler connector = transactions.get(event.transactionId());
+        int transactionId = event.transactionId();
+        OcppConnectorHandler connector = transactions.get(transactionId);
+        Integer connectorId = event.connectorId();
+        if (connector == null && connectorId != null) {
+            // First word of a transaction this handler has not seen start, typically after a restart.
+            connector = connectors.get(connectorId);
+            if (connector != null) {
+                transactions.values().remove(connector);
+                transactions.put(transactionId, connector);
+            }
+        }
         if (connector != null) {
             connector.onTransactionUpdated(event);
         }
@@ -735,6 +745,11 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         if (ownsTransaction && serverHandler != null) {
             serverHandler.forgetTransaction(transactionId);
         }
+    }
+
+    public @Nullable String recoverRemoteId(int transactionId) {
+        OcppServerBridgeHandler serverHandler = server;
+        return serverHandler != null ? serverHandler.remoteIdOf(transactionId, chargePointId) : null;
     }
 
     public @Nullable Integer recoverTransactionId(int connectorId) {

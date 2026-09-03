@@ -220,6 +220,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         Integer open = parent.recoverTransactionId(connectorId);
         if (open != null) {
             transactionId = open;
+            remoteTransactionId = parent.recoverRemoteId(open);
             updateState(CHANNEL_TRANSACTION_ID, new DecimalType(open));
             logger.debug("Recovered open transaction {} on connector {} after restart", open, connectorId);
         }
@@ -820,6 +821,16 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     public void onTransactionUpdated(TransactionEvent event) {
+        String remoteId = event.remoteId();
+        if (remoteId != null) {
+            // Whatever this handler believed before, the charger has just said which transaction runs here.
+            Integer known = transactionId;
+            if (known == null || known != event.transactionId()) {
+                transactionId = event.transactionId();
+                updateState(CHANNEL_TRANSACTION_ID, new DecimalType(event.transactionId()));
+            }
+            remoteTransactionId = remoteId;
+        }
         String idTag = event.idToken();
         if (idTag != null) {
             updateState(CHANNEL_ID_TAG, new StringType(idTag));

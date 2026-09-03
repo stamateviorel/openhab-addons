@@ -421,14 +421,13 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     private void onTransactionUpdated(UUID session, TransactionEvent event) {
         String idToken = event.idToken();
-        if (idToken == null) {
-            return;
-        }
-        // A plug-first session started without a token; the one presented now is whose session it is.
-        enrollToken(session, idToken, event.tokenType(), event.connectorId());
-        CpmsService service = cpms;
-        if (service != null) {
-            service.onTransactionAuthorized(event.transactionId(), idToken);
+        if (idToken != null) {
+            // A plug-first session started without a token; the one presented now is whose session it is.
+            enrollToken(session, idToken, event.tokenType(), event.connectorId());
+            CpmsService service = cpms;
+            if (service != null) {
+                service.onTransactionAuthorized(event.transactionId(), idToken);
+            }
         }
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
@@ -698,6 +697,13 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
         TransactionStore.Location location = store.locate(transactionId);
         return location != null && chargePointId.equals(location.chargePointId()) ? location.connectorId() : null;
+    }
+
+    /** The name the charger gave a transaction, for the connector that resumes it after a restart. */
+    public @Nullable String remoteIdOf(int transactionId, String chargePointId) {
+        TransactionStore store = transactionStore;
+        TransactionStore.Location location = store == null ? null : store.locate(transactionId);
+        return location != null && chargePointId.equals(location.chargePointId()) ? location.remoteId() : null;
     }
 
     public @Nullable Integer openTransactionFor(String chargePointId, int connectorId) {

@@ -34,6 +34,7 @@ import org.mockito.ArgumentCaptor;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Commands;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
+import org.openhab.binding.ocpp.internal.transport.Ocpp201Commands;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
 import org.openhab.binding.ocpp.internal.transport.event.TokenType;
@@ -62,6 +63,7 @@ import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileRequest;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileStatus;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileRequest;
+import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
 
 /**
  * Tests how {@link OcppConnectorHandler} turns a charger's reported status into channel state.
@@ -147,6 +149,35 @@ class OcppConnectorHandlerTest {
 
         assertChannel(CHANNEL_SESSION_ENERGY,
                 new org.openhab.core.library.types.QuantityType<>(1500, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
+
+    @Test
+    void anUpdateTellsTheConnectorWhichTransactionAStopMustName() {
+        ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
+        when(thing.getBridgeUID()).thenReturn(chargePointUID);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp201Commands());
+        when(chargePoint.isReady()).thenReturn(true);
+        when(chargePoint.getChargePointId()).thenReturn("charger");
+        when(chargePoint.send(any()))
+                .thenReturn(CompletableFuture.completedFuture(mock(eu.chargetime.ocpp.model.Confirmation.class)));
+        Bridge bridge = mock(Bridge.class);
+        when(bridge.getHandler()).thenReturn(chargePoint);
+        when(callback.getBridge(chargePointUID)).thenReturn(bridge);
+        handler.initialize();
+
+        // The handler never saw this transaction start; the charger's update is what it has to go on.
+        handler.onTransactionUpdated(new TransactionEvent(TransactionEvent.Kind.UPDATED, 1, 12, "10848555779671014738",
+                null, TokenType.UNKNOWN, null, null, null, null));
+        command(CHANNEL_CHARGING, OnOffType.OFF);
+
+        ArgumentCaptor<eu.chargetime.ocpp.model.Request> captor = ArgumentCaptor
+                .forClass(eu.chargetime.ocpp.model.Request.class);
+        verify(chargePoint, timeout(2000).atLeastOnce()).send(captor.capture());
+        RequestStopTransactionRequest stop = captor.getAllValues().stream()
+                .filter(RequestStopTransactionRequest.class::isInstance).map(RequestStopTransactionRequest.class::cast)
+                .findFirst().orElseThrow();
+        assertEquals("10848555779671014738", stop.getTransactionId());
     }
 
     @Test
