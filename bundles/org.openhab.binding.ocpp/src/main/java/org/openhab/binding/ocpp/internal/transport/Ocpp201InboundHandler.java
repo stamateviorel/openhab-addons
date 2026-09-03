@@ -126,7 +126,8 @@ public class Ocpp201InboundHandler
         logger.debug("NotifyReport from session {} seq {} tbc {}", sessionIndex, request.getSeqNo(), request.getTbc());
         // A charger can have more than one report in flight; requestId says which this belongs to.
         String key = sessionIndex + "/" + request.getRequestId();
-        DeviceModelReport report = reports.computeIfAbsent(key, ignored -> new DeviceModelReport());
+        DeviceModelReport report = Objects
+                .requireNonNull(reports.computeIfAbsent(key, ignored -> new DeviceModelReport()));
         boolean complete = report.add(request);
         if (complete) {
             reports.remove(key);

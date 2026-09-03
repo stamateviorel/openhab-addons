@@ -347,7 +347,7 @@
 		</supported-bridge-type-refs>
 
 		<label>OCPP User</label>
-		<description>A person and their RFID cards, for CPMS authorization and per-user usage.</description>
+		<description>A person and the cards and vehicles they charge with, for CPMS authorization and per-user usage.</description>
 
 		<channels>
 			<channel id="month-energy" typeId="energy">
@@ -361,7 +361,7 @@
 		<config-description>
 			<parameter name="enabled" type="boolean">
 				<label>Enabled</label>
-				<description>Whether this person's cards may start a charge.</description>
+				<description>Whether this person's cards and vehicles may start a charge.</description>
 				<default>true</default>
 			</parameter>
 			<parameter name="cards" type="text" multiple="true">

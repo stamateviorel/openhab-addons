@@ -24,18 +24,30 @@ import eu.chargetime.ocpp.v201.model.messages.ChangeAvailabilityRequest;
 import eu.chargetime.ocpp.v201.model.messages.ChangeAvailabilityResponse;
 import eu.chargetime.ocpp.v201.model.messages.ClearChargingProfileRequest;
 import eu.chargetime.ocpp.v201.model.messages.ClearChargingProfileResponse;
+import eu.chargetime.ocpp.v201.model.messages.ClearDisplayMessageRequest;
+import eu.chargetime.ocpp.v201.model.messages.DataTransferRequest;
+import eu.chargetime.ocpp.v201.model.messages.GetBaseReportRequest;
+import eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionRequest;
+import eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionResponse;
 import eu.chargetime.ocpp.v201.model.messages.RequestStartTransactionRequest;
 import eu.chargetime.ocpp.v201.model.messages.RequestStartTransactionResponse;
 import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
 import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionResponse;
 import eu.chargetime.ocpp.v201.model.messages.ResetRequest;
+import eu.chargetime.ocpp.v201.model.messages.ResetResponse;
+import eu.chargetime.ocpp.v201.model.messages.SendLocalListRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileResponse;
+import eu.chargetime.ocpp.v201.model.messages.SetDisplayMessageRequest;
+import eu.chargetime.ocpp.v201.model.messages.SetDisplayMessageResponse;
 import eu.chargetime.ocpp.v201.model.messages.SetVariablesRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetVariablesResponse;
 import eu.chargetime.ocpp.v201.model.messages.TriggerMessageRequest;
 import eu.chargetime.ocpp.v201.model.messages.TriggerMessageResponse;
 import eu.chargetime.ocpp.v201.model.messages.UnlockConnectorRequest;
+import eu.chargetime.ocpp.v201.model.types.AuthorizationData;
+import eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.ChangeAvailabilityStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingProfile;
 import eu.chargetime.ocpp.v201.model.types.ChargingProfileKindEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingProfilePurposeEnum;
@@ -46,17 +58,26 @@ import eu.chargetime.ocpp.v201.model.types.ChargingSchedulePeriod;
 import eu.chargetime.ocpp.v201.model.types.ClearChargingProfile;
 import eu.chargetime.ocpp.v201.model.types.ClearChargingProfileStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.Component;
+import eu.chargetime.ocpp.v201.model.types.DisplayMessageStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.EVSE;
 import eu.chargetime.ocpp.v201.model.types.IdToken;
 import eu.chargetime.ocpp.v201.model.types.IdTokenEnum;
+import eu.chargetime.ocpp.v201.model.types.IdTokenInfo;
+import eu.chargetime.ocpp.v201.model.types.MessageContent;
+import eu.chargetime.ocpp.v201.model.types.MessageFormatEnum;
+import eu.chargetime.ocpp.v201.model.types.MessageInfo;
+import eu.chargetime.ocpp.v201.model.types.MessagePriorityEnum;
 import eu.chargetime.ocpp.v201.model.types.MessageTriggerEnum;
 import eu.chargetime.ocpp.v201.model.types.OperationalStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.ReportBaseEnum;
 import eu.chargetime.ocpp.v201.model.types.RequestStartStopStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetEnum;
+import eu.chargetime.ocpp.v201.model.types.ResetStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.SetVariableData;
 import eu.chargetime.ocpp.v201.model.types.SetVariableResult;
 import eu.chargetime.ocpp.v201.model.types.SetVariableStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.TriggerMessageStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.UpdateEnum;
 import eu.chargetime.ocpp.v201.model.types.Variable;
 
 /**
@@ -155,8 +176,7 @@ public class Ocpp201Commands implements OcppCommands {
 
     @Override
     public Request readCapabilities() {
-        return new eu.chargetime.ocpp.v201.model.messages.GetBaseReportRequest(reportIds.incrementAndGet(),
-                eu.chargetime.ocpp.v201.model.types.ReportBaseEnum.FullInventory);
+        return new GetBaseReportRequest(reportIds.incrementAndGet(), ReportBaseEnum.FullInventory);
     }
 
     /**
@@ -182,33 +202,28 @@ public class Ocpp201Commands implements OcppCommands {
 
     @Override
     public Request readLocalListVersion() {
-        return new eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionRequest();
+        return new GetLocalListVersionRequest();
     }
 
     @Override
     public Request sendLocalList(int versionNumber, java.util.List<String> idTokens) {
-        eu.chargetime.ocpp.v201.model.messages.SendLocalListRequest request = new eu.chargetime.ocpp.v201.model.messages.SendLocalListRequest(
-                versionNumber, eu.chargetime.ocpp.v201.model.types.UpdateEnum.Full);
-        eu.chargetime.ocpp.v201.model.types.AuthorizationData[] entries = idTokens.stream().map(
-                tag -> new eu.chargetime.ocpp.v201.model.types.AuthorizationData(new IdToken(tag, IdTokenEnum.ISO14443))
-                        .withIdTokenInfo(new eu.chargetime.ocpp.v201.model.types.IdTokenInfo(
-                                eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum.Accepted)))
-                .toArray(eu.chargetime.ocpp.v201.model.types.AuthorizationData[]::new);
+        SendLocalListRequest request = new SendLocalListRequest(versionNumber, UpdateEnum.Full);
+        AuthorizationData[] entries = idTokens.stream()
+                .map(tag -> new AuthorizationData(new IdToken(tag, IdTokenEnum.ISO14443))
+                        .withIdTokenInfo(new IdTokenInfo(AuthorizationStatusEnum.Accepted)))
+                .toArray(AuthorizationData[]::new);
         request.setLocalAuthorizationList(entries);
         return request;
     }
 
     @Override
     public @Nullable Integer localListVersionOf(@Nullable Confirmation confirmation) {
-        return confirmation instanceof eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionResponse reported
-                ? reported.getVersionNumber()
-                : null;
+        return confirmation instanceof GetLocalListVersionResponse reported ? reported.getVersionNumber() : null;
     }
 
     @Override
     public @Nullable Request customMessage(String vendorId, @Nullable String messageId, @Nullable Object data) {
-        eu.chargetime.ocpp.v201.model.messages.DataTransferRequest request = new eu.chargetime.ocpp.v201.model.messages.DataTransferRequest(
-                vendorId);
+        DataTransferRequest request = new DataTransferRequest(vendorId);
         if (messageId != null) {
             request.setMessageId(messageId);
         }
@@ -221,13 +236,11 @@ public class Ocpp201Commands implements OcppCommands {
     @Override
     public @Nullable Request displayMessage(String text) {
         if (text.isBlank()) {
-            return new eu.chargetime.ocpp.v201.model.messages.ClearDisplayMessageRequest(DISPLAY_MESSAGE_ID);
+            return new ClearDisplayMessageRequest(DISPLAY_MESSAGE_ID);
         }
-        eu.chargetime.ocpp.v201.model.types.MessageInfo info = new eu.chargetime.ocpp.v201.model.types.MessageInfo(
-                DISPLAY_MESSAGE_ID, eu.chargetime.ocpp.v201.model.types.MessagePriorityEnum.NormalCycle,
-                new eu.chargetime.ocpp.v201.model.types.MessageContent(
-                        eu.chargetime.ocpp.v201.model.types.MessageFormatEnum.UTF8, text));
-        return new eu.chargetime.ocpp.v201.model.messages.SetDisplayMessageRequest(info);
+        MessageInfo info = new MessageInfo(DISPLAY_MESSAGE_ID, MessagePriorityEnum.NormalCycle,
+                new MessageContent(MessageFormatEnum.UTF8, text));
+        return new SetDisplayMessageRequest(info);
     }
 
     @Override
@@ -253,14 +266,13 @@ public class Ocpp201Commands implements OcppCommands {
                     || clear.getStatus() == ClearChargingProfileStatusEnum.Unknown;
         }
         if (confirmation instanceof ChangeAvailabilityResponse availability) {
-            return availability
-                    .getStatus() != eu.chargetime.ocpp.v201.model.types.ChangeAvailabilityStatusEnum.Rejected;
+            return availability.getStatus() != ChangeAvailabilityStatusEnum.Rejected;
         }
-        if (confirmation instanceof eu.chargetime.ocpp.v201.model.messages.ResetResponse reset) {
-            return reset.getStatus() != eu.chargetime.ocpp.v201.model.types.ResetStatusEnum.Rejected;
+        if (confirmation instanceof ResetResponse reset) {
+            return reset.getStatus() != ResetStatusEnum.Rejected;
         }
-        if (confirmation instanceof eu.chargetime.ocpp.v201.model.messages.SetDisplayMessageResponse display) {
-            return display.getStatus() == eu.chargetime.ocpp.v201.model.types.DisplayMessageStatusEnum.Accepted;
+        if (confirmation instanceof SetDisplayMessageResponse display) {
+            return display.getStatus() == DisplayMessageStatusEnum.Accepted;
         }
         if (confirmation instanceof TriggerMessageResponse trigger) {
             return trigger.getStatus() == TriggerMessageStatusEnum.Accepted;

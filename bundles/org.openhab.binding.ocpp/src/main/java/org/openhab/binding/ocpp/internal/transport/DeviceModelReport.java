@@ -22,6 +22,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 
 import eu.chargetime.ocpp.v201.model.messages.NotifyReportRequest;
+import eu.chargetime.ocpp.v201.model.types.AttributeEnum;
 import eu.chargetime.ocpp.v201.model.types.Component;
 import eu.chargetime.ocpp.v201.model.types.EVSE;
 import eu.chargetime.ocpp.v201.model.types.ReportData;
@@ -157,8 +158,7 @@ public class DeviceModelReport {
             if (value == null) {
                 continue;
             }
-            if (attribute.getType() == null
-                    || attribute.getType() == eu.chargetime.ocpp.v201.model.types.AttributeEnum.Actual) {
+            if (attribute.getType() == null || attribute.getType() == AttributeEnum.Actual) {
                 return value;
             }
             fallback = fallback == null ? value : fallback;

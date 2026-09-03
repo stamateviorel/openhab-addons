@@ -17,6 +17,7 @@ import org.eclipse.jdt.annotation.Nullable;
 
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
+import eu.chargetime.ocpp.model.core.AuthorizationStatus;
 import eu.chargetime.ocpp.model.core.AvailabilityStatus;
 import eu.chargetime.ocpp.model.core.AvailabilityType;
 import eu.chargetime.ocpp.model.core.ChangeAvailabilityConfirmation;
@@ -25,12 +26,23 @@ import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationRequest;
 import eu.chargetime.ocpp.model.core.ChargingRateUnitType;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
+import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
+import eu.chargetime.ocpp.model.core.IdTagInfo;
 import eu.chargetime.ocpp.model.core.RemoteStartStopStatus;
+import eu.chargetime.ocpp.model.core.RemoteStartTransactionConfirmation;
 import eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest;
+import eu.chargetime.ocpp.model.core.RemoteStopTransactionConfirmation;
 import eu.chargetime.ocpp.model.core.RemoteStopTransactionRequest;
+import eu.chargetime.ocpp.model.core.ResetConfirmation;
 import eu.chargetime.ocpp.model.core.ResetRequest;
+import eu.chargetime.ocpp.model.core.ResetStatus;
 import eu.chargetime.ocpp.model.core.ResetType;
 import eu.chargetime.ocpp.model.core.UnlockConnectorRequest;
+import eu.chargetime.ocpp.model.localauthlist.AuthorizationData;
+import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionConfirmation;
+import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest;
+import eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest;
+import eu.chargetime.ocpp.model.localauthlist.UpdateType;
 import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageConfirmation;
 import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequest;
 import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequestType;
@@ -104,7 +116,7 @@ public class Ocpp16Commands implements OcppCommands {
 
     @Override
     public Request readCapabilities() {
-        return new eu.chargetime.ocpp.model.core.GetConfigurationRequest();
+        return new GetConfigurationRequest();
     }
 
     @Override
@@ -114,29 +126,24 @@ public class Ocpp16Commands implements OcppCommands {
 
     @Override
     public Request readLocalListVersion() {
-        return new eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest();
+        return new GetLocalListVersionRequest();
     }
 
     @Override
     public Request sendLocalList(int versionNumber, java.util.List<String> idTokens) {
-        eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest request = new eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest(
-                versionNumber, eu.chargetime.ocpp.model.localauthlist.UpdateType.Full);
-        eu.chargetime.ocpp.model.localauthlist.AuthorizationData[] entries = idTokens.stream().map(tag -> {
-            eu.chargetime.ocpp.model.localauthlist.AuthorizationData entry = new eu.chargetime.ocpp.model.localauthlist.AuthorizationData();
-            entry.setIdTag(tag);
-            entry.setIdTagInfo(new eu.chargetime.ocpp.model.core.IdTagInfo(
-                    eu.chargetime.ocpp.model.core.AuthorizationStatus.Accepted));
+        SendLocalListRequest request = new SendLocalListRequest(versionNumber, UpdateType.Full);
+        AuthorizationData[] entries = idTokens.stream().map(tag -> {
+            AuthorizationData entry = new AuthorizationData(tag);
+            entry.setIdTagInfo(new IdTagInfo(AuthorizationStatus.Accepted));
             return entry;
-        }).toArray(eu.chargetime.ocpp.model.localauthlist.AuthorizationData[]::new);
+        }).toArray(AuthorizationData[]::new);
         request.setLocalAuthorizationList(entries);
         return request;
     }
 
     @Override
     public @Nullable Integer localListVersionOf(@Nullable Confirmation confirmation) {
-        return confirmation instanceof eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionConfirmation reported
-                ? reported.getListVersion()
-                : null;
+        return confirmation instanceof GetLocalListVersionConfirmation reported ? reported.getListVersion() : null;
     }
 
     @Override
@@ -164,8 +171,8 @@ public class Ocpp16Commands implements OcppCommands {
             return availability.getStatus() == AvailabilityStatus.Accepted
                     || availability.getStatus() == AvailabilityStatus.Scheduled;
         }
-        if (confirmation instanceof eu.chargetime.ocpp.model.core.ResetConfirmation reset) {
-            return reset.getStatus() == eu.chargetime.ocpp.model.core.ResetStatus.Accepted;
+        if (confirmation instanceof ResetConfirmation reset) {
+            return reset.getStatus() == ResetStatus.Accepted;
         }
         if (confirmation instanceof TriggerMessageConfirmation trigger) {
             return trigger.getStatus() == TriggerMessageStatus.Accepted;
@@ -179,9 +186,9 @@ public class Ocpp16Commands implements OcppCommands {
 
     /** Whether a RemoteStart/RemoteStop was accepted; the connector handler retries on a refusal. */
     public static boolean isRemoteAccepted(@Nullable Confirmation confirmation) {
-        return confirmation instanceof eu.chargetime.ocpp.model.core.RemoteStartTransactionConfirmation start
+        return confirmation instanceof RemoteStartTransactionConfirmation start
                 ? start.getStatus() == RemoteStartStopStatus.Accepted
-                : confirmation instanceof eu.chargetime.ocpp.model.core.RemoteStopTransactionConfirmation stop
+                : confirmation instanceof RemoteStopTransactionConfirmation stop
                         && stop.getStatus() == RemoteStartStopStatus.Accepted;
     }
 }

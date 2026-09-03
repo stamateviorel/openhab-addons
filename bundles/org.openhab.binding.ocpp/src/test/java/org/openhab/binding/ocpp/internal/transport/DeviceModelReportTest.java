@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -154,7 +155,7 @@ class DeviceModelReportTest {
     }
 
     private static NotifyReportRequest notifyReport(boolean toBeContinued, ReportData... data) {
-        NotifyReportRequest request = new NotifyReportRequest(1, ZonedDateTime.now(), 0);
+        NotifyReportRequest request = new NotifyReportRequest(1, ZonedDateTime.now(ZoneOffset.UTC), 0);
         request.setReportData(data);
         request.setTbc(toBeContinued);
         return request;
