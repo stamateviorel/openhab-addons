@@ -23,6 +23,7 @@ import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
 import org.openhab.binding.ocpp.internal.transport.event.ConnectorStatus;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 
 import com.google.gson.annotations.SerializedName;
 
@@ -31,6 +32,7 @@ import eu.chargetime.ocpp.v201.model.messages.StatusNotificationRequest;
 import eu.chargetime.ocpp.v201.model.types.ChargingStateEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingStation;
 import eu.chargetime.ocpp.v201.model.types.ConnectorStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.IdTokenEnum;
 import eu.chargetime.ocpp.v201.model.types.MeterValue;
 import eu.chargetime.ocpp.v201.model.types.SampledValue;
 import eu.chargetime.ocpp.v201.model.types.UnitOfMeasure;
@@ -122,6 +124,17 @@ public final class Ocpp201Events {
             case SuspendedEV -> ConnectorStatus.SUSPENDED_EV;
             case SuspendedEVSE -> ConnectorStatus.SUSPENDED_EVSE;
             case Idle -> ConnectorStatus.FINISHING;
+        };
+    }
+
+    public static TokenType toTokenType(@Nullable IdTokenEnum type) {
+        if (type == null) {
+            return TokenType.UNKNOWN;
+        }
+        return switch (type) {
+            case ISO14443, ISO15693 -> TokenType.CARD;
+            case MacAddress -> TokenType.VEHICLE;
+            default -> TokenType.OTHER;
         };
     }
 

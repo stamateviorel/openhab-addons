@@ -51,6 +51,7 @@ import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 
 import eu.chargetime.ocpp.NotConnectedException;
@@ -112,7 +113,7 @@ class ChargeTimeTransportTest {
             }
 
             @Override
-            public void onAuthorize(UUID session, @Nullable String idTag) {
+            public void onAuthorize(UUID session, @Nullable String idToken, TokenType type) {
             }
 
             @Override

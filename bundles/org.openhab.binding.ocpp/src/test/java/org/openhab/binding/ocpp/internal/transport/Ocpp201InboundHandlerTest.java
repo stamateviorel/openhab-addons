@@ -34,6 +34,7 @@ import org.mockito.ArgumentCaptor;
 import org.openhab.binding.ocpp.internal.transport.event.ConnectorStatus;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 
 import eu.chargetime.ocpp.v201.model.messages.BootNotificationRequest;
@@ -152,6 +153,44 @@ class Ocpp201InboundHandlerTest {
         handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
 
         verify(listener, times(3)).onTransactionEvent(eq(session), any());
+    }
+
+    @Test
+    void aVehicleRecognisedByItsMacIsReportedAsAVehicle() {
+        // AutoCharge presents the car's MAC where a card would be; 2.0.1 says which it is.
+        TransactionEventRequest request = transaction(TransactionEventEnum.Started, "abc", null);
+        request.setIdToken(new IdToken("001122334455", IdTokenEnum.MacAddress));
+
+        handler.handleTransactionEventRequest(session, request);
+
+        ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener).onTransactionEvent(eq(session), captor.capture());
+        assertEquals(TokenType.VEHICLE, captor.getValue().tokenType());
+        assertEquals("001122334455", captor.getValue().idToken());
+    }
+
+    @Test
+    void aCardIsReportedAsACardWhicheverReaderStandardItUses() {
+        TransactionEventRequest request = transaction(TransactionEventEnum.Started, "abc", null);
+        request.setIdToken(new IdToken("04318BCA682095", IdTokenEnum.ISO15693));
+
+        handler.handleTransactionEventRequest(session, request);
+
+        ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener).onTransactionEvent(eq(session), captor.capture());
+        assertEquals(TokenType.CARD, captor.getValue().tokenType());
+    }
+
+    @Test
+    void aTokenTheChargerDoesNotClassifyIsNotGuessedAt() {
+        TransactionEventRequest request = transaction(TransactionEventEnum.Started, "abc", null);
+        request.setIdToken(new IdToken("free-vend", IdTokenEnum.Local));
+
+        handler.handleTransactionEventRequest(session, request);
+
+        ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener).onTransactionEvent(eq(session), captor.capture());
+        assertEquals(TokenType.OTHER, captor.getValue().tokenType());
     }
 
     @Test

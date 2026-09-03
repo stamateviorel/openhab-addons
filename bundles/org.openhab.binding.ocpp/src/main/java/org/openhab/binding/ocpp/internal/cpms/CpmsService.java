@@ -73,7 +73,7 @@ public class CpmsService {
 
     public @Nullable CpmsUser userForCard(String idTag) {
         for (CpmsUser u : userRegistry.values()) {
-            if (u.cards().contains(idTag)) {
+            if (u.owns(idTag)) {
                 return u;
             }
         }

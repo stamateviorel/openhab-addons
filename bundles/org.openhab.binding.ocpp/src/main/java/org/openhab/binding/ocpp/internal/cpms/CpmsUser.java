@@ -23,5 +23,11 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-public record CpmsUser(String id, String name, boolean enabled, double monthlyCapKwh, List<String> cards) {
+public record CpmsUser(String id, String name, boolean enabled, double monthlyCapKwh, List<String> cards,
+        List<String> vehicles) {
+
+    /** Every token this person may charge with, whichever kind it is. */
+    public boolean owns(String token) {
+        return cards.contains(token) || vehicles.contains(token);
+    }
 }

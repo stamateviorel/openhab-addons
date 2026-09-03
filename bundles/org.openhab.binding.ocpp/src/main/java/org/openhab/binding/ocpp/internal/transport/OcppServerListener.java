@@ -21,6 +21,7 @@ import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 
 /**
@@ -56,7 +57,7 @@ public interface OcppServerListener {
 
     void onTransactionEvent(UUID session, TransactionEvent event);
 
-    void onAuthorize(UUID session, @Nullable String idToken);
+    void onAuthorize(UUID session, @Nullable String idToken, TokenType type);
 
     boolean isTagAuthorized(@Nullable String idToken);
 

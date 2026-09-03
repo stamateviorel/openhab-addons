@@ -40,6 +40,7 @@ import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemRegistry;
@@ -329,24 +330,26 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     @Override
-    public void onAuthorize(UUID session, @Nullable String idTag) {
-        enrollCard(idTag);
+    public void onAuthorize(UUID session, @Nullable String idToken, TokenType type) {
+        enrollToken(idToken, type);
     }
 
     /**
-     * Learn or offer an unknown card. Called on Authorize and on StartTransaction, since a charger may skip Authorize.
+     * Learn or offer an unknown token. Called on Authorize and on a transaction start, since a charger may skip
+     * Authorize. A token is a card, a vehicle recognised by AutoCharge, or an identifier the charger presents on its
+     * own; they are all managed the same way, and the kind only decides how the offer is labelled.
      */
-    private void enrollCard(@Nullable String idTag) {
-        if (idTag == null) {
+    private void enrollToken(@Nullable String idToken, TokenType type) {
+        if (idToken == null) {
             return;
         }
-        if (bindingConfig.isAutoLearn() && !bindingConfig.getWhitelist().contains(idTag)) {
-            bindingConfig.addToWhitelist(idTag);
+        if (bindingConfig.isAutoLearn() && !bindingConfig.getWhitelist().contains(idToken)) {
+            bindingConfig.addToWhitelist(idToken);
         } else if (bindingConfig.isDiscoverCards()) {
             CpmsService service = cpms;
             OcppDiscoveryService discovery = discoveryService;
-            if (service != null && discovery != null && service.userForCard(idTag) == null) {
-                discovery.cardDiscovered(idTag);
+            if (service != null && discovery != null && service.userForCard(idToken) == null) {
+                discovery.tokenDiscovered(idToken, type);
             }
         }
     }
@@ -387,7 +390,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     private void onTransactionStarted(UUID session, TransactionEvent event) {
         int transactionId = event.transactionId();
-        enrollCard(event.idToken());
+        enrollToken(event.idToken(), event.tokenType());
         String chargePointId = sessionChargePoints.get(session);
         Integer connectorId = event.connectorId();
         if (chargePointId != null && connectorId != null) {

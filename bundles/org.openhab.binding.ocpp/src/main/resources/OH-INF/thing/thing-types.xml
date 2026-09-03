@@ -368,6 +368,15 @@
 				<label>Cards</label>
 				<description>The RFID idTags belonging to this person.</description>
 			</parameter>
+
+			<parameter name="vehicles" type="text" multiple="true">
+				<label>Vehicles</label>
+				<description>Tokens this person's vehicles present on their own, rather than a card: an AutoCharge MAC
+					address, or
+					the identifier a charger sends when it is set to start on plug-in. Managed exactly like
+					cards — either kind
+					authorizes a charge and counts towards the same usage.</description>
+			</parameter>
 			<parameter name="monthlyCapKwh" type="decimal" min="0">
 				<label>Monthly Cap (kWh)</label>
 				<description>Monthly kWh cap. Once this person's charging this month reaches it, their cards stop authorizing

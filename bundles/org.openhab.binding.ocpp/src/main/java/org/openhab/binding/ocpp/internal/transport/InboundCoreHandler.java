@@ -17,6 +17,7 @@ import java.time.ZonedDateTime;
 import java.util.UUID;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,7 +65,7 @@ public class InboundCoreHandler implements ServerCoreEventHandler {
         AuthorizationStatus status = listener.isTagAuthorized(request.getIdTag()) ? AuthorizationStatus.Accepted
                 : AuthorizationStatus.Invalid;
         logger.debug("Authorize from session {} idTag {} -> {}", sessionIndex, request.getIdTag(), status);
-        listener.onAuthorize(sessionIndex, request.getIdTag());
+        listener.onAuthorize(sessionIndex, request.getIdTag(), TokenType.UNKNOWN);
         return new AuthorizeConfirmation(new IdTagInfo(status));
     }
 

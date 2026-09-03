@@ -155,8 +155,6 @@ The charger's answer is published back on the same channel as `{"status":"Accept
 
 Inbound vendor messages are answered with `UnknownVendorId` and logged rather than acted on, and a charger's security events, log-upload progress, monitoring reports and customer-information answers are logged as they arrive.
 
-Plug & Charge is answered but not performed: a charger asking the binding to check a certificate's status, or to fetch a vehicle's contract certificate, is refused. Both need trust material and a link to an e-mobility operator that the binding has no way to hold, and a refusal leaves the charger free to fall back on its own decision rather than waiting for one that will not come.
-
 The local authorization list lets a cached RFID card start a charge while openHAB or the network is offline, on a charger that supports `LocalAuthListManagement`.
 The list lives on the `local-auth-list` channel as a comma-separated set of idTags: set it (from a rule or the UI) and the binding pushes it to the charger with `SendLocalList`, versioned by content so it is not rewritten on every boot. It is persisted on the charge point thing, so it survives an openHAB restart. A charger that does not advertise the profile is left untouched.
 
@@ -212,7 +210,11 @@ A pause is a 0 A limit, so a resume must lift the cap rather than send another 0
 
 A private site with several chargers often wants to know who charged and how much. Add a `cpms-user` thing per person and the binding tracks their energy and can gate authorization on their cards — all optional; without any users, authorization falls back to the [Add-on Settings](#add-on-settings) whitelist and no usage is tracked.
 
-A `cpms-user` carries the person's `cards` (their RFID idTags), an `enabled` switch (off blocks that person's cards from starting a charge), and an optional `monthlyCapKwh`. The cap gates the start of a session: once that person's logged charging this month reaches it, their cards stop authorizing until the next month rolls over. A session already under way is not cut off, so one long session can carry a little past the cap. Its `month-energy` and `year-energy` channels report the kWh that person has drawn since the start of the month and year, summed across every charger from the transactions the binding logs.
+A `cpms-user` carries the person's `cards` (their RFID idTags), their `vehicles`, an `enabled` switch (off blocks that person from starting a charge), and an optional `monthlyCapKwh`.
+
+`vehicles` holds the tokens a car or a charger presents on its own instead of a card: the MAC address a charger sends when AutoCharge recognises the vehicle, or the identifier it sends when it is set to start on plug-in. They are managed exactly like cards — either kind authorizes a charge, and both count towards the same person's usage — so a site can mix cards and AutoCharge without keeping two lists of people. Which kind a charger presented is visible on 2.0.1, where the protocol names it; a 1.6 charger sends only the value, so a vehicle there is indistinguishable from a card and can simply go in whichever list you find clearer.
+
+Note that once any user exists, a plug-in or AutoCharge token is refused like any other unknown token until it belongs to someone. Turn on Discover New Cards, let the vehicle or charger present it once, and it appears in the inbox — labelled as a vehicle where the charger said so. The cap gates the start of a session: once that person's logged charging this month reaches it, their cards stop authorizing until the next month rolls over. A session already under way is not cut off, so one long session can carry a little past the cap. Its `month-energy` and `year-energy` channels report the kWh that person has drawn since the start of the month and year, summed across every charger from the transactions the binding logs.
 
 The session log is append-only and never trimmed, so month and year totals stay computable for as far back as the binding has run; if the stored log is ever found unreadable, a new session is dropped rather than allowed to overwrite the history.
 

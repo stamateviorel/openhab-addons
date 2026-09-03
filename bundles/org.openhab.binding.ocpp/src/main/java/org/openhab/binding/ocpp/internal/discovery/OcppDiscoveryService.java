@@ -22,6 +22,7 @@ import java.util.regex.Pattern;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.binding.ocpp.internal.handler.OcppServerBridgeHandler;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.core.config.discovery.AbstractThingHandlerDiscoveryService;
 import org.openhab.core.config.discovery.DiscoveryResultBuilder;
 import org.openhab.core.thing.ThingTypeUID;
@@ -80,11 +81,14 @@ public class OcppDiscoveryService extends AbstractThingHandlerDiscoveryService<O
     }
 
     /** A card was presented that no user owns yet — offer it to the inbox to create a user from. */
-    public void cardDiscovered(String idTag) {
+    public void tokenDiscovered(String idToken, TokenType type) {
         ThingUID bridgeUID = thingHandler.getThing().getUID();
-        ThingUID thingUID = new ThingUID(THING_TYPE_CPMS_USER, bridgeUID, "card-" + sanitize(idTag));
+        boolean vehicle = type == TokenType.VEHICLE;
+        String kind = vehicle ? "vehicle" : "card";
+        ThingUID thingUID = new ThingUID(THING_TYPE_CPMS_USER, bridgeUID, kind + "-" + sanitize(idToken));
         thingDiscovered(DiscoveryResultBuilder.create(thingUID).withBridge(bridgeUID)
-                .withProperty("cards", List.of(idTag)).withLabel("OCPP User — card " + idTag).build());
+                .withProperty(vehicle ? "vehicles" : "cards", List.of(idToken))
+                .withLabel("OCPP User — " + kind + " " + idToken).build());
     }
 
     /**

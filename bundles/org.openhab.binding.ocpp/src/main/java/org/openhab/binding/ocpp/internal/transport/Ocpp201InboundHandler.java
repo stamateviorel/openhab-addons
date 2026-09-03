@@ -32,7 +32,6 @@ import eu.chargetime.ocpp.v201.feature.function.ServerAvailabilityEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerDataTransferEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerDiagnosticsEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerDisplayMessageEventHandler;
-import eu.chargetime.ocpp.v201.feature.function.ServerISO15118CertificateManagementEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerMeterValuesEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerProvisioningEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerSecurityEventHandler;
@@ -56,6 +55,7 @@ import eu.chargetime.ocpp.v201.model.messages.TransactionEventResponse;
 import eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.EVSE;
 import eu.chargetime.ocpp.v201.model.types.IdToken;
+import eu.chargetime.ocpp.v201.model.types.IdTokenEnum;
 import eu.chargetime.ocpp.v201.model.types.IdTokenInfo;
 import eu.chargetime.ocpp.v201.model.types.RegistrationStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.Transaction;
@@ -67,10 +67,10 @@ import eu.chargetime.ocpp.v201.model.types.Transaction;
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, ServerTransactionsEventHandler,
-        ServerAvailabilityEventHandler, ServerMeterValuesEventHandler, ServerAuthorizationEventHandler,
-        ServerDataTransferEventHandler, ServerSecurityEventHandler, ServerDisplayMessageEventHandler,
-        ServerDiagnosticsEventHandler, ServerISO15118CertificateManagementEventHandler {
+public class Ocpp201InboundHandler
+        implements ServerProvisioningEventHandler, ServerTransactionsEventHandler, ServerAvailabilityEventHandler,
+        ServerMeterValuesEventHandler, ServerAuthorizationEventHandler, ServerDataTransferEventHandler,
+        ServerSecurityEventHandler, ServerDisplayMessageEventHandler, ServerDiagnosticsEventHandler {
 
     private final Logger logger = LoggerFactory.getLogger(Ocpp201InboundHandler.class);
     private final OcppServerListener listener;
@@ -184,30 +184,6 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
         return new eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportResponse();
     }
 
-    @Override
-    @NonNullByDefault({})
-    public eu.chargetime.ocpp.v201.model.messages.GetCertificateStatusResponse handleGetCertificateStatusRequest(
-            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.GetCertificateStatusRequest request) {
-        // Answering this means fetching an OCSP response from the certificate's authority, which
-        // needs trust material the binding does not hold. Failed is the honest answer, and it leaves
-        // the charger free to fall back to its own decision rather than waiting on one.
-        logger.debug("GetCertificateStatus from session {} answered Failed — no certificate authority configured",
-                sessionIndex);
-        return new eu.chargetime.ocpp.v201.model.messages.GetCertificateStatusResponse(
-                eu.chargetime.ocpp.v201.model.types.GetCertificateStatusEnum.Failed);
-    }
-
-    @Override
-    @NonNullByDefault({})
-    public eu.chargetime.ocpp.v201.model.messages.Get15118EVCertificateResponse handleGet15118EVCertificateRequest(
-            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.Get15118EVCertificateRequest request) {
-        // Plug & Charge: the vehicle's contract certificate is fetched from an e-mobility operator
-        // the binding has no link to. Refused rather than answered with something invented.
-        logger.debug("Get15118EVCertificate from session {} refused — no e-mobility operator configured", sessionIndex);
-        return new eu.chargetime.ocpp.v201.model.messages.Get15118EVCertificateResponse(
-                eu.chargetime.ocpp.v201.model.types.Iso15118EVCertificateStatusEnum.Failed, "");
-    }
-
     /** Drops half-received reports when a session goes away. */
     public void forget(UUID session) {
         reports.keySet().removeIf(key -> key.startsWith(session + "/"));
@@ -247,7 +223,7 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
         String idToken = tokenOf(request.getIdToken());
         boolean authorized = listener.isTagAuthorized(idToken);
         logger.debug("Authorize (2.0.1) from session {} idToken {} -> {}", sessionIndex, idToken, authorized);
-        listener.onAuthorize(sessionIndex, idToken);
+        listener.onAuthorize(sessionIndex, idToken, Ocpp201Events.toTokenType(typeOf(request.getIdToken())));
         return new AuthorizeResponse(
                 new IdTokenInfo(authorized ? AuthorizationStatusEnum.Accepted : AuthorizationStatusEnum.Invalid));
     }
@@ -281,8 +257,9 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
                     : Ocpp201Events.toConnectorStatus(info.getChargingState());
             Integer meterWh = meterWhOf(request);
             String reason = info == null || info.getStoppedReason() == null ? null : info.getStoppedReason().name();
-            TransactionEvent event = new TransactionEvent(kind, connectorId, transactionId, remoteId, idToken, meterWh,
-                    request.getTimestamp(), reason, chargingState);
+            TransactionEvent event = new TransactionEvent(kind, connectorId, transactionId, remoteId, idToken,
+                    Ocpp201Events.toTokenType(typeOf(request.getIdToken())), meterWh, request.getTimestamp(), reason,
+                    chargingState);
             deliver("TransactionEvent", sessionIndex, () -> listener.onTransactionEvent(sessionIndex, event));
             if (connectorId != null) {
                 // A transaction event carries what 1.6 sent as separate MeterValues and
@@ -356,6 +333,10 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
 
     private static @Nullable String tokenOf(@Nullable IdToken idToken) {
         return idToken == null ? null : idToken.getIdToken();
+    }
+
+    private static @Nullable IdTokenEnum typeOf(@Nullable IdToken idToken) {
+        return idToken == null ? null : idToken.getType();
     }
 
     /** Deliver an inbound message to the listener without letting a throw there starve the response. */

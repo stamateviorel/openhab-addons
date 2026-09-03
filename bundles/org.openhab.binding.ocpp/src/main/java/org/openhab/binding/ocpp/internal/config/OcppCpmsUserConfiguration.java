@@ -27,4 +27,5 @@ public class OcppCpmsUserConfiguration {
     public boolean enabled = true;
     public double monthlyCapKwh = 0;
     public List<String> cards = List.of();
+    public List<String> vehicles = List.of();
 }

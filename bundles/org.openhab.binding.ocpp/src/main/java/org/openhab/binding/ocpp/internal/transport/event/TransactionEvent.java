@@ -35,8 +35,8 @@ import org.eclipse.jdt.annotation.Nullable;
  */
 @NonNullByDefault
 public record TransactionEvent(Kind kind, @Nullable Integer connectorId, int transactionId, @Nullable String remoteId,
-        @Nullable String idToken, @Nullable Integer meterWh, @Nullable ZonedDateTime timestamp, @Nullable String reason,
-        @Nullable ConnectorStatus chargingState) {
+        @Nullable String idToken, TokenType tokenType, @Nullable Integer meterWh, @Nullable ZonedDateTime timestamp,
+        @Nullable String reason, @Nullable ConnectorStatus chargingState) {
 
     public enum Kind {
         STARTED,

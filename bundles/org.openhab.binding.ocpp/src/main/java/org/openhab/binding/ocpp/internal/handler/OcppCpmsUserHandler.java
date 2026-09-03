@@ -99,7 +99,7 @@ public class OcppCpmsUserHandler extends BaseThingHandler {
         String label = getThing().getLabel();
         String name = label != null ? label : getThing().getUID().getId();
         service.registerUser(new CpmsUser(getThing().getUID().getAsString(), name, config.enabled, config.monthlyCapKwh,
-                config.cards));
+                config.cards, config.vehicles));
     }
 
     private void publishUsage() {
