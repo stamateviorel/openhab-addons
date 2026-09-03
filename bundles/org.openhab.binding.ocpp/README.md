@@ -26,6 +26,8 @@ Three differences are worth knowing about, because they show up in what the chan
   when a stop has to be sent.
 - Capabilities come from the 2.0.1 device model rather than a flat key list, so they arrive a moment
   after the charger connects rather than in a single answer.
+- A 2.0.1 charger can open a transaction on plug-in and take the card afterwards. The session is
+  logged under whichever token is presented before it ends, and the `id-tag` channel follows.
 
 The `extraConfig` entries on the `server` are named with 1.6 keys. On a 2.0.1 charger the ones the
 binding knows are mapped onto their device-model variables; anything else has to be written as

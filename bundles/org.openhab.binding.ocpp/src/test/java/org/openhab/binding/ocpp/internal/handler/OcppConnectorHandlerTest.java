@@ -36,6 +36,8 @@ import org.openhab.binding.ocpp.internal.transport.Ocpp16Commands;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
 import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.StringType;
@@ -96,6 +98,14 @@ class OcppConnectorHandlerTest {
 
     private void assertChannel(String channelId, org.openhab.core.types.State expected) {
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, channelId)), eq(expected));
+    }
+
+    @Test
+    void aLateTokenIsPublishedOnTheIdTagChannel() {
+        handler.onTransactionUpdated(new TransactionEvent(TransactionEvent.Kind.UPDATED, 1, 5, null, "CARD-X",
+                TokenType.CARD, null, null, null, null));
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_ID_TAG)), eq(new StringType("CARD-X")));
     }
 
     @Test

@@ -68,13 +68,11 @@ import com.google.gson.JsonParser;
 
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
-import eu.chargetime.ocpp.model.core.AuthorizationStatus;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 import eu.chargetime.ocpp.model.core.GetConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
-import eu.chargetime.ocpp.model.core.IdTagInfo;
-import eu.chargetime.ocpp.model.localauthlist.AuthorizationData;
+import eu.chargetime.ocpp.v201.model.messages.DataTransferResponse;
 
 /**
  * Represents one physical charger: tracks its session and routes its OCPP messages to the connectors.
@@ -235,7 +233,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
 
     private static String describeCustomResponse(@Nullable Confirmation confirmation) {
         JsonObject answer = new JsonObject();
-        if (confirmation instanceof eu.chargetime.ocpp.v201.model.messages.DataTransferResponse response) {
+        if (confirmation instanceof DataTransferResponse response) {
             answer.addProperty("status", String.valueOf(response.getStatus()));
             Object data = response.getData();
             if (data != null) {
@@ -708,6 +706,14 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
     }
 
+    public void onTransactionUpdated(TransactionEvent event) {
+        touch();
+        OcppConnectorHandler connector = transactions.get(event.transactionId());
+        if (connector != null) {
+            connector.onTransactionUpdated(event);
+        }
+    }
+
     public void onTransactionEnded(TransactionEvent event) {
         touch();
         int transactionId = event.transactionId();
@@ -920,14 +926,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
 
     private static int localAuthListVersion(List<String> tags) {
         return tags.stream().sorted().toList().hashCode() & Integer.MAX_VALUE;
-    }
-
-    private static AuthorizationData[] authorizationData(List<String> tags) {
-        return tags.stream().map(tag -> {
-            AuthorizationData data = new AuthorizationData(tag);
-            data.setIdTagInfo(new IdTagInfo(AuthorizationStatus.Accepted));
-            return data;
-        }).toArray(AuthorizationData[]::new);
     }
 
     private static List<String> parseTagList(String csv) {

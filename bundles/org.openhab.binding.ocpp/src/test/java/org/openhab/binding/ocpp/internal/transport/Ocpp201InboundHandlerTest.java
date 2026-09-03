@@ -13,6 +13,7 @@
 package org.openhab.binding.ocpp.internal.transport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -21,6 +22,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -40,6 +42,8 @@ import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import eu.chargetime.ocpp.v201.model.messages.BootNotificationRequest;
 import eu.chargetime.ocpp.v201.model.messages.StatusNotificationRequest;
 import eu.chargetime.ocpp.v201.model.messages.TransactionEventRequest;
+import eu.chargetime.ocpp.v201.model.messages.TransactionEventResponse;
+import eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingStateEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingStation;
 import eu.chargetime.ocpp.v201.model.types.ConnectorStatusEnum;
@@ -99,7 +103,7 @@ class Ocpp201InboundHandlerTest {
     @Test
     void anOccupiedConnectorIsReportedAsPreparingUntilTheTransactionSaysMore() {
         // 2.0.1 has five connector states where 1.6 has nine; Occupied only says a vehicle is there.
-        StatusNotificationRequest request = new StatusNotificationRequest(ZonedDateTime.now(),
+        StatusNotificationRequest request = new StatusNotificationRequest(ZonedDateTime.now(ZoneOffset.UTC),
                 ConnectorStatusEnum.Occupied, 2, 1);
 
         handler.handleStatusNotificationRequest(session, request);
@@ -266,18 +270,78 @@ class Ocpp201InboundHandlerTest {
         return request;
     }
 
+    @Test
+    void aPlugFirstStartWithoutATokenIsDeliveredWithoutBeingAskedAbout() {
+        when(listener.isTagAuthorized(any())).thenReturn(false);
+        TransactionEventRequest request = transaction(TransactionEventEnum.Started, "abc", null);
+        request.setIdToken(null);
+
+        TransactionEventResponse response = handler.handleTransactionEventRequest(session, request);
+
+        assertNull(response.getIdTokenInfo());
+        verify(listener, never()).isTagAuthorized(any());
+        ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener).onTransactionEvent(eq(session), captor.capture());
+        assertEquals(TransactionEvent.Kind.STARTED, captor.getValue().kind());
+        assertNull(captor.getValue().idToken());
+    }
+
+    @Test
+    void aRefusedTokenOnALaterEventIsAnsweredButTheEventStillCounts() {
+        when(listener.isTagAuthorized("CARD1")).thenReturn(false);
+        TransactionEventRequest started = transaction(TransactionEventEnum.Started, "abc", null);
+        started.setIdToken(null);
+        handler.handleTransactionEventRequest(session, started);
+
+        TransactionEventResponse response = handler.handleTransactionEventRequest(session,
+                transaction(TransactionEventEnum.Ended, "abc", null));
+
+        assertEquals(AuthorizationStatusEnum.Invalid, response.getIdTokenInfo().getStatus());
+        ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener, times(2)).onTransactionEvent(eq(session), captor.capture());
+        assertEquals(TransactionEvent.Kind.ENDED, captor.getAllValues().get(1).kind());
+    }
+
+    @Test
+    void aRefusedTokenKeepsASessionFromStarting() {
+        when(listener.isTagAuthorized("CARD1")).thenReturn(false);
+
+        TransactionEventResponse response = handler.handleTransactionEventRequest(session,
+                transaction(TransactionEventEnum.Started, "abc", null));
+
+        assertEquals(AuthorizationStatusEnum.Invalid, response.getIdTokenInfo().getStatus());
+        verify(listener, never()).onTransactionEvent(any(), any());
+    }
+
+    @Test
+    void theEnergyRegisterIsTakenInWattHoursWhateverUnitItCameIn() {
+        SampledValue perPhase = new SampledValue(999d);
+        perPhase.setMeasurand(MeasurandEnum.EnergyActiveImportRegister);
+        perPhase.setPhase(PhaseEnum.L1);
+        SampledValue total = new SampledValue(1.5);
+        total.setMeasurand(MeasurandEnum.EnergyActiveImportRegister);
+        total.setUnitOfMeasure(new UnitOfMeasure().withUnit("kWh"));
+
+        handler.handleTransactionEventRequest(session,
+                transaction(TransactionEventEnum.Started, "abc", new SampledValue[] { perPhase, total }));
+
+        ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener).onTransactionEvent(eq(session), captor.capture());
+        assertEquals(1500, captor.getValue().meterWh());
+    }
+
     private TransactionEventRequest transaction(TransactionEventEnum kind, @Nullable String transactionId,
             SampledValue @Nullable [] samples) {
         Transaction info = new Transaction(transactionId == null ? "" : transactionId);
         // A charger numbers a transaction's events in order; reusing one would look like a replay.
-        TransactionEventRequest request = new TransactionEventRequest(kind, ZonedDateTime.now(),
+        TransactionEventRequest request = new TransactionEventRequest(kind, ZonedDateTime.now(ZoneOffset.UTC),
                 TriggerReasonEnum.Authorized, sequence.getAndIncrement(), info);
         IdToken idToken = new IdToken("CARD1", IdTokenEnum.ISO14443);
         request.setIdToken(idToken);
         EVSE evse = new EVSE(1);
         request.setEvse(evse);
         if (samples != null) {
-            MeterValue meterValue = new MeterValue(samples, ZonedDateTime.now());
+            MeterValue meterValue = new MeterValue(samples, ZonedDateTime.now(ZoneOffset.UTC));
             request.setMeterValue(new MeterValue[] { meterValue });
         }
         return request;

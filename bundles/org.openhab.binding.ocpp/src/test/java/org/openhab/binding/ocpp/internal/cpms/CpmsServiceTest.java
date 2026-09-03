@@ -76,6 +76,28 @@ class CpmsServiceTest {
     }
 
     @Test
+    void aTokenPresentedAfterAPlugFirstStartIsWhatTheSessionIsLoggedUnder() {
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
+        cpms.onTransactionStart(9, null, "charger3", 1, 1000, 100L);
+        cpms.onTransactionAuthorized(9, "CARD-A");
+        cpms.onTransactionStop(9, 1500, 200L);
+
+        CpmsTransaction tx = cpms.transactions().get(0);
+        assertEquals("CARD-A", tx.idTag());
+        assertEquals("u1", tx.userId());
+        assertEquals(500.0, tx.energyWh());
+    }
+
+    @Test
+    void aSessionThatNeverSawATokenIsNotRecorded() {
+        cpms.onTransactionStart(10, null, "charger3", 1, 1000, 100L);
+        cpms.onTransactionStop(10, 1500, 200L);
+
+        assertTrue(cpms.transactions().isEmpty());
+        assertNull(storage.get("open:10"));
+    }
+
+    @Test
     void aStopWithoutAMatchingStartIsIgnored() {
         cpms.onTransactionStop(99, 5000, 200L);
 

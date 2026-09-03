@@ -29,6 +29,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
 import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ThingStatus;
@@ -80,6 +81,18 @@ class OcppChargePointHandlerTest {
 
     private static TransactionEvent ended(int transactionId) {
         return Ocpp16Events.toEnded(new StopTransactionRequest(0, ZonedDateTime.now(), transactionId), transactionId);
+    }
+
+    @Test
+    void aLateTokenReachesTheConnectorWhoseTransactionItIs() {
+        handler.onTransactionStarted(started(2, 5));
+        TransactionEvent update = new TransactionEvent(TransactionEvent.Kind.UPDATED, null, 5, null, "CARD-X",
+                TokenType.CARD, null, null, null, null);
+
+        handler.onTransactionUpdated(update);
+
+        verify(connector2).onTransactionUpdated(update);
+        verify(connector1, never()).onTransactionUpdated(any());
     }
 
     @Test

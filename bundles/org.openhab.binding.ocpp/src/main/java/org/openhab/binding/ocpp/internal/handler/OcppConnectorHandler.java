@@ -809,6 +809,13 @@ public class OcppConnectorHandler extends BaseThingHandler {
         }
     }
 
+    public void onTransactionUpdated(TransactionEvent event) {
+        String idTag = event.idToken();
+        if (idTag != null) {
+            updateState(CHANNEL_ID_TAG, new StringType(idTag));
+        }
+    }
+
     public void onTransactionEnded(TransactionEvent event) {
         this.transactionId = null;
         this.remoteTransactionId = null;

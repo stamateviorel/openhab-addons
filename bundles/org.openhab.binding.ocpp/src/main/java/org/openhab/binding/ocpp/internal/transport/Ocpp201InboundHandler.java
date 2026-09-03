@@ -15,6 +15,7 @@ package org.openhab.binding.ocpp.internal.transport;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -40,20 +41,36 @@ import eu.chargetime.ocpp.v201.model.messages.AuthorizeRequest;
 import eu.chargetime.ocpp.v201.model.messages.AuthorizeResponse;
 import eu.chargetime.ocpp.v201.model.messages.BootNotificationRequest;
 import eu.chargetime.ocpp.v201.model.messages.BootNotificationResponse;
+import eu.chargetime.ocpp.v201.model.messages.DataTransferRequest;
+import eu.chargetime.ocpp.v201.model.messages.DataTransferResponse;
 import eu.chargetime.ocpp.v201.model.messages.HeartbeatRequest;
 import eu.chargetime.ocpp.v201.model.messages.HeartbeatResponse;
+import eu.chargetime.ocpp.v201.model.messages.LogStatusNotificationRequest;
+import eu.chargetime.ocpp.v201.model.messages.LogStatusNotificationResponse;
 import eu.chargetime.ocpp.v201.model.messages.MeterValuesRequest;
 import eu.chargetime.ocpp.v201.model.messages.MeterValuesResponse;
+import eu.chargetime.ocpp.v201.model.messages.NotifyCustomerInformationRequest;
+import eu.chargetime.ocpp.v201.model.messages.NotifyCustomerInformationResponse;
+import eu.chargetime.ocpp.v201.model.messages.NotifyDisplayMessagesRequest;
+import eu.chargetime.ocpp.v201.model.messages.NotifyDisplayMessagesResponse;
 import eu.chargetime.ocpp.v201.model.messages.NotifyEventRequest;
 import eu.chargetime.ocpp.v201.model.messages.NotifyEventResponse;
+import eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportRequest;
+import eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportResponse;
 import eu.chargetime.ocpp.v201.model.messages.NotifyReportRequest;
 import eu.chargetime.ocpp.v201.model.messages.NotifyReportResponse;
+import eu.chargetime.ocpp.v201.model.messages.SecurityEventNotificationRequest;
+import eu.chargetime.ocpp.v201.model.messages.SecurityEventNotificationResponse;
+import eu.chargetime.ocpp.v201.model.messages.SignCertificateRequest;
+import eu.chargetime.ocpp.v201.model.messages.SignCertificateResponse;
 import eu.chargetime.ocpp.v201.model.messages.StatusNotificationRequest;
 import eu.chargetime.ocpp.v201.model.messages.StatusNotificationResponse;
 import eu.chargetime.ocpp.v201.model.messages.TransactionEventRequest;
 import eu.chargetime.ocpp.v201.model.messages.TransactionEventResponse;
 import eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.DataTransferStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.EVSE;
+import eu.chargetime.ocpp.v201.model.types.GenericStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.IdToken;
 import eu.chargetime.ocpp.v201.model.types.IdTokenEnum;
 import eu.chargetime.ocpp.v201.model.types.IdTokenInfo;
@@ -121,67 +138,63 @@ public class Ocpp201InboundHandler
 
     @Override
     @NonNullByDefault({})
-    public eu.chargetime.ocpp.v201.model.messages.DataTransferResponse handleDataTransferRequest(UUID sessionIndex,
-            eu.chargetime.ocpp.v201.model.messages.DataTransferRequest request) {
+    public DataTransferResponse handleDataTransferRequest(UUID sessionIndex, DataTransferRequest request) {
         // Vendor-specific traffic the binding has no meaning for; answered so the charger is not
         // left waiting, and logged so it can be seen.
         logger.debug("DataTransfer from session {} vendor {} message {}: {}", sessionIndex, request.getVendorId(),
                 request.getMessageId(), request.getData());
-        return new eu.chargetime.ocpp.v201.model.messages.DataTransferResponse(
-                eu.chargetime.ocpp.v201.model.types.DataTransferStatusEnum.UnknownVendorId);
+        return new DataTransferResponse(DataTransferStatusEnum.UnknownVendorId);
     }
 
     @Override
     @NonNullByDefault({})
-    public eu.chargetime.ocpp.v201.model.messages.SecurityEventNotificationResponse handleSecurityEventNotificationRequest(
-            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.SecurityEventNotificationRequest request) {
+    public SecurityEventNotificationResponse handleSecurityEventNotificationRequest(UUID sessionIndex,
+            SecurityEventNotificationRequest request) {
         logger.info("Security event from session {}: {} at {} ({})", sessionIndex, request.getType(),
                 request.getTimestamp(), request.getTechInfo());
-        return new eu.chargetime.ocpp.v201.model.messages.SecurityEventNotificationResponse();
+        return new SecurityEventNotificationResponse();
     }
 
     @Override
     @NonNullByDefault({})
-    public eu.chargetime.ocpp.v201.model.messages.SignCertificateResponse handleSignCertificateRequest(
-            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.SignCertificateRequest request) {
+    public SignCertificateResponse handleSignCertificateRequest(UUID sessionIndex, SignCertificateRequest request) {
         // Signing a charger's certificate needs a CA this binding does not have.
         logger.debug("SignCertificate from session {} refused — no certificate authority", sessionIndex);
-        return new eu.chargetime.ocpp.v201.model.messages.SignCertificateResponse(
-                eu.chargetime.ocpp.v201.model.types.GenericStatusEnum.Rejected);
+        return new SignCertificateResponse(GenericStatusEnum.Rejected);
     }
 
     @Override
     @NonNullByDefault({})
-    public eu.chargetime.ocpp.v201.model.messages.NotifyDisplayMessagesResponse handleNotifyDisplayMessagesRequest(
-            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.NotifyDisplayMessagesRequest request) {
+    public NotifyDisplayMessagesResponse handleNotifyDisplayMessagesRequest(UUID sessionIndex,
+            NotifyDisplayMessagesRequest request) {
         logger.debug("NotifyDisplayMessages from session {} request {}: {} message(s)", sessionIndex,
                 request.getRequestId(), request.getMessageInfo() == null ? 0 : request.getMessageInfo().length);
-        return new eu.chargetime.ocpp.v201.model.messages.NotifyDisplayMessagesResponse();
+        return new NotifyDisplayMessagesResponse();
     }
 
     @Override
     @NonNullByDefault({})
-    public eu.chargetime.ocpp.v201.model.messages.LogStatusNotificationResponse handleLogStatusNotificationRequest(
-            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.LogStatusNotificationRequest request) {
+    public LogStatusNotificationResponse handleLogStatusNotificationRequest(UUID sessionIndex,
+            LogStatusNotificationRequest request) {
         logger.info("Log upload on session {}: {}", sessionIndex, request.getStatus());
-        return new eu.chargetime.ocpp.v201.model.messages.LogStatusNotificationResponse();
+        return new LogStatusNotificationResponse();
     }
 
     @Override
     @NonNullByDefault({})
-    public eu.chargetime.ocpp.v201.model.messages.NotifyCustomerInformationResponse handleNotifyCustomerInformationRequest(
-            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.NotifyCustomerInformationRequest request) {
+    public NotifyCustomerInformationResponse handleNotifyCustomerInformationRequest(UUID sessionIndex,
+            NotifyCustomerInformationRequest request) {
         logger.debug("CustomerInformation from session {} request {}", sessionIndex, request.getRequestId());
-        return new eu.chargetime.ocpp.v201.model.messages.NotifyCustomerInformationResponse();
+        return new NotifyCustomerInformationResponse();
     }
 
     @Override
     @NonNullByDefault({})
-    public eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportResponse handleNotifyMonitoringReportRequest(
-            UUID sessionIndex, eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportRequest request) {
+    public NotifyMonitoringReportResponse handleNotifyMonitoringReportRequest(UUID sessionIndex,
+            NotifyMonitoringReportRequest request) {
         logger.debug("MonitoringReport from session {} request {} seq {}", sessionIndex, request.getRequestId(),
                 request.getSeqNo());
-        return new eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportResponse();
+        return new NotifyMonitoringReportResponse();
     }
 
     /** Drops half-received reports when a session goes away. */
@@ -245,12 +258,16 @@ public class Ocpp201InboundHandler
                     request.getSeqNo());
             return new TransactionEventResponse();
         }
-        boolean authorized = kind != TransactionEvent.Kind.STARTED || listener.isTagAuthorized(idToken);
+        // A plug-first session starts with no token and presents one in a later update, so whichever
+        // event carries a token is the one that is answered; without one there is nothing to refuse.
+        boolean authorized = idToken == null || listener.isTagAuthorized(idToken);
         int transactionId = idFor(remoteId);
         logger.debug("TransactionEvent {} from session {} tx {} -> id {} ({})", kind, sessionIndex, remoteId,
                 transactionId, authorized ? "accepted" : "invalid");
 
-        if (authorized) {
+        // A refused token only keeps a session from starting; a refusal on a later event is answered
+        // but the event itself still counts, or the transaction would never be seen to end.
+        if (authorized || kind != TransactionEvent.Kind.STARTED) {
             EVSE evse = request.getEvse();
             Integer connectorId = evse == null ? null : evse.getId();
             ConnectorStatus chargingState = info == null ? null
@@ -309,7 +326,7 @@ public class Ocpp201InboundHandler
         if (remoteId == null) {
             return listener.nextTransactionId();
         }
-        return transactionIds.computeIfAbsent(remoteId, key -> listener.nextTransactionId());
+        return Objects.requireNonNull(transactionIds.computeIfAbsent(remoteId, key -> listener.nextTransactionId()));
     }
 
     /** The energy register, which is what the usage log and the session-energy channel are built on. */
@@ -319,12 +336,16 @@ public class Ocpp201InboundHandler
             for (MeterSample.Reading reading : block.readings()) {
                 String measurand = reading.measurand();
                 String value = reading.value();
-                if (value != null && (measurand == null || "Energy.Active.Import.Register".equals(measurand))) {
-                    try {
-                        return (int) Math.round(Double.parseDouble(value));
-                    } catch (NumberFormatException e) {
-                        return null;
-                    }
+                if (value == null || reading.phase() != null
+                        || (measurand != null && !"Energy.Active.Import.Register".equals(measurand))) {
+                    continue;
+                }
+                try {
+                    double wh = Double.parseDouble(value);
+                    // The register is specified in Wh, but a charger is free to report it in kWh.
+                    return (int) Math.round("kWh".equals(reading.unit()) ? wh * 1000 : wh);
+                } catch (NumberFormatException e) {
+                    return null;
                 }
             }
         }

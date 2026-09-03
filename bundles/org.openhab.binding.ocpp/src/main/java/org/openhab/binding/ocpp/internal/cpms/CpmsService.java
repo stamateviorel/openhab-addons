@@ -111,11 +111,19 @@ public class CpmsService {
 
     public synchronized void onTransactionStart(int transactionId, @Nullable String idTag, String chargePointId,
             int connectorId, @Nullable Integer meterStart, long startEpoch) {
-        if (idTag == null) {
-            return;
-        }
         OpenTx open = new OpenTx(idTag, chargePointId, connectorId, meterStart == null ? 0 : meterStart, startEpoch);
         storage.put(OPEN_PREFIX + transactionId, gson.toJson(open));
+    }
+
+    /** The token presented after a plug-first start; the session is logged under it. */
+    public synchronized void onTransactionAuthorized(int transactionId, String idTag) {
+        String key = OPEN_PREFIX + transactionId;
+        String json = storage.get(key);
+        OpenTx open = json == null ? null : gson.fromJson(json, OpenTx.class);
+        if (open != null) {
+            storage.put(key, gson.toJson(
+                    new OpenTx(idTag, open.chargePointId(), open.connectorId(), open.meterStart(), open.startEpoch())));
+        }
     }
 
     public synchronized void onTransactionStop(int transactionId, @Nullable Integer meterStop, long stopEpoch) {
@@ -129,6 +137,13 @@ public class CpmsService {
             storage.remove(key);
             return;
         }
+        String idTag = open.idTag();
+        if (idTag == null) {
+            // Nobody ever presented a token, so there is no one to log the session under.
+            logger.debug("Session {} ended without a token; not recorded", transactionId);
+            storage.remove(key);
+            return;
+        }
         List<CpmsTransaction> log = readLog();
         if (log == null) {
             // Never overwrite an unreadable log — that would wipe every past month's history at once. Keep the
@@ -139,9 +154,9 @@ public class CpmsService {
         }
         // A meter-less charger sends no meterStop, so the session is logged with 0 energy.
         double energy = meterStop == null ? 0 : Math.max(0, meterStop - open.meterStart());
-        CpmsUser user = userForCard(open.idTag());
-        log.add(new CpmsTransaction(open.idTag(), user == null ? null : user.id(), open.chargePointId(),
-                open.connectorId(), open.startEpoch(), stopEpoch, energy));
+        CpmsUser user = userForCard(idTag);
+        log.add(new CpmsTransaction(idTag, user == null ? null : user.id(), open.chargePointId(), open.connectorId(),
+                open.startEpoch(), stopEpoch, energy));
         storage.put(KEY_TRANSACTIONS, gson.toJson(log));
         storage.remove(key);
     }
@@ -221,6 +236,7 @@ public class CpmsService {
     public record Usage(CpmsUser user, double monthKwh, double yearKwh) {
     }
 
-    private record OpenTx(String idTag, String chargePointId, int connectorId, int meterStart, long startEpoch) {
+    private record OpenTx(@Nullable String idTag, String chargePointId, int connectorId, int meterStart,
+            long startEpoch) {
     }
 }

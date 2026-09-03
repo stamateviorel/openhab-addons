@@ -383,8 +383,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         switch (event.kind()) {
             case STARTED -> onTransactionStarted(session, event);
             case ENDED -> onTransactionEnded(session, event);
-            case UPDATED -> logger.debug("Transaction {} update on session {} carries no state to apply",
-                    event.transactionId(), session);
+            case UPDATED -> onTransactionUpdated(session, event);
         }
     }
 
@@ -416,6 +415,23 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         OcppChargePointHandler handler = chargePointId != null ? chargePoints.get(chargePointId) : null;
         if (handler != null) {
             handler.onTransactionStarted(event);
+        }
+    }
+
+    private void onTransactionUpdated(UUID session, TransactionEvent event) {
+        String idToken = event.idToken();
+        if (idToken == null) {
+            return;
+        }
+        // A plug-first session started without a token; the one presented now is whose session it is.
+        enrollToken(idToken, event.tokenType());
+        CpmsService service = cpms;
+        if (service != null) {
+            service.onTransactionAuthorized(event.transactionId(), idToken);
+        }
+        OcppChargePointHandler handler = resolve(session);
+        if (handler != null) {
+            handler.onTransactionUpdated(event);
         }
     }
 
