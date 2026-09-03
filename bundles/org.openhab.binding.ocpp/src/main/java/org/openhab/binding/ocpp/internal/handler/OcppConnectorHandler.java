@@ -760,6 +760,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         Map<String, State> states = MeterValueMapper.toStates(sample);
         ensureDynamicChannels(states.keySet());
         states.forEach(this::updateState);
+        publishSessionEnergy(states.get(CHANNEL_ENERGY_ACTIVE_IMPORT));
         List<MeterSample.Block> blocks = sample.blocks();
         ZonedDateTime timestamp = null;
         for (int i = blocks.size() - 1; i >= 0 && timestamp == null; i--) {
@@ -834,6 +835,19 @@ public class OcppConnectorHandler extends BaseThingHandler {
         String idTag = event.idToken();
         if (idTag != null) {
             updateState(CHANNEL_ID_TAG, new StringType(idTag));
+        }
+    }
+
+    /** The session's energy so far, from the meter register against where it stood at the start. */
+    private void publishSessionEnergy(@Nullable State register) {
+        Integer start = meterStart;
+        if (start == null || !(register instanceof QuantityType<?> reading)) {
+            return;
+        }
+        QuantityType<?> wh = reading.toUnit(Units.WATT_HOUR);
+        if (wh != null) {
+            updateState(CHANNEL_SESSION_ENERGY,
+                    new QuantityType<>(Math.max(0, wh.intValue() - start), Units.WATT_HOUR));
         }
     }
 

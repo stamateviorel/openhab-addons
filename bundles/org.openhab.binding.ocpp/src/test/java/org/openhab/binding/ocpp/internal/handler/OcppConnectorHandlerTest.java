@@ -140,6 +140,17 @@ class OcppConnectorHandlerTest {
     }
 
     @Test
+    void sessionEnergyCountsLiveFromTheMeterRegisterWhileATransactionRuns() {
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 1000, java.time.ZonedDateTime.now()), 7));
+
+        handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "1.5"));
+
+        assertChannel(CHANNEL_SESSION_ENERGY,
+                new org.openhab.core.library.types.QuantityType<>(500, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
+
+    @Test
     void sessionEnergyIsPublishedAtStopAsMeterStopMinusMeterStart() {
         handler.onTransactionStarted(Ocpp16Events.toStarted(
                 new eu.chargetime.ocpp.model.core.StartTransactionRequest(1, "tag", 100, java.time.ZonedDateTime.now()),
