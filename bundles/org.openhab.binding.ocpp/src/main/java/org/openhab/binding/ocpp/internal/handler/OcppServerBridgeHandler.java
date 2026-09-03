@@ -395,7 +395,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         Integer connectorId = event.connectorId();
         if (chargePointId != null && connectorId != null) {
             // Persist at accept time so a later stop routes even before a Thing exists.
-            rememberTransaction(transactionId, chargePointId, connectorId, event.remoteId());
+            rememberTransaction(transactionId, chargePointId, connectorId, event.remoteId(), event.meterWh());
         }
         CpmsService service = cpms;
         if (service != null && chargePointId != null && connectorId != null) {
@@ -664,10 +664,22 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     public void rememberTransaction(int transactionId, String chargePointId, int connectorId,
             @Nullable String remoteId) {
+        rememberTransaction(transactionId, chargePointId, connectorId, remoteId, null);
+    }
+
+    public void rememberTransaction(int transactionId, String chargePointId, int connectorId, @Nullable String remoteId,
+            @Nullable Integer meterStart) {
         TransactionStore store = transactionStore;
         if (store != null) {
-            store.begin(transactionId, chargePointId, connectorId, remoteId);
+            store.begin(transactionId, chargePointId, connectorId, remoteId, meterStart);
         }
+    }
+
+    /** The meter register at the start of a transaction, for the connector that resumes it. */
+    public @Nullable Integer meterStartOf(int transactionId, String chargePointId) {
+        TransactionStore store = transactionStore;
+        TransactionStore.Location location = store == null ? null : store.locate(transactionId);
+        return location != null && chargePointId.equals(location.chargePointId()) ? location.meterStart() : null;
     }
 
     @Override

@@ -26,9 +26,14 @@ import org.openhab.core.storage.Storage;
 @NonNullByDefault
 public class TransactionStore {
 
-    public record Location(String chargePointId, int connectorId, @Nullable String remoteId) {
+    public record Location(String chargePointId, int connectorId, @Nullable String remoteId,
+            @Nullable Integer meterStart) {
         public Location(String chargePointId, int connectorId) {
-            this(chargePointId, connectorId, null);
+            this(chargePointId, connectorId, null, null);
+        }
+
+        public Location(String chargePointId, int connectorId, @Nullable String remoteId) {
+            this(chargePointId, connectorId, remoteId, null);
         }
     }
 
@@ -69,9 +74,21 @@ public class TransactionStore {
     /** {@code remoteId} is the name the charger itself gives the transaction, where it has one. */
     public synchronized void begin(int transactionId, String chargePointId, int connectorId,
             @Nullable String remoteId) {
+        begin(transactionId, chargePointId, connectorId, remoteId, null);
+    }
+
+    /** {@code meterStart} is the energy register at the start, so a session can be sized after a restart. */
+    public synchronized void begin(int transactionId, String chargePointId, int connectorId, @Nullable String remoteId,
+            @Nullable Integer meterStart) {
         clear(chargePointId, connectorId);
-        storage.put(TX_PREFIX + transactionId,
-                chargePointId + SEPARATOR + connectorId + (remoteId == null ? "" : SEPARATOR + remoteId));
+        StringBuilder value = new StringBuilder(chargePointId).append(SEPARATOR).append(connectorId);
+        if (remoteId != null || meterStart != null) {
+            value.append(SEPARATOR).append(remoteId == null ? "" : remoteId);
+        }
+        if (meterStart != null) {
+            value.append(SEPARATOR).append(meterStart);
+        }
+        storage.put(TX_PREFIX + transactionId, value.toString());
     }
 
     /** The id the binding gave the transaction a charger names {@code remoteId}, if it is still open. */
@@ -130,13 +147,16 @@ public class TransactionStore {
         if (value == null) {
             return null;
         }
-        // chargePointId, connectorId and, for a charger that names its transactions, that name.
-        String[] fields = value.split(String.valueOf(SEPARATOR), 3);
+        // chargePointId, connectorId, the charger's own name for the transaction (empty when it has
+        // none) and the meter register at the start; the last two are absent in older entries.
+        String[] fields = value.split(String.valueOf(SEPARATOR), 4);
         if (fields.length < 2) {
             return null;
         }
         try {
-            return new Location(fields[0], Integer.parseInt(fields[1]), fields.length > 2 ? fields[2] : null);
+            String remoteId = fields.length > 2 && !fields[2].isEmpty() ? fields[2] : null;
+            Integer meterStart = fields.length > 3 ? Integer.valueOf(fields[3]) : null;
+            return new Location(fields[0], Integer.parseInt(fields[1]), remoteId, meterStart);
         } catch (NumberFormatException e) {
             return null;
         }

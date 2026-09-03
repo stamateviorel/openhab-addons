@@ -140,6 +140,26 @@ class OcppConnectorHandlerTest {
     }
 
     @Test
+    void aRecoveredTransactionSizesItsSessionFromTheStoredMeterStart() {
+        ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
+        when(thing.getBridgeUID()).thenReturn(chargePointUID);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
+        when(chargePoint.getChargePointId()).thenReturn("charger");
+        when(chargePoint.recoverTransactionId(1)).thenReturn(7);
+        when(chargePoint.recoverMeterStart(7)).thenReturn(1000);
+        Bridge bridge = mock(Bridge.class);
+        when(bridge.getHandler()).thenReturn(chargePoint);
+        when(callback.getBridge(chargePointUID)).thenReturn(bridge);
+        handler.initialize();
+
+        handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "1.5"));
+
+        assertChannel(CHANNEL_SESSION_ENERGY,
+                new org.openhab.core.library.types.QuantityType<>(500, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
+
+    @Test
     void sessionEnergyCountsLiveFromTheMeterRegisterWhileATransactionRuns() {
         handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
                 "tag", 1000, java.time.ZonedDateTime.now()), 7));

@@ -747,6 +747,11 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
     }
 
+    public @Nullable Integer recoverMeterStart(int transactionId) {
+        OcppServerBridgeHandler serverHandler = server;
+        return serverHandler != null ? serverHandler.meterStartOf(transactionId, chargePointId) : null;
+    }
+
     public @Nullable String recoverRemoteId(int transactionId) {
         OcppServerBridgeHandler serverHandler = server;
         return serverHandler != null ? serverHandler.remoteIdOf(transactionId, chargePointId) : null;

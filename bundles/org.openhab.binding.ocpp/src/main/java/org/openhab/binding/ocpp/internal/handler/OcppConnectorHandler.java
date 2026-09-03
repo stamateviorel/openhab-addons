@@ -221,6 +221,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (open != null) {
             transactionId = open;
             remoteTransactionId = parent.recoverRemoteId(open);
+            Integer start = parent.recoverMeterStart(open);
+            if (start != null) {
+                meterStart = start;
+                updateState(CHANNEL_METER_START, new QuantityType<>(start, Units.WATT_HOUR));
+            }
             updateState(CHANNEL_TRANSACTION_ID, new DecimalType(open));
             logger.debug("Recovered open transaction {} on connector {} after restart", open, connectorId);
         }
