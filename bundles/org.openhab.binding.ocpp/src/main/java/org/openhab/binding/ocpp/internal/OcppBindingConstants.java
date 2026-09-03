@@ -105,6 +105,8 @@ public class OcppBindingConstants {
 
     // A connector id repeats across chargers, so the representation property carries the charge point id too.
     public static final String PROPERTY_UNIQUE_ID = "uniqueId";
+    public static final String PROPERTY_SEEN_ON = "seenOn";
+    public static final String PROPERTY_SEEN_AT = "seenAt";
 
     public static String uniqueConnectorId(String chargePointId, int connectorId) {
         return chargePointId + ":" + connectorId;

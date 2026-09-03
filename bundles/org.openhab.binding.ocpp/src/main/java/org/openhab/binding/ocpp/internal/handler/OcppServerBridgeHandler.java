@@ -331,7 +331,8 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     @Override
     public void onAuthorize(UUID session, @Nullable String idToken, TokenType type) {
-        enrollToken(idToken, type);
+        // An Authorize names no connector in either protocol; only a transaction says where.
+        enrollToken(session, idToken, type, null);
     }
 
     /**
@@ -339,7 +340,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
      * Authorize. A token is a card, a vehicle recognised by AutoCharge, or an identifier the charger presents on its
      * own; they are all managed the same way, and the kind only decides how the offer is labelled.
      */
-    private void enrollToken(@Nullable String idToken, TokenType type) {
+    private void enrollToken(UUID session, @Nullable String idToken, TokenType type, @Nullable Integer connectorId) {
         if (idToken == null) {
             return;
         }
@@ -349,7 +350,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             CpmsService service = cpms;
             OcppDiscoveryService discovery = discoveryService;
             if (service != null && discovery != null && service.userForCard(idToken) == null) {
-                discovery.tokenDiscovered(idToken, type);
+                discovery.tokenDiscovered(idToken, type, whereOf(session, connectorId));
             }
         }
     }
@@ -389,7 +390,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     private void onTransactionStarted(UUID session, TransactionEvent event) {
         int transactionId = event.transactionId();
-        enrollToken(event.idToken(), event.tokenType());
+        enrollToken(session, event.idToken(), event.tokenType(), event.connectorId());
         String chargePointId = sessionChargePoints.get(session);
         Integer connectorId = event.connectorId();
         if (chargePointId != null && connectorId != null) {
@@ -424,7 +425,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             return;
         }
         // A plug-first session started without a token; the one presented now is whose session it is.
-        enrollToken(idToken, event.tokenType());
+        enrollToken(session, idToken, event.tokenType(), event.connectorId());
         CpmsService service = cpms;
         if (service != null) {
             service.onTransactionAuthorized(event.transactionId(), idToken);
@@ -463,6 +464,16 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         if (chargePointId != null && transactionConnector(transactionId, chargePointId) != null) {
             forgetTransaction(transactionId);
         }
+    }
+
+    /** The charger's label if it has a Thing, else its id, plus the connector when one is known. */
+    private String whereOf(UUID session, @Nullable Integer connectorId) {
+        String chargePointId = sessionChargePoints.get(session);
+        OcppChargePointHandler handler = chargePointId == null ? null : chargePoints.get(chargePointId);
+        String label = handler == null ? null : handler.getThing().getLabel();
+        String where = label != null && !label.isBlank() ? label
+                : chargePointId != null ? chargePointId : "unknown charger";
+        return connectorId == null || connectorId == 0 ? where : where + " connector " + connectorId;
     }
 
     @Override

@@ -15,6 +15,9 @@ package org.openhab.binding.ocpp.internal.discovery;
 import static org.openhab.binding.ocpp.internal.OcppBindingConstants.*;
 
 import java.nio.charset.StandardCharsets;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
@@ -43,6 +46,7 @@ public class OcppDiscoveryService extends AbstractThingHandlerDiscoveryService<O
             THING_TYPE_CPMS_USER);
     private static final int DISCOVERY_TIMEOUT_SECONDS = 5;
     private static final Pattern VALID_SEGMENT = Pattern.compile("[A-Za-z0-9_-]+");
+    private static final DateTimeFormatter SEEN_AT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     public OcppDiscoveryService() {
         super(OcppServerBridgeHandler.class, SUPPORTED_THING_TYPES, DISCOVERY_TIMEOUT_SECONDS, false);
@@ -81,14 +85,20 @@ public class OcppDiscoveryService extends AbstractThingHandlerDiscoveryService<O
     }
 
     /** A card was presented that no user owns yet — offer it to the inbox to create a user from. */
-    public void tokenDiscovered(String idToken, TokenType type) {
+    /**
+     * Offers a token nobody owns as a new user. {@code where} names the charger and, when known, the
+     * connector it was presented at, so the inbox entry says where it came from and when.
+     */
+    public void tokenDiscovered(String idToken, TokenType type, String where) {
         ThingUID bridgeUID = thingHandler.getThing().getUID();
         boolean vehicle = type == TokenType.VEHICLE;
         String kind = vehicle ? "vehicle" : "card";
+        String when = ZonedDateTime.now(ZoneId.systemDefault()).format(SEEN_AT);
         ThingUID thingUID = new ThingUID(THING_TYPE_CPMS_USER, bridgeUID, kind + "-" + sanitize(idToken));
         thingDiscovered(DiscoveryResultBuilder.create(thingUID).withBridge(bridgeUID)
-                .withProperty(vehicle ? "vehicles" : "cards", List.of(idToken))
-                .withLabel("OCPP User — " + kind + " " + idToken).build());
+                .withProperty(vehicle ? "vehicles" : "cards", List.of(idToken)).withProperty(PROPERTY_SEEN_ON, where)
+                .withProperty(PROPERTY_SEEN_AT, when)
+                .withLabel("OCPP User — " + kind + " " + idToken + " · " + where + " · " + when).build());
     }
 
     /**

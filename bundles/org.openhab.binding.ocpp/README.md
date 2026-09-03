@@ -220,7 +220,7 @@ Note that once any user exists, a plug-in or AutoCharge token is refused like an
 
 The session log is append-only and never trimmed, so month and year totals stay computable for as far back as the binding has run; if the stored log is ever found unreadable, a new session is dropped rather than allowed to overwrite the history.
 
-To add someone without typing card ids, turn on Discover New Cards in Add-on Settings, have them tap their card, and it appears in the inbox as a new user pre-filled with that card — accept it and give it their name. Turn Discover off again once everyone is enrolled. You can also add a `cpms-user` by hand and type the cards in.
+To add someone without typing card ids, turn on Discover New Cards in Add-on Settings, have them tap their card, and it appears in the inbox as a new user pre-filled with that card, labelled with the charger, the connector where one is known, and the time it was seen — accept it and give it their name. Turn Discover off again once everyone is enrolled. You can also add a `cpms-user` by hand and type the cards in.
 
 Once at least one user exists, the binding serves a **Charging** sidebar page (no setup, no items to wire) listing each person's month and year kWh and the most recent charging sessions. The page appears only while users exist — for a site with no users it stays hidden.
 

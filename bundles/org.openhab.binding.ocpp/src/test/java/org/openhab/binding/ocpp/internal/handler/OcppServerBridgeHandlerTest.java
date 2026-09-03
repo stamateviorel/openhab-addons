@@ -37,9 +37,12 @@ import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.OcppBindingConfig;
+import org.openhab.binding.ocpp.internal.discovery.OcppDiscoveryService;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.library.types.DecimalType;
@@ -110,7 +113,12 @@ class OcppServerBridgeHandlerTest {
         private final OcppTransport injected;
 
         TestableBridgeHandler(Bridge bridge, StorageService storageService, OcppTransport injected) {
-            super(bridge, storageService, new OcppBindingConfig(mock(ConfigurationAdmin.class), null),
+            this(bridge, storageService, injected, null);
+        }
+
+        TestableBridgeHandler(Bridge bridge, StorageService storageService, OcppTransport injected,
+                @Nullable Map<String, Object> bindingProperties) {
+            super(bridge, storageService, new OcppBindingConfig(mock(ConfigurationAdmin.class), bindingProperties),
                     mock(ItemRegistry.class));
             this.injected = injected;
         }
@@ -123,12 +131,13 @@ class OcppServerBridgeHandlerTest {
     }
 
     private @NonNullByDefault({}) Bridge thing;
+    private @NonNullByDefault({}) StorageService storageService;
 
     @BeforeEach
     void setUp() {
         transport = mock(OcppTransport.class);
 
-        StorageService storageService = mock(StorageService.class);
+        storageService = mock(StorageService.class);
         when(storageService.<String> getStorage(anyString())).thenReturn(new MemoryStorage());
 
         thing = mock(Bridge.class);
@@ -174,6 +183,32 @@ class OcppServerBridgeHandlerTest {
                 && status.getStatusDetail() == org.openhab.core.thing.ThingStatusDetail.CONFIGURATION_ERROR));
         verify(transport, org.mockito.Mockito.after(500).never()).start(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    void aDiscoveredTokenSaysWhichChargerAndConnectorItCameFrom() {
+        handler = new TestableBridgeHandler(thing, storageService, transport, Map.of("discoverCards", true));
+        handler.setCallback(callback);
+        handler.initialize();
+        verify(callback, timeout(2000)).statusUpdated(any(),
+                argThat(status -> status.getStatus() == ThingStatus.ONLINE));
+        OcppDiscoveryService discovery = mock(OcppDiscoveryService.class);
+        handler.setDiscoveryService(discovery);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        Bridge chargePointThing = mock(Bridge.class);
+        when(chargePointThing.getLabel()).thenReturn("Charger 2");
+        when(chargePoint.getThing()).thenReturn(chargePointThing);
+        handler.registerChargePoint("charx", chargePoint);
+        UUID session = UUID.randomUUID();
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V2_0_1);
+
+        // An Authorize says nothing about the connector; a transaction does.
+        handler.onAuthorize(session, "CARD-NEW", TokenType.CARD);
+        verify(discovery).tokenDiscovered("CARD-NEW", TokenType.CARD, "Charger 2");
+
+        handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 5, "t1", "CARD-NEW",
+                TokenType.CARD, null, null, null, null));
+        verify(discovery).tokenDiscovered("CARD-NEW", TokenType.CARD, "Charger 2 connector 2");
     }
 
     @Test
