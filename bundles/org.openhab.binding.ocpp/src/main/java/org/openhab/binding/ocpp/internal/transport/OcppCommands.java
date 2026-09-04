@@ -95,10 +95,6 @@ public interface OcppCommands {
     /** Whether a confirmation reports the command as accepted, across both versions' status enums. */
     boolean isAccepted(@Nullable Confirmation confirmation);
 
-    /**
-     * Whether the charger refused the value itself rather than the setting, so offering a shorter
-     * measurand list is worth a retry. A charger that does not support the setting at all reports
-     * that differently, and re-asking it only adds round-trips to the boot burst.
-     */
+    /** Whether the charger refused the value itself (not the setting), so a shorter list is worth a retry. */
     boolean isValueRejected(@Nullable Confirmation confirmation);
 }

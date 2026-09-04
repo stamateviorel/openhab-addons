@@ -130,11 +130,15 @@ public class CpmsService {
     }
 
     /** The token presented after a plug-first start; the session is logged under it. */
+    /**
+     * Gives an ownerless (plug-first) session the token presented later. A session that already has an
+     * owner keeps it: on 1.6 the tag that stops a session may not be the one that started it.
+     */
     public synchronized void onTransactionAuthorized(int transactionId, String idTag) {
         String key = OPEN_PREFIX + transactionId;
         String json = storage.get(key);
         OpenTx open = json == null ? null : gson.fromJson(json, OpenTx.class);
-        if (open != null) {
+        if (open != null && open.idTag() == null) {
             storage.put(key, gson.toJson(
                     new OpenTx(idTag, open.chargePointId(), open.connectorId(), open.meterStart(), open.startEpoch())));
         }

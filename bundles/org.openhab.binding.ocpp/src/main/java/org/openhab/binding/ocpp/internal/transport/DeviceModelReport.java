@@ -174,15 +174,10 @@ public class DeviceModelReport {
             // the question, and leaving the key out would read as "not known" instead.
             keys.put("SupportedFeatureProfiles", String.join(",", featureProfiles));
         }
-        if (!evseIds.isEmpty()) {
-            // 2.0.1 has no connector count; the EVSEs the report mentions are the connectors here. Callers
-            // iterate 1..n, so report the highest id rather than how many were mentioned — a report naming
-            // EVSEs 1 and 3 must still reach 3.
-            int highest = evseIds.stream().filter(id -> id != null && id > 0).mapToInt(Integer::intValue).max()
-                    .orElse(0);
-            if (highest > 0) {
-                keys.put("NumberOfConnectors", String.valueOf(highest));
-            }
+        // 2.0.1 has no connector count; the highest EVSE id the report names stands in, since callers count 1..n.
+        int highest = evseIds.stream().mapToInt(Integer::intValue).filter(id -> id > 0).max().orElse(0);
+        if (highest > 0) {
+            keys.put("NumberOfConnectors", String.valueOf(highest));
         }
         return keys;
     }

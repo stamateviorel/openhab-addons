@@ -1009,7 +1009,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 && change.getStatus() == ConfigurationStatus.RebootRequired) {
             logger.warn("Boot config for {} accepted but needs a charger reboot to take effect", chargePointId);
         }
-        // Per-version: a 2.0.1 SetVariables refusal must not latch the gate as applied, or the burst never retries.
         return commands().isAccepted(confirmation);
     }
 

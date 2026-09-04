@@ -638,9 +638,8 @@
 	<channel-type id="session-energy">
 		<item-type>Number:Energy</item-type>
 		<label>Session Energy</label>
-		<description>Energy delivered in the last charging session (meter-stop minus meter-start), published once when
-			the
-			transaction ends. Empty on a meter-less charger.</description>
+		<description>Energy delivered in the current charging session (meter reading minus meter-start), updated as the
+			charger reports and settled when the transaction ends. Empty on a meter-less charger.</description>
 		<category>Energy</category>
 		<tags>
 			<tag>Measurement</tag>

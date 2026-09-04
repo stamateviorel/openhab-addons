@@ -420,33 +420,30 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     private void onTransactionUpdated(UUID session, TransactionEvent event) {
-        String idToken = event.idToken();
-        if (idToken != null) {
-            // A plug-first session started without a token; the one presented now is whose session it is.
-            enrollToken(session, idToken, event.tokenType(), event.connectorId());
-            CpmsService service = cpms;
-            if (service != null) {
-                service.onTransactionAuthorized(event.transactionId(), idToken);
-            }
-        }
+        adoptToken(session, event);
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
             handler.onTransactionUpdated(event);
         }
     }
 
+    /** A token can arrive on any event of a plug-first session, so every kind offers it to the session. */
+    private void adoptToken(UUID session, TransactionEvent event) {
+        String idToken = event.idToken();
+        if (idToken == null) {
+            return;
+        }
+        enrollToken(session, idToken, event.tokenType(), event.connectorId());
+        CpmsService service = cpms;
+        if (service != null) {
+            service.onTransactionAuthorized(event.transactionId(), idToken);
+        }
+    }
+
     private void onTransactionEnded(UUID session, TransactionEvent event) {
         int transactionId = event.transactionId();
         CpmsService service = cpms;
-        String endedWith = event.idToken();
-        if (endedWith != null) {
-            // A charger may hold the token back until the final event; without applying it here the
-            // session has no owner and is dropped instead of logged.
-            enrollToken(session, endedWith, event.tokenType(), event.connectorId());
-            if (service != null) {
-                service.onTransactionAuthorized(transactionId, endedWith);
-            }
-        }
+        adoptToken(session, event);
         if (service != null) {
             String cpId = sessionChargePoints.get(session);
             Integer connId = cpId == null ? null : transactionConnector(transactionId, cpId);

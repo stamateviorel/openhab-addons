@@ -269,7 +269,6 @@ public class Ocpp201InboundHandler
         // event carries a token is the one that is answered; without one there is nothing to refuse.
         boolean authorized = idToken == null || listener.isTagAuthorized(idToken);
         if (!authorized && kind == TransactionEvent.Kind.STARTED) {
-            // Refused before an id is handed out: a start that never happens must not spend one.
             logger.debug("TransactionEvent {} from session {} tx {} refused", kind, sessionIndex, remoteId);
             TransactionEventResponse refused = new TransactionEventResponse();
             refused.setIdTokenInfo(new IdTokenInfo(AuthorizationStatusEnum.Invalid));
