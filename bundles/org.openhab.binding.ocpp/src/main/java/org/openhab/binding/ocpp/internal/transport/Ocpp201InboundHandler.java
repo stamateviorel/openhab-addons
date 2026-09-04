@@ -268,34 +268,38 @@ public class Ocpp201InboundHandler
         // A plug-first session starts with no token and presents one in a later update, so whichever
         // event carries a token is the one that is answered; without one there is nothing to refuse.
         boolean authorized = idToken == null || listener.isTagAuthorized(idToken);
+        if (!authorized && kind == TransactionEvent.Kind.STARTED) {
+            // Refused before an id is handed out: a start that never happens must not spend one.
+            logger.debug("TransactionEvent {} from session {} tx {} refused", kind, sessionIndex, remoteId);
+            TransactionEventResponse refused = new TransactionEventResponse();
+            refused.setIdTokenInfo(new IdTokenInfo(AuthorizationStatusEnum.Invalid));
+            return refused;
+        }
         int transactionId = idFor(sessionIndex, remoteId);
         logger.debug("TransactionEvent {} from session {} tx {} -> id {} ({})", kind, sessionIndex, remoteId,
                 transactionId, authorized ? "accepted" : "invalid");
 
-        // A refused token only keeps a session from starting; a refusal on a later event is answered
-        // but the event itself still counts, or the transaction would never be seen to end.
-        if (authorized || kind != TransactionEvent.Kind.STARTED) {
-            Integer connectorId = connectorOf(sessionIndex, request.getEvse(), remoteId, transactionId);
-            ConnectorStatus chargingState = info == null ? null
-                    : Ocpp201Events.toConnectorStatus(info.getChargingState());
-            Integer meterWh = meterWhOf(request);
-            String reason = info == null || info.getStoppedReason() == null ? null : info.getStoppedReason().name();
-            TransactionEvent event = new TransactionEvent(kind, connectorId, transactionId, remoteId, idToken,
-                    Ocpp201Events.toTokenType(typeOf(request.getIdToken())), meterWh, request.getTimestamp(), reason,
-                    chargingState);
-            deliver("TransactionEvent", sessionIndex, () -> listener.onTransactionEvent(sessionIndex, event));
-            if (connectorId != null) {
-                // A transaction event carries what 1.6 sent as separate MeterValues and
-                // StatusNotification messages, on every kind and not just an update.
-                MeterSample sample = Ocpp201Events.toMeterSample(connectorId, request.getMeterValue());
-                if (!sample.blocks().isEmpty()) {
-                    deliver("TransactionEvent[MeterValues]", sessionIndex,
-                            () -> listener.onMeterValues(sessionIndex, sample));
-                }
-                if (chargingState != null) {
-                    deliver("TransactionEvent[Status]", sessionIndex, () -> listener.onStatusNotification(sessionIndex,
-                            new StatusInfo(connectorId, chargingState, null)));
-                }
+        // A refusal on a later event is answered but the event itself still counts, or the transaction
+        // would never be seen to end; only a refused start is turned away, above.
+        Integer connectorId = connectorOf(sessionIndex, request.getEvse(), remoteId, transactionId);
+        ConnectorStatus chargingState = info == null ? null : Ocpp201Events.toConnectorStatus(info.getChargingState());
+        Integer meterWh = meterWhOf(request);
+        String reason = info == null || info.getStoppedReason() == null ? null : info.getStoppedReason().name();
+        TransactionEvent event = new TransactionEvent(kind, connectorId, transactionId, remoteId, idToken,
+                Ocpp201Events.toTokenType(typeOf(request.getIdToken())), meterWh, request.getTimestamp(), reason,
+                chargingState);
+        deliver("TransactionEvent", sessionIndex, () -> listener.onTransactionEvent(sessionIndex, event));
+        if (connectorId != null) {
+            // A transaction event carries what 1.6 sent as separate MeterValues and
+            // StatusNotification messages, on every kind and not just an update.
+            MeterSample sample = Ocpp201Events.toMeterSample(connectorId, request.getMeterValue());
+            if (!sample.blocks().isEmpty()) {
+                deliver("TransactionEvent[MeterValues]", sessionIndex,
+                        () -> listener.onMeterValues(sessionIndex, sample));
+            }
+            if (chargingState != null) {
+                deliver("TransactionEvent[Status]", sessionIndex, () -> listener.onStatusNotification(sessionIndex,
+                        new StatusInfo(connectorId, chargingState, null)));
             }
         }
         if (kind == TransactionEvent.Kind.ENDED && remoteId != null) {

@@ -132,6 +132,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private volatile int profileMinIntervalMs;
     private volatile String hardwareMaxCurrentKey = "";
     private volatile String remoteStartTag = "openhab";
+    // Set by a write to id-tag; spent by the next remote start, then back to the configured tag.
+    private volatile @Nullable String pendingStartTag;
     private volatile int refreshInterval;
     private volatile boolean stuckStateRecovery;
     private volatile double nominalVoltage = 230.0;
@@ -341,9 +343,12 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 break;
             case CHANNEL_ID_TAG:
                 // Chooses the token the next remote start presents, so a session can be started as a
-                // given card or vehicle rather than the configured default.
+                // given card or vehicle rather than the configured default. It applies to that one start
+                // and is then dropped, so a later session cannot silently run as the wrong person.
                 if (command instanceof StringType tag && !tag.toString().isBlank()) {
-                    remoteStartTag = tag.toString().trim();
+                    String chosen = tag.toString().trim();
+                    pendingStartTag = chosen;
+                    updateState(CHANNEL_ID_TAG, new StringType(chosen));
                 }
                 break;
             case CHANNEL_CHARGING:
@@ -562,11 +567,13 @@ public class OcppConnectorHandler extends BaseThingHandler {
         }
         cancel(remoteStartRetryTask);
         remoteStartRetryTask = null;
-        attemptRemoteStart(remoteStartRetries);
+        // Spend any one-shot token here, so every retry of this start presents the same one.
+        String chosen = pendingStartTag;
+        pendingStartTag = null;
+        attemptRemoteStart(remoteStartRetries, chosen != null ? chosen : remoteStartTag);
     }
 
-    private void attemptRemoteStart(int remaining) {
-        String tag = remoteStartTag;
+    private void attemptRemoteStart(int remaining, String tag) {
         OcppChargePointHandler parent = chargePointHandler();
         TokenType type = parent == null ? TokenType.UNKNOWN : parent.tokenTypeOf(tag);
         dispatch(commands().remoteStart(connectorId, tag, type), "RemoteStart").whenComplete((confirmation, ex) -> {
@@ -577,7 +584,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                     remaining);
             remoteStartRetryTask = scheduler.schedule(() -> {
                 if (transactionId == null && isReadyToSend()) {
-                    attemptRemoteStart(remaining - 1);
+                    attemptRemoteStart(remaining - 1, tag);
                 }
             }, REMOTE_START_RETRY_DELAY_SECONDS, TimeUnit.SECONDS);
         });

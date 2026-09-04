@@ -196,7 +196,7 @@ The connector's writable channels map to OCPP commands, and each updates only on
 `charging` starts and stops a transaction: sending it `ON` issues a `RemoteStartTransaction`, `OFF` a `RemoteStopTransaction`.
 The transaction is started with the idTag from the connector's `remoteStartTag` (default `openhab`), which has to be authorized: by this binding through the Authorized Tag IDs list in [Add-on Settings](#add-on-settings) (empty accepts any tag), and by the charger itself if it enforces its own whitelist.
 So if `ON` does nothing, set `remoteStartTag` to a tag your charger accepts, or allow that tag on the charger.
-To start as someone else — a particular card, or a vehicle's own AutoCharge identity — send that token as a command to the connector's `id-tag` channel first; the next `ON` presents it, typed as a vehicle where a user lists it under `vehicles`.
+To start as someone else — a particular card, or a vehicle's own AutoCharge identity — send that token as a command to the connector's `id-tag` channel first; the next `ON` presents it, typed as a vehicle where a user lists it under `vehicles`. It applies to that one start and is then dropped, so the following session goes back to the connector's configured `remoteStartTag` rather than silently running as the last token used.
 Most chargers also only start once a vehicle is plugged in, so a `RemoteStart` on an idle connector is often ignored.
 Because `charging` follows the charger's reported status, it also reads `ON` on its own whenever a transaction is running, however it was started.
 
