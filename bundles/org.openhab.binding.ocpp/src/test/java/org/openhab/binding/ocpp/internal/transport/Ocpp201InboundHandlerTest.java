@@ -269,6 +269,49 @@ class Ocpp201InboundHandlerTest {
         assertEquals("", captor.getValue().remoteId());
     }
 
+    @Test
+    void twoChargersPickingTheSameTransactionIdDoNotShareOne() {
+        // A 2.0.1 transaction id is chosen by the station, and stations commonly start counting at 1.
+        UUID other = UUID.randomUUID();
+        handler.handleTransactionEventRequest(session, transaction(TransactionEventEnum.Started, "1", null));
+        handler.handleTransactionEventRequest(other, transaction(TransactionEventEnum.Started, "1", null));
+
+        ArgumentCaptor<TransactionEvent> first = ArgumentCaptor.forClass(TransactionEvent.class);
+        ArgumentCaptor<TransactionEvent> second = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener).onTransactionEvent(eq(session), first.capture());
+        verify(listener).onTransactionEvent(eq(other), second.capture());
+        assertEquals(2, java.util.stream.Stream.of(first.getValue(), second.getValue())
+                .map(TransactionEvent::transactionId).distinct().count());
+    }
+
+    @Test
+    void aBareOccupiedIsNotDeliveredWhileTheEvseHasATransactionOpen() {
+        // The transaction events already carry the charging state; Occupied alone would only downgrade it.
+        StatusNotificationRequest occupied = new StatusNotificationRequest(ZonedDateTime.now(ZoneOffset.UTC),
+                ConnectorStatusEnum.Occupied, 1, 1);
+        handler.handleTransactionEventRequest(session, transaction(TransactionEventEnum.Started, "abc", null));
+
+        handler.handleStatusNotificationRequest(session, occupied);
+        verify(listener, never()).onStatusNotification(eq(session), any());
+
+        handler.handleTransactionEventRequest(session, transaction(TransactionEventEnum.Ended, "abc", null));
+        handler.handleStatusNotificationRequest(session, occupied);
+
+        ArgumentCaptor<StatusInfo> captor = ArgumentCaptor.forClass(StatusInfo.class);
+        verify(listener).onStatusNotification(eq(session), captor.capture());
+        assertEquals(1, captor.getValue().connectorId());
+        assertEquals(ConnectorStatus.PREPARING, captor.getValue().status());
+    }
+
+    @Test
+    void aRefusedStartDoesNotSpendATransactionId() {
+        when(listener.isTagAuthorized(any())).thenReturn(false);
+
+        handler.handleTransactionEventRequest(session, transaction(TransactionEventEnum.Started, "abc", null));
+
+        verify(listener, never()).nextTransactionId();
+    }
+
     private TransactionEventRequest seq(TransactionEventEnum kind, String transactionId, int seqNo) {
         TransactionEventRequest request = transaction(kind, transactionId, null);
         request.setSeqNo(seqNo);

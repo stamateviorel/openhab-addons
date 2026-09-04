@@ -205,6 +205,20 @@ class CpmsServiceTest {
         assertEquals("{not a valid transaction array", storage.get("transactions"));
     }
 
+    @Test
+    void aStopByAnotherCardDoesNotReattributeASessionThatHasAnOwner() {
+        // On 1.6 every StopTransaction carries a tag, and it need not be the one that started the session.
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
+        cpms.registerUser(new CpmsUser("u2", "Anna", true, 0, List.of("CARD-B"), List.of()));
+        cpms.onTransactionStart(11, "CARD-A", "charger3", 1, 1000, 100L);
+        cpms.onTransactionAuthorized(11, "CARD-B");
+        cpms.onTransactionStop(11, 1500, 200L);
+
+        CpmsTransaction tx = cpms.transactions().get(0);
+        assertEquals("CARD-A", tx.idTag());
+        assertEquals("u1", tx.userId());
+    }
+
     private static long ms(String iso) {
         return Instant.parse(iso).toEpochMilli();
     }
