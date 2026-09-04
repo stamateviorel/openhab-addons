@@ -438,6 +438,15 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private void onTransactionEnded(UUID session, TransactionEvent event) {
         int transactionId = event.transactionId();
         CpmsService service = cpms;
+        String endedWith = event.idToken();
+        if (endedWith != null) {
+            // A charger may hold the token back until the final event; without applying it here the
+            // session has no owner and is dropped instead of logged.
+            enrollToken(session, endedWith, event.tokenType(), event.connectorId());
+            if (service != null) {
+                service.onTransactionAuthorized(transactionId, endedWith);
+            }
+        }
         if (service != null) {
             String cpId = sessionChargePoints.get(session);
             Integer connId = cpId == null ? null : transactionConnector(transactionId, cpId);

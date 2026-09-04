@@ -97,6 +97,7 @@ public class ChargeTimeTransport implements OcppTransport {
     private final Server server;
     private final MultiProtocolWebSocketListener listener;
     private final OcppServerListener ocppListener;
+    private final Ocpp201InboundHandler handler201;
     private final String authPassword;
     private volatile boolean started;
     private volatile boolean running;
@@ -116,7 +117,7 @@ public class ChargeTimeTransport implements OcppTransport {
         featureRepository.getFeatureRepository(ProtocolVersion.OCPP1_6)
                 .addFeature(new TolerantBootNotificationFeature(coreHandler));
 
-        Ocpp201InboundHandler handler201 = new Ocpp201InboundHandler(ocppListener);
+        this.handler201 = new Ocpp201InboundHandler(ocppListener);
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerProvisioningFunction(handler201));
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerTransactionsFunction(handler201));
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerAvailabilityFunction(handler201));
@@ -213,6 +214,7 @@ public class ChargeTimeTransport implements OcppTransport {
                     return;
                 }
                 logger.debug("Charger session lost: {}", sessionIndex);
+                handler201.forget(sessionIndex);
                 ocppListener.onSessionClosed(sessionIndex);
             }
         });

@@ -31,9 +31,7 @@ import eu.chargetime.ocpp.v201.model.messages.GetBaseReportRequest;
 import eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionRequest;
 import eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionResponse;
 import eu.chargetime.ocpp.v201.model.messages.RequestStartTransactionRequest;
-import eu.chargetime.ocpp.v201.model.messages.RequestStartTransactionResponse;
 import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
-import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionResponse;
 import eu.chargetime.ocpp.v201.model.messages.ResetRequest;
 import eu.chargetime.ocpp.v201.model.messages.ResetResponse;
 import eu.chargetime.ocpp.v201.model.messages.SendLocalListRequest;
@@ -71,7 +69,6 @@ import eu.chargetime.ocpp.v201.model.types.MessagePriorityEnum;
 import eu.chargetime.ocpp.v201.model.types.MessageTriggerEnum;
 import eu.chargetime.ocpp.v201.model.types.OperationalStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ReportBaseEnum;
-import eu.chargetime.ocpp.v201.model.types.RequestStartStopStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.SetVariableData;
@@ -149,7 +146,9 @@ public class Ocpp201Commands implements OcppCommands {
     @Override
     public Request setChargingProfile(int connectorId, double value, boolean inWatts, int numberPhases,
             boolean txDefault, @Nullable Integer transactionId, @Nullable String remoteId) {
-        boolean useTxProfile = transactionId != null && !txDefault;
+        // 2.0.1 requires a TxProfile to name its transaction, so without the charger's own id fall back to
+        // a TxDefaultProfile rather than send one it must reject.
+        boolean useTxProfile = transactionId != null && !txDefault && remoteId != null;
         ChargingSchedulePeriod period = new ChargingSchedulePeriod(0, value);
         if (numberPhases > 0) {
             period.setNumberPhases(numberPhases);
@@ -159,7 +158,7 @@ public class Ocpp201Commands implements OcppCommands {
         ChargingProfile profile = new ChargingProfile(profileId(connectorId, useTxProfile), STACK_LEVEL,
                 useTxProfile ? ChargingProfilePurposeEnum.TxProfile : ChargingProfilePurposeEnum.TxDefaultProfile,
                 ChargingProfileKindEnum.Relative, new ChargingSchedule[] { schedule });
-        if (useTxProfile && remoteId != null) {
+        if (useTxProfile) {
             profile.setTransactionId(remoteId);
         }
         return new SetChargingProfileRequest(connectorId, profile);
@@ -281,15 +280,6 @@ public class Ocpp201Commands implements OcppCommands {
         return confirmation != null;
     }
 
-    /** Whether a RequestStart/RequestStop was accepted; the connector handler retries on a refusal. */
-    public static boolean isRemoteAccepted(@Nullable Confirmation confirmation) {
-        if (confirmation instanceof RequestStartTransactionResponse start) {
-            return start.getStatus() == RequestStartStopStatusEnum.Accepted;
-        }
-        return confirmation instanceof RequestStopTransactionResponse stop
-                && stop.getStatus() == RequestStartStopStatusEnum.Accepted;
-    }
-
     /** A vehicle identifies itself by MAC address; anything else is presented as an RFID card. */
     private static IdToken idTokenOf(String idToken, TokenType type) {
         return new IdToken(idToken, type == TokenType.VEHICLE ? IdTokenEnum.MacAddress : IdTokenEnum.ISO14443);
@@ -297,5 +287,22 @@ public class Ocpp201Commands implements OcppCommands {
 
     static int profileId(int connectorId, boolean txProfile) {
         return connectorId * PROFILE_ID_STRIDE + (txProfile ? 2 : 1);
+    }
+
+    @Override
+    public boolean isValueRejected(@Nullable Confirmation confirmation) {
+        if (!(confirmation instanceof SetVariablesResponse variables)) {
+            return false;
+        }
+        SetVariableResult[] results = variables.getSetVariableResult();
+        if (results == null) {
+            return false;
+        }
+        for (SetVariableResult result : results) {
+            if (result.getAttributeStatus() == SetVariableStatusEnum.Rejected) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -200,9 +200,13 @@ public class Ocpp201InboundHandler
         return new NotifyMonitoringReportResponse();
     }
 
-    /** Drops half-received reports when a session goes away. */
+    /** Drops half-received reports and per-transaction state when a session goes away. */
     public void forget(UUID session) {
-        reports.keySet().removeIf(key -> key.startsWith(session + "/"));
+        String prefix = session + "/";
+        reports.keySet().removeIf(key -> key.startsWith(prefix));
+        transactionIds.keySet().removeIf(key -> key.startsWith(prefix));
+        transactionConnectors.keySet().removeIf(key -> key.startsWith(prefix));
+        lastSeqNo.keySet().removeIf(key -> key.startsWith(prefix));
     }
 
     @Override
@@ -256,7 +260,7 @@ public class Ocpp201InboundHandler
             case Updated -> TransactionEvent.Kind.UPDATED;
         };
 
-        if (remoteId != null && isReplay(remoteId, request.getSeqNo())) {
+        if (remoteId != null && isReplay(sessionIndex, remoteId, request.getSeqNo())) {
             logger.debug("TransactionEvent {} for {} seq {} already seen; not counted again", kind, remoteId,
                     request.getSeqNo());
             return new TransactionEventResponse();
@@ -295,9 +299,10 @@ public class Ocpp201InboundHandler
             }
         }
         if (kind == TransactionEvent.Kind.ENDED && remoteId != null) {
-            transactionIds.remove(remoteId);
-            transactionConnectors.remove(remoteId);
-            lastSeqNo.remove(remoteId);
+            String key = key(sessionIndex, remoteId);
+            transactionIds.remove(key);
+            transactionConnectors.remove(key);
+            lastSeqNo.remove(key);
         }
 
         TransactionEventResponse response = new TransactionEventResponse();
@@ -313,15 +318,16 @@ public class Ocpp201InboundHandler
      * while offline, so the same one can arrive twice. Anything not newer than what has already been
      * accounted for is dropped rather than counted again.
      */
-    private boolean isReplay(String remoteId, @Nullable Integer seqNo) {
+    private boolean isReplay(UUID session, String remoteId, @Nullable Integer seqNo) {
         if (seqNo == null) {
             return false;
         }
-        Integer previous = lastSeqNo.get(remoteId);
+        String key = key(session, remoteId);
+        Integer previous = lastSeqNo.get(key);
         if (previous != null && seqNo <= previous) {
             return true;
         }
-        lastSeqNo.put(remoteId, seqNo);
+        lastSeqNo.put(key, seqNo);
         return false;
     }
 
@@ -329,9 +335,9 @@ public class Ocpp201InboundHandler
         if (remoteId == null) {
             return listener.nextTransactionId();
         }
-        return Objects.requireNonNull(transactionIds.computeIfAbsent(remoteId, key -> {
+        return Objects.requireNonNull(transactionIds.computeIfAbsent(key(session, remoteId), ignored -> {
             // A transaction that began before a restart already has an id on record.
-            Integer known = listener.knownTransactionId(session, key);
+            Integer known = listener.knownTransactionId(session, remoteId);
             return known != null ? known : listener.nextTransactionId();
         }));
     }
@@ -340,12 +346,17 @@ public class Ocpp201InboundHandler
             int transactionId) {
         if (evse != null) {
             if (remoteId != null) {
-                transactionConnectors.put(remoteId, evse.getId());
+                transactionConnectors.put(key(session, remoteId), evse.getId());
             }
             return evse.getId();
         }
-        Integer remembered = remoteId == null ? null : transactionConnectors.get(remoteId);
+        Integer remembered = remoteId == null ? null : transactionConnectors.get(key(session, remoteId));
         return remembered != null ? remembered : listener.knownConnector(session, transactionId);
+    }
+
+    /** A 2.0.1 transaction id is chosen by the station, so two chargers can pick the same one. */
+    private static String key(UUID session, String remoteId) {
+        return session + "/" + remoteId;
     }
 
     /** The energy register, which is what the usage log and the session-energy channel are built on. */

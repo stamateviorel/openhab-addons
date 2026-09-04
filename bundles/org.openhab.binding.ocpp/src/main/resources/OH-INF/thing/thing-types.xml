@@ -7,7 +7,7 @@
 	<!-- Server: the OCPP JSON WebSocket endpoint that chargers dial in to -->
 	<bridge-type id="server">
 		<label>OCPP Server</label>
-		<description>OCPP 1.6-J central system endpoint. Chargers connect to
+		<description>OCPP central system endpoint, speaking 1.6-J and 2.0.1. Chargers connect to
 			ws://&lt;host&gt;:&lt;port&gt;/&lt;chargePointId&gt;.</description>
 
 		<config-description>
@@ -74,15 +74,14 @@
 				<default>30</default>
 				<advanced>true</advanced>
 			</parameter>
-			<parameter name="authPassword" type="text" pattern="^$|^[\x21-\x7E]{16,20}$">
+			<parameter name="authPassword" type="text" pattern="^$|^[\x21-\x7E]{16,40}$">
 				<context>password</context>
 				<label>Charger Password</label>
 				<description>HTTP Basic authentication password chargers must present, with their charge point id as the
 					username
-					(OCPP security profile 1). Must be 16–20 visible ASCII characters — the OCPP library rejects
-					other lengths before
-					authentication even runs. Empty disables authentication — profile 0, for a trusted
-					LAN only.</description>
+					(OCPP security profile 1). 16–40 visible ASCII characters: 1.6 allows 16–20, 2.0.1 up to
+					40. Empty disables
+					authentication — profile 0, for a trusted LAN only.</description>
 				<advanced>true</advanced>
 			</parameter>
 			<parameter name="tlsKeystorePath" type="text">

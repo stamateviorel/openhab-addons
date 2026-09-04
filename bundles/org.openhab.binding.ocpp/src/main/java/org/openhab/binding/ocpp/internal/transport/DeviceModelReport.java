@@ -175,8 +175,14 @@ public class DeviceModelReport {
             keys.put("SupportedFeatureProfiles", String.join(",", featureProfiles));
         }
         if (!evseIds.isEmpty()) {
-            // 2.0.1 has no connector count; the EVSEs the report mentions are the connectors here.
-            keys.put("NumberOfConnectors", String.valueOf(evseIds.size()));
+            // 2.0.1 has no connector count; the EVSEs the report mentions are the connectors here. Callers
+            // iterate 1..n, so report the highest id rather than how many were mentioned — a report naming
+            // EVSEs 1 and 3 must still reach 3.
+            int highest = evseIds.stream().filter(id -> id != null && id > 0).mapToInt(Integer::intValue).max()
+                    .orElse(0);
+            if (highest > 0) {
+                keys.put("NumberOfConnectors", String.valueOf(highest));
+            }
         }
         return keys;
     }

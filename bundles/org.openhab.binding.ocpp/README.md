@@ -16,7 +16,7 @@ same endpoint answers both, and one charger can be on 1.6 while the next is on 2
 asks for no subprotocol at all is treated as 1.6. The Things, channels and users are the same either
 way, so a charger can be moved between versions without touching the openHAB side.
 
-Three differences are worth knowing about, because they show up in what the channels report:
+A few differences are worth knowing about, because they show up in what the channels report:
 
 - 2.0.1 has five connector statuses where 1.6 had nine, and moved the rest into the transaction it
   belongs to. The `charge-point-status` channel still reports the 1.6 names; `Occupied` reads as

@@ -1005,14 +1005,12 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private boolean isConfigApplied(@Nullable Confirmation confirmation) {
-        if (confirmation instanceof ChangeConfigurationConfirmation change) {
-            ConfigurationStatus status = change.getStatus();
-            if (status == ConfigurationStatus.RebootRequired) {
-                logger.warn("Boot config for {} accepted but needs a charger reboot to take effect", chargePointId);
-            }
-            return status == ConfigurationStatus.Accepted || status == ConfigurationStatus.RebootRequired;
+        if (confirmation instanceof ChangeConfigurationConfirmation change
+                && change.getStatus() == ConfigurationStatus.RebootRequired) {
+            logger.warn("Boot config for {} accepted but needs a charger reboot to take effect", chargePointId);
         }
-        return true;
+        // Per-version: a 2.0.1 SetVariables refusal must not latch the gate as applied, or the burst never retries.
+        return commands().isAccepted(confirmation);
     }
 
     private static String configStatusOf(@Nullable Confirmation confirmation) {
@@ -1051,7 +1049,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             // report that the same way once isAccepted has read their own status enum.
             if (commands().isAccepted(confirmation)) {
                 acceptedMeasurands.put(key, value);
-            } else {
+            } else if (commands().isValueRejected(confirmation)) {
                 String shorter = Measurands.dropLast(value);
                 if (!shorter.isEmpty() && !shorter.equals(value)) {
                     logger.debug("Charger {} rejected {}={}, retrying with {}", chargePointId, key, value, shorter);

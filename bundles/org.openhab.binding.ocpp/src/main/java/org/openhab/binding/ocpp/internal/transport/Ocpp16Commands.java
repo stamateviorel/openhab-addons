@@ -31,10 +31,7 @@ import eu.chargetime.ocpp.model.core.ChargingRateUnitType;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
 import eu.chargetime.ocpp.model.core.IdTagInfo;
-import eu.chargetime.ocpp.model.core.RemoteStartStopStatus;
-import eu.chargetime.ocpp.model.core.RemoteStartTransactionConfirmation;
 import eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest;
-import eu.chargetime.ocpp.model.core.RemoteStopTransactionConfirmation;
 import eu.chargetime.ocpp.model.core.RemoteStopTransactionRequest;
 import eu.chargetime.ocpp.model.core.ResetConfirmation;
 import eu.chargetime.ocpp.model.core.ResetRequest;
@@ -188,11 +185,9 @@ public class Ocpp16Commands implements OcppCommands {
         return confirmation != null;
     }
 
-    /** Whether a RemoteStart/RemoteStop was accepted; the connector handler retries on a refusal. */
-    public static boolean isRemoteAccepted(@Nullable Confirmation confirmation) {
-        return confirmation instanceof RemoteStartTransactionConfirmation start
-                ? start.getStatus() == RemoteStartStopStatus.Accepted
-                : confirmation instanceof RemoteStopTransactionConfirmation stop
-                        && stop.getStatus() == RemoteStartStopStatus.Accepted;
+    @Override
+    public boolean isValueRejected(@Nullable Confirmation confirmation) {
+        return confirmation instanceof ChangeConfigurationConfirmation change
+                && change.getStatus() == ConfigurationStatus.Rejected;
     }
 }

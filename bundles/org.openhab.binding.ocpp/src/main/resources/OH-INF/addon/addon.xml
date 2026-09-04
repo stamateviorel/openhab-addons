@@ -5,7 +5,7 @@
 
 	<type>binding</type>
 	<name>OCPP Binding</name>
-	<description>Connects OCPP 1.6-J chargers (EV charge points) to openHAB as an OCPP central system.</description>
+	<description>Connects OCPP 1.6-J and OCPP 2.0.1 chargers (EV charge points) to openHAB as an OCPP central system.</description>
 	<connection>local</connection>
 	<config-description-ref uri="binding:ocpp"/>
 
