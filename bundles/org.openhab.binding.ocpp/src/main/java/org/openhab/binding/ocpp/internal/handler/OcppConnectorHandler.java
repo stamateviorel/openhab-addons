@@ -341,7 +341,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 }
                 break;
             case CHANNEL_ID_TAG:
-                // One-shot: the next remote start presents this token, then the configured tag returns.
                 if (command instanceof StringType tag && !tag.toString().isBlank()) {
                     String chosen = tag.toString().trim();
                     pendingStartTag = chosen;

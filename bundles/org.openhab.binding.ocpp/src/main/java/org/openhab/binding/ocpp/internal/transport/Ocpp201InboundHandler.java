@@ -216,9 +216,8 @@ public class Ocpp201InboundHandler
             StatusNotificationRequest request) {
         logger.debug("StatusNotification (2.0.1) from session {} evse {}: {}", sessionIndex, request.getEvseId(),
                 request.getConnectorStatus());
-        // A bare Occupied says only that a vehicle is present. While this session has a transaction open on
-        // the EVSE, the transaction events already carry the real charging state, and Occupied would only
-        // downgrade it — so it is not delivered then.
+        // A bare 2.0.1 Occupied carries no charging detail; while a transaction is open on the EVSE the
+        // transaction events already say more, so it is not delivered.
         if (request.getConnectorStatus() == ConnectorStatusEnum.Occupied
                 && hasOpenTransaction(sessionIndex, request.getEvseId())) {
             return new StatusNotificationResponse();
@@ -299,8 +298,7 @@ public class Ocpp201InboundHandler
         logger.debug("TransactionEvent {} from session {} tx {} -> id {} ({})", kind, sessionIndex, remoteId,
                 transactionId, authorized ? "accepted" : "invalid");
 
-        // A refusal on a later event is answered but the event itself still counts, or the transaction
-        // would never be seen to end; only a refused start is turned away, above.
+        // A refused token on a later event still counts, or the transaction would never be seen to end.
         Integer connectorId = connectorOf(sessionIndex, request.getEvse(), remoteId, transactionId);
         ConnectorStatus chargingState = info == null ? null : Ocpp201Events.toConnectorStatus(info.getChargingState());
         Integer meterWh = meterWhOf(request);

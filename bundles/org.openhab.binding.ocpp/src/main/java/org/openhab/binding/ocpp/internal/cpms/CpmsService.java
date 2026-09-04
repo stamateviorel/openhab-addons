@@ -130,10 +130,7 @@ public class CpmsService {
     }
 
     /** The token presented after a plug-first start; the session is logged under it. */
-    /**
-     * Gives an ownerless (plug-first) session the token presented later. A session that already has an
-     * owner keeps it: on 1.6 the tag that stops a session may not be the one that started it.
-     */
+    /** Adopts a later token into an ownerless session only; on 1.6 the stopping tag need not be the starting one. */
     public synchronized void onTransactionAuthorized(int transactionId, String idTag) {
         String key = OPEN_PREFIX + transactionId;
         String json = storage.get(key);

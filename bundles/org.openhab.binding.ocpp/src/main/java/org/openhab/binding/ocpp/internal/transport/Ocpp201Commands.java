@@ -146,8 +146,7 @@ public class Ocpp201Commands implements OcppCommands {
     @Override
     public Request setChargingProfile(int connectorId, double value, boolean inWatts, int numberPhases,
             boolean txDefault, @Nullable Integer transactionId, @Nullable String remoteId) {
-        // 2.0.1 requires a TxProfile to name its transaction, so without the charger's own id fall back to
-        // a TxDefaultProfile rather than send one it must reject.
+        // 2.0.1 requires a TxProfile to name its transaction; without the charger's id use a TxDefaultProfile.
         boolean useTxProfile = transactionId != null && !txDefault && remoteId != null;
         ChargingSchedulePeriod period = new ChargingSchedulePeriod(0, value);
         if (numberPhases > 0) {

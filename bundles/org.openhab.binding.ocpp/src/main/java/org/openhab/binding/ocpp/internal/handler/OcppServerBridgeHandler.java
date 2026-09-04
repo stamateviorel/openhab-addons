@@ -427,7 +427,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
     }
 
-    /** A token can arrive on any event of a plug-first session, so every kind offers it to the session. */
     private void adoptToken(UUID session, TransactionEvent event) {
         String idToken = event.idToken();
         if (idToken == null) {
