@@ -735,14 +735,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     public void onStatusNotification(StatusInfo info) {
         ConnectorStatus status = info.status();
-        // A plain 2.0.1 Occupied carries no charging detail and maps to Preparing. Applying it while a
-        // transaction is open would downgrade a live session and switch charging off under a drawing car.
-        if (status == ConnectorStatus.PREPARING && transactionId != null) {
-            logger.debug("Connector {} reported Occupied while transaction {} is open; keeping the charging state",
-                    connectorId, transactionId);
-            updateStatus(ThingStatus.ONLINE);
-            return;
-        }
         if (status != null) {
             updateState(CHANNEL_STATUS, new StringType(status.label()));
             updateState(CHANNEL_CABLE_CONNECTED, OnOffType.from(CABLE_PRESENT.contains(status)));

@@ -68,6 +68,7 @@ import eu.chargetime.ocpp.v201.model.messages.StatusNotificationResponse;
 import eu.chargetime.ocpp.v201.model.messages.TransactionEventRequest;
 import eu.chargetime.ocpp.v201.model.messages.TransactionEventResponse;
 import eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.ConnectorStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.DataTransferStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.EVSE;
 import eu.chargetime.ocpp.v201.model.types.GenericStatusEnum;
@@ -215,9 +216,29 @@ public class Ocpp201InboundHandler
             StatusNotificationRequest request) {
         logger.debug("StatusNotification (2.0.1) from session {} evse {}: {}", sessionIndex, request.getEvseId(),
                 request.getConnectorStatus());
+        // A bare Occupied says only that a vehicle is present. While this session has a transaction open on
+        // the EVSE, the transaction events already carry the real charging state, and Occupied would only
+        // downgrade it — so it is not delivered then.
+        if (request.getConnectorStatus() == ConnectorStatusEnum.Occupied
+                && hasOpenTransaction(sessionIndex, request.getEvseId())) {
+            return new StatusNotificationResponse();
+        }
         deliver("StatusNotification", sessionIndex,
                 () -> listener.onStatusNotification(sessionIndex, Ocpp201Events.toStatusInfo(request)));
         return new StatusNotificationResponse();
+    }
+
+    private boolean hasOpenTransaction(UUID session, @Nullable Integer evseId) {
+        if (evseId == null) {
+            return false;
+        }
+        String prefix = session + "/";
+        for (Map.Entry<String, Integer> entry : transactionConnectors.entrySet()) {
+            if (entry.getKey().startsWith(prefix) && evseId.equals(entry.getValue())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

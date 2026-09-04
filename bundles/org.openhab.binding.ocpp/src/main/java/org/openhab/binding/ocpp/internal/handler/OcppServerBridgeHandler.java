@@ -128,10 +128,10 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     public void initialize() {
         config = getConfigAs(OcppServerConfiguration.class);
         OcppServerConfiguration localConfig = config;
-        if (!localConfig.authPassword.isEmpty() && !localConfig.authPassword.matches("[\\x21-\\x7E]{16,20}")) {
+        if (!localConfig.authPassword.isEmpty() && !localConfig.authPassword.matches("[\\x21-\\x7E]{16,40}")) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                    "authPassword must be 16-20 visible ASCII characters — the OCPP library rejects other lengths "
-                            + "before authentication, so every charger connection would fail");
+                    "authPassword must be 16-40 visible ASCII characters (OCPP security profile 1: 16-20 for 1.6, "
+                            + "up to 40 for 2.0.1); no charger could match one outside that window");
             return;
         }
         disposed = false;

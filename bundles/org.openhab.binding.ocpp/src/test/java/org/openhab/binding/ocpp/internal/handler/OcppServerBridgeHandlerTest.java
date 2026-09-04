@@ -174,7 +174,7 @@ class OcppServerBridgeHandlerTest {
 
     @Test
     void aPasswordTheLibraryWouldRejectFailsInitializationInstead() {
-        // The library only accepts 16-20 byte Basic-auth passwords; out-of-range must fail config, not lock them out.
+        // A configured password outside the 16-40 profile-1 window must fail config, not lock chargers out.
         when(thing.getConfiguration()).thenReturn(new Configuration(java.util.Map.of("authPassword", "tooshort")));
 
         handler.initialize();
