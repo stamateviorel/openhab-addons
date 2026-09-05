@@ -39,21 +39,22 @@ import org.java_websocket.drafts.Draft;
 import org.java_websocket.drafts.Draft_6455;
 import org.java_websocket.protocols.IProtocol;
 import org.java_websocket.protocols.Protocol;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.core.common.ThreadPoolManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import eu.chargetime.ocpp.AuthenticationException;
-import eu.chargetime.ocpp.FeatureRepository;
 import eu.chargetime.ocpp.ISession;
 import eu.chargetime.ocpp.JSONConfiguration;
+import eu.chargetime.ocpp.MultiProtocolFeatureRepository;
+import eu.chargetime.ocpp.MultiProtocolWebSocketListener;
 import eu.chargetime.ocpp.NotConnectedException;
 import eu.chargetime.ocpp.OccurenceConstraintException;
+import eu.chargetime.ocpp.ProtocolVersion;
 import eu.chargetime.ocpp.Server;
 import eu.chargetime.ocpp.ServerEvents;
-import eu.chargetime.ocpp.SessionFactory;
 import eu.chargetime.ocpp.UnsupportedFeatureException;
-import eu.chargetime.ocpp.WebSocketListener;
 import eu.chargetime.ocpp.WssListenerSupport;
 import eu.chargetime.ocpp.feature.profile.ServerCoreProfile;
 import eu.chargetime.ocpp.feature.profile.ServerLocalAuthListProfile;
@@ -62,10 +63,23 @@ import eu.chargetime.ocpp.feature.profile.ServerSmartChargingProfile;
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.SessionInformation;
+import eu.chargetime.ocpp.v201.feature.function.ServerAuthorizationFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerAvailabilityFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerDataTransferFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerDiagnosticsFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerDisplayMessageFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerLocalAuthorizationListManagementFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerMeterValuesFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerProvisioningFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerRemoteControlFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerSecurityFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerSmartChargingFunction;
+import eu.chargetime.ocpp.v201.feature.function.ServerTransactionsFunction;
 import eu.chargetime.ocpp.wss.BaseWssFactoryBuilder;
 
 /**
- * {@link OcppTransport} backed by the ChargeTime OCA-OCPP 1.6-J server.
+ * {@link OcppTransport} backed by the ChargeTime OCA-OCPP server, negotiating OCPP 1.6-J or 2.0.1 per
+ * connection.
  *
  * @author Stamate Viorel - Initial contribution
  */
@@ -76,11 +90,14 @@ public class ChargeTimeTransport implements OcppTransport {
     private static final int PROBE_CONNECT_TIMEOUT_MILLIS = 250;
     private static final String MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY = "OCPPJ_CP_MIN_PASSWORD_LENGTH";
     private static final String MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY = "OCPPJ_CP_MAX_PASSWORD_LENGTH";
+    private static final String MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY_201 = "OCPP2J_CP_MIN_PASSWORD_LENGTH";
+    private static final String MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY_201 = "OCPP2J_CP_MAX_PASSWORD_LENGTH";
 
     private final Logger logger = LoggerFactory.getLogger(ChargeTimeTransport.class);
     private final Server server;
-    private final WebSocketListener listener;
+    private final MultiProtocolWebSocketListener listener;
     private final OcppServerListener ocppListener;
+    private final Ocpp201InboundHandler handler201;
     private final String authPassword;
     private volatile boolean started;
     private volatile boolean running;
@@ -90,30 +107,53 @@ public class ChargeTimeTransport implements OcppTransport {
             String authPassword, String tlsKeystorePath, String tlsKeystorePassword) {
         this.ocppListener = ocppListener;
         this.authPassword = authPassword;
-        FeatureRepository featureRepository = new FeatureRepository();
+        MultiProtocolFeatureRepository featureRepository = new MultiProtocolFeatureRepository(
+                List.of(ProtocolVersion.OCPP1_6, ProtocolVersion.OCPP2_0_1));
         InboundCoreHandler coreHandler = new InboundCoreHandler(ocppListener);
-        featureRepository.addFeatureProfile(new ServerCoreProfile(coreHandler));
-        featureRepository.addFeatureProfile(new ServerSmartChargingProfile());
-        featureRepository.addFeatureProfile(new ServerRemoteTriggerProfile());
-        featureRepository.addFeatureProfile(new ServerLocalAuthListProfile());
-        featureRepository.addFeature(new TolerantBootNotificationFeature(coreHandler));
+        featureRepository.addFeatureProfile(ProtocolVersion.OCPP1_6, new ServerCoreProfile(coreHandler));
+        featureRepository.addFeatureProfile(ProtocolVersion.OCPP1_6, new ServerSmartChargingProfile());
+        featureRepository.addFeatureProfile(ProtocolVersion.OCPP1_6, new ServerRemoteTriggerProfile());
+        featureRepository.addFeatureProfile(ProtocolVersion.OCPP1_6, new ServerLocalAuthListProfile());
+        featureRepository.getFeatureRepository(ProtocolVersion.OCPP1_6)
+                .addFeature(new TolerantBootNotificationFeature(coreHandler));
+
+        this.handler201 = new Ocpp201InboundHandler(ocppListener);
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerProvisioningFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerTransactionsFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerAvailabilityFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerMeterValuesFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerAuthorizationFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerRemoteControlFunction());
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerSmartChargingFunction(null));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerDataTransferFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerSecurityFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1,
+                new ServerLocalAuthorizationListManagementFunction());
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerDisplayMessageFunction(handler201));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerDiagnosticsFunction(handler201));
 
         JSONConfiguration configuration = JSONConfiguration.get();
         configuration = configuration.setParameter(JSONConfiguration.REUSE_ADDR_PARAMETER, true);
         // Off: many chargers never pong, so WebSocket pings would drop healthy sessions.
         configuration = configuration.setParameter(JSONConfiguration.PING_INTERVAL_PARAMETER,
                 pingIntervalSeconds > 0 ? pingIntervalSeconds : 0);
-        // Relax the library's handshake password-length check; real auth stays in authenticateSession.
-        if (authPassword.isBlank()) {
-            configuration = configuration.setParameter(MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY, 0);
-            configuration = configuration.setParameter(MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY, Integer.MAX_VALUE);
-        }
+        // The library refuses a handshake whose Basic-auth password falls outside a fixed window
+        // (16-20 for 1.6, 16-40 for 2.0.1) before the binding is consulted, which silently locks out
+        // chargers that always send a header with a short or empty password. Both windows are opened
+        // so authenticateSession is the only thing that decides: it accepts every charger when no
+        // authPassword is set, and compares the password exactly when one is.
+        configuration = configuration.setParameter(MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY, 0);
+        configuration = configuration.setParameter(MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY, Integer.MAX_VALUE);
+        configuration = configuration.setParameter(MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY_201, 0);
+        configuration = configuration.setParameter(MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY_201, Integer.MAX_VALUE);
 
-        Draft draft = new Draft_6455(List.of(), List.<IProtocol> of(new Protocol("ocpp1.6"), new Protocol("")));
+        // The empty protocol stays last so a charger that offers no subprotocol is still accepted.
+        Draft draft = new Draft_6455(List.of(),
+                List.<IProtocol> of(new Protocol(ProtocolVersion.OCPP1_6.getSubProtocolName()),
+                        new Protocol(ProtocolVersion.OCPP2_0_1.getSubProtocolName()), new Protocol("")));
         Map<String, ISession> requestSessions = new ConcurrentHashMap<>();
-        this.listener = new WebSocketListener(
-                new TrackingSessionFactory(new SessionFactory(featureRepository), requestSessions), configuration,
-                draft);
+        this.listener = new MultiProtocolWebSocketListener(
+                new TrackingSessionFactory(featureRepository, requestSessions), configuration, draft);
         if (!tlsKeystorePath.isBlank()) {
             WssListenerSupport.enableWss(listener,
                     BaseWssFactoryBuilder.builder().sslContext(sslContext(tlsKeystorePath, tlsKeystorePassword)));
@@ -161,9 +201,12 @@ public class ChargeTimeTransport implements OcppTransport {
                     return;
                 }
                 String identifier = normalizeIdentifier(information != null ? information.getIdentifier() : null);
-                logger.debug("Charger session opened: {} (id={})", sessionIndex, identifier);
+                handler201.bindSession(sessionIndex, identifier);
+                ProtocolVersion negotiated = information == null ? null : information.getProtocolVersion();
+                OcppVersion version = negotiated == ProtocolVersion.OCPP2_0_1 ? OcppVersion.V2_0_1 : OcppVersion.V1_6;
+                logger.debug("Charger session opened: {} (id={}, {})", sessionIndex, identifier, version);
                 ocppListener.onSessionOpened(sessionIndex, identifier,
-                        information != null ? information.getAddress() : null);
+                        information != null ? information.getAddress() : null, version);
             }
 
             @Override
@@ -172,6 +215,7 @@ public class ChargeTimeTransport implements OcppTransport {
                     return;
                 }
                 logger.debug("Charger session lost: {}", sessionIndex);
+                handler201.forget(sessionIndex);
                 ocppListener.onSessionClosed(sessionIndex);
             }
         });

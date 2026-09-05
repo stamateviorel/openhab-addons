@@ -32,6 +32,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Commands;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
+import org.openhab.binding.ocpp.internal.transport.Ocpp201Commands;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.StringType;
@@ -56,6 +63,7 @@ import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileRequest;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileStatus;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileRequest;
+import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
 
 /**
  * Tests how {@link OcppConnectorHandler} turns a charger's reported status into channel state.
@@ -86,12 +94,20 @@ class OcppConnectorHandlerTest {
         handler.setCallback(callback);
     }
 
-    private static StatusNotificationRequest status(ChargePointStatus status) {
-        return new StatusNotificationRequest(1, ChargePointErrorCode.NoError, status);
+    private static StatusInfo status(ChargePointStatus status) {
+        return Ocpp16Events.toStatusInfo(new StatusNotificationRequest(1, ChargePointErrorCode.NoError, status));
     }
 
     private void assertChannel(String channelId, org.openhab.core.types.State expected) {
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, channelId)), eq(expected));
+    }
+
+    @Test
+    void aLateTokenIsPublishedOnTheIdTagChannel() {
+        handler.onTransactionUpdated(new TransactionEvent(TransactionEvent.Kind.UPDATED, 1, 5, null, "CARD-X",
+                TokenType.CARD, null, null, null, null));
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_ID_TAG)), eq(new StringType("CARD-X")));
     }
 
     @Test
@@ -113,9 +129,9 @@ class OcppConnectorHandlerTest {
 
     @Test
     void availableClearsChargingEvenIfATransactionWasNeverStopped() {
-        handler.onTransactionStarted(
+        handler.onTransactionStarted(Ocpp16Events.toStarted(
                 new eu.chargetime.ocpp.model.core.StartTransactionRequest(1, "tag", 0, java.time.ZonedDateTime.now()),
-                7);
+                7));
 
         handler.onStatusNotification(status(ChargePointStatus.Available));
 
@@ -124,15 +140,171 @@ class OcppConnectorHandlerTest {
     }
 
     @Test
+    void aRecoveredTransactionSizesItsSessionFromTheStoredMeterStart() {
+        ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
+        when(thing.getBridgeUID()).thenReturn(chargePointUID);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
+        when(chargePoint.getChargePointId()).thenReturn("charger");
+        when(chargePoint.recoverTransactionId(1)).thenReturn(7);
+        when(chargePoint.recoverMeterStart(7)).thenReturn(1000);
+        Bridge bridge = mock(Bridge.class);
+        when(bridge.getHandler()).thenReturn(chargePoint);
+        when(callback.getBridge(chargePointUID)).thenReturn(bridge);
+        handler.initialize();
+
+        handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "1.5"));
+
+        assertChannel(CHANNEL_SESSION_ENERGY,
+                new org.openhab.core.library.types.QuantityType<>(500, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
+
+    @Test
+    void sessionEnergyCountsLiveFromTheMeterRegisterWhileATransactionRuns() {
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 1000, java.time.ZonedDateTime.now()), 7));
+
+        handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "1.5"));
+
+        assertChannel(CHANNEL_SESSION_ENERGY,
+                new org.openhab.core.library.types.QuantityType<>(500, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
+
+    @Test
     void sessionEnergyIsPublishedAtStopAsMeterStopMinusMeterStart() {
-        handler.onTransactionStarted(
+        handler.onTransactionStarted(Ocpp16Events.toStarted(
                 new eu.chargetime.ocpp.model.core.StartTransactionRequest(1, "tag", 100, java.time.ZonedDateTime.now()),
-                7);
-        handler.onTransactionStopped(
-                new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600, java.time.ZonedDateTime.now(), 7));
+                7));
+        handler.onTransactionEnded(Ocpp16Events.toEnded(
+                new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600, java.time.ZonedDateTime.now(), 7), 7));
 
         assertChannel(CHANNEL_SESSION_ENERGY,
                 new org.openhab.core.library.types.QuantityType<>(1500, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
+
+    @Test
+    void anUpdateTellsTheConnectorWhichTransactionAStopMustName() {
+        ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
+        when(thing.getBridgeUID()).thenReturn(chargePointUID);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp201Commands());
+        when(chargePoint.isReady()).thenReturn(true);
+        when(chargePoint.getChargePointId()).thenReturn("charger");
+        when(chargePoint.send(any()))
+                .thenReturn(CompletableFuture.completedFuture(mock(eu.chargetime.ocpp.model.Confirmation.class)));
+        Bridge bridge = mock(Bridge.class);
+        when(bridge.getHandler()).thenReturn(chargePoint);
+        when(callback.getBridge(chargePointUID)).thenReturn(bridge);
+        handler.initialize();
+
+        // The handler never saw this transaction start; the charger's update is what it has to go on.
+        handler.onTransactionUpdated(new TransactionEvent(TransactionEvent.Kind.UPDATED, 1, 12, "10848555779671014738",
+                null, TokenType.UNKNOWN, null, null, null, null));
+        command(CHANNEL_CHARGING, OnOffType.OFF);
+
+        ArgumentCaptor<eu.chargetime.ocpp.model.Request> captor = ArgumentCaptor
+                .forClass(eu.chargetime.ocpp.model.Request.class);
+        verify(chargePoint, timeout(2000).atLeastOnce()).send(captor.capture());
+        RequestStopTransactionRequest stop = captor.getAllValues().stream()
+                .filter(RequestStopTransactionRequest.class::isInstance).map(RequestStopTransactionRequest.class::cast)
+                .findFirst().orElseThrow();
+        assertEquals("10848555779671014738", stop.getTransactionId());
+    }
+
+    @Test
+    void aCommandOnIdTagChoosesTheTokenTheNextRemoteStartPresents() {
+        ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
+        when(thing.getBridgeUID()).thenReturn(chargePointUID);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
+        when(chargePoint.isReady()).thenReturn(true);
+        when(chargePoint.getChargePointId()).thenReturn("charger");
+        when(chargePoint.tokenTypeOf(any())).thenReturn(TokenType.VEHICLE);
+        when(chargePoint.send(any()))
+                .thenReturn(CompletableFuture.completedFuture(mock(eu.chargetime.ocpp.model.Confirmation.class)));
+        Bridge bridge = mock(Bridge.class);
+        when(bridge.getHandler()).thenReturn(chargePoint);
+        when(callback.getBridge(chargePointUID)).thenReturn(bridge);
+        handler.initialize();
+
+        command(CHANNEL_ID_TAG, new StringType("AA:BB:CC:DD:EE:FF"));
+        command(CHANNEL_CHARGING, OnOffType.ON);
+
+        ArgumentCaptor<eu.chargetime.ocpp.model.Request> captor = ArgumentCaptor
+                .forClass(eu.chargetime.ocpp.model.Request.class);
+        verify(chargePoint, timeout(2000).atLeastOnce())
+                .send(argThat(r -> r instanceof eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest));
+        verify(chargePoint, org.mockito.Mockito.atLeastOnce()).send(captor.capture());
+        eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest start = captor.getAllValues().stream()
+                .filter(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest.class::isInstance)
+                .map(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest.class::cast).findFirst().orElseThrow();
+        assertEquals("AA:BB:CC:DD:EE:FF", start.getIdTag());
+    }
+
+    @Test
+    void aChosenTokenIsSpentByOneStartAndTheNextUsesTheConfiguredTag() {
+        ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
+        when(thing.getBridgeUID()).thenReturn(chargePointUID);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
+        when(chargePoint.isReady()).thenReturn(true);
+        when(chargePoint.getChargePointId()).thenReturn("charger");
+        when(chargePoint.tokenTypeOf(any())).thenReturn(TokenType.VEHICLE);
+        when(chargePoint.send(any()))
+                .thenReturn(CompletableFuture.completedFuture(mock(eu.chargetime.ocpp.model.Confirmation.class)));
+        Bridge bridge = mock(Bridge.class);
+        when(bridge.getHandler()).thenReturn(chargePoint);
+        when(callback.getBridge(chargePointUID)).thenReturn(bridge);
+        handler.initialize();
+
+        command(CHANNEL_ID_TAG, new StringType("AA:BB:CC:DD:EE:FF"));
+        command(CHANNEL_CHARGING, OnOffType.ON);
+        command(CHANNEL_CHARGING, OnOffType.ON);
+
+        ArgumentCaptor<eu.chargetime.ocpp.model.Request> captor = ArgumentCaptor
+                .forClass(eu.chargetime.ocpp.model.Request.class);
+        verify(chargePoint, timeout(2000).times(2))
+                .send(argThat(r -> r instanceof eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest));
+        verify(chargePoint, org.mockito.Mockito.atLeastOnce()).send(captor.capture());
+        java.util.List<String> tags = captor.getAllValues().stream()
+                .filter(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest.class::isInstance)
+                .map(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest.class::cast)
+                .map(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest::getIdTag).toList();
+        assertEquals(java.util.List.of("AA:BB:CC:DD:EE:FF", "openhab"), tags);
+    }
+
+    @Test
+    void aChosenTokenSurvivesAStartTheChargerRejected() {
+        ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
+        when(thing.getBridgeUID()).thenReturn(chargePointUID);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
+        when(chargePoint.isReady()).thenReturn(true);
+        when(chargePoint.getChargePointId()).thenReturn("charger");
+        when(chargePoint.tokenTypeOf(any())).thenReturn(TokenType.VEHICLE);
+        when(chargePoint.send(any())).thenReturn(
+                CompletableFuture.completedFuture(new eu.chargetime.ocpp.model.core.RemoteStartTransactionConfirmation(
+                        eu.chargetime.ocpp.model.core.RemoteStartStopStatus.Rejected)));
+        Bridge bridge = mock(Bridge.class);
+        when(bridge.getHandler()).thenReturn(chargePoint);
+        when(callback.getBridge(chargePointUID)).thenReturn(bridge);
+        handler.initialize();
+
+        command(CHANNEL_ID_TAG, new StringType("AA:BB:CC:DD:EE:FF"));
+        command(CHANNEL_CHARGING, OnOffType.ON);
+        command(CHANNEL_CHARGING, OnOffType.ON);
+
+        ArgumentCaptor<eu.chargetime.ocpp.model.Request> captor = ArgumentCaptor
+                .forClass(eu.chargetime.ocpp.model.Request.class);
+        verify(chargePoint, timeout(2000).times(2))
+                .send(argThat(r -> r instanceof eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest));
+        verify(chargePoint, org.mockito.Mockito.atLeastOnce()).send(captor.capture());
+        java.util.List<String> tags = captor.getAllValues().stream()
+                .filter(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest.class::isInstance)
+                .map(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest.class::cast)
+                .map(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest::getIdTag).toList();
+        assertEquals(java.util.List.of("AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF"), tags);
+        assertChannel(CHANNEL_ID_TAG, new StringType("AA:BB:CC:DD:EE:FF"));
     }
 
     @Test
@@ -142,6 +314,7 @@ class OcppConnectorHandlerTest {
         when(thing.getConfiguration()).thenReturn(new org.openhab.core.config.core.Configuration(
                 java.util.Map.of("remoteStartRetries", new java.math.BigDecimal(1))));
         OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
         when(chargePoint.isReady()).thenReturn(true);
         when(chargePoint.getChargePointId()).thenReturn("charger");
         when(chargePoint.recoverTransactionId(org.mockito.ArgumentMatchers.anyInt())).thenReturn(null);
@@ -183,8 +356,8 @@ class OcppConnectorHandlerTest {
         assertChannel(CHANNEL_AVAILABILITY, OnOffType.ON);
     }
 
-    private static eu.chargetime.ocpp.model.core.MeterValuesRequest meterValues(String measurand,
-            @org.eclipse.jdt.annotation.Nullable String phase, String unit, String value) {
+    private static MeterSample meterValues(String measurand, @org.eclipse.jdt.annotation.Nullable String phase,
+            String unit, String value) {
         eu.chargetime.ocpp.model.core.SampledValue sample = new eu.chargetime.ocpp.model.core.SampledValue(value);
         sample.setMeasurand(measurand);
         if (phase != null) {
@@ -196,7 +369,7 @@ class OcppConnectorHandlerTest {
         request.setMeterValue(
                 new eu.chargetime.ocpp.model.core.MeterValue[] { new eu.chargetime.ocpp.model.core.MeterValue(
                         java.time.ZonedDateTime.now(), new eu.chargetime.ocpp.model.core.SampledValue[] { sample }) });
-        return request;
+        return Ocpp16Events.toMeterSample(request);
     }
 
     @Test
@@ -236,7 +409,7 @@ class OcppConnectorHandlerTest {
                 new eu.chargetime.ocpp.model.core.MeterValue(newer,
                         new eu.chargetime.ocpp.model.core.SampledValue[] { second }) });
 
-        handler.onMeterValues(request);
+        handler.onMeterValues(Ocpp16Events.toMeterSample(request));
 
         assertChannel(CHANNEL_TIMESTAMP, new org.openhab.core.library.types.DateTimeType(newer));
     }
@@ -262,6 +435,7 @@ class OcppConnectorHandlerTest {
         ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
         when(thing.getBridgeUID()).thenReturn(chargePointUID);
         OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
         when(chargePoint.isReady()).thenReturn(true);
         when(chargePoint.getCapabilities()).thenReturn(ChargerCapabilities.unknown());
         when(chargePoint.send(any())).thenAnswer(invocation -> {

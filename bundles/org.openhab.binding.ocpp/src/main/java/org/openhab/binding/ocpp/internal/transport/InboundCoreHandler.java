@@ -17,6 +17,7 @@ import java.time.ZonedDateTime;
 import java.util.UUID;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,7 +65,7 @@ public class InboundCoreHandler implements ServerCoreEventHandler {
         AuthorizationStatus status = listener.isTagAuthorized(request.getIdTag()) ? AuthorizationStatus.Accepted
                 : AuthorizationStatus.Invalid;
         logger.debug("Authorize from session {} idTag {} -> {}", sessionIndex, request.getIdTag(), status);
-        listener.onAuthorize(sessionIndex, request.getIdTag());
+        listener.onAuthorize(sessionIndex, request.getIdTag(), TokenType.UNKNOWN);
         return new AuthorizeConfirmation(new IdTagInfo(status));
     }
 
@@ -74,7 +75,8 @@ public class InboundCoreHandler implements ServerCoreEventHandler {
             BootNotificationRequest request) {
         logger.debug("BootNotification from session {}: vendor={} model={} fw={}", sessionIndex,
                 request.getChargePointVendor(), request.getChargePointModel(), request.getFirmwareVersion());
-        deliver("BootNotification", sessionIndex, () -> listener.onBootNotification(sessionIndex, request));
+        deliver("BootNotification", sessionIndex,
+                () -> listener.onBootNotification(sessionIndex, Ocpp16Events.toBootInfo(request)));
         return new BootNotificationConfirmation(ZonedDateTime.now(ZoneOffset.UTC), listener.heartbeatFor(sessionIndex),
                 RegistrationStatus.Accepted);
     }
@@ -107,7 +109,8 @@ public class InboundCoreHandler implements ServerCoreEventHandler {
     @NonNullByDefault({})
     public MeterValuesConfirmation handleMeterValuesRequest(UUID sessionIndex, MeterValuesRequest request) {
         logger.debug("MeterValues from session {} connector {}", sessionIndex, request.getConnectorId());
-        deliver("MeterValues", sessionIndex, () -> listener.onMeterValues(sessionIndex, request));
+        deliver("MeterValues", sessionIndex,
+                () -> listener.onMeterValues(sessionIndex, Ocpp16Events.toMeterSample(request)));
         return new MeterValuesConfirmation();
     }
 
@@ -121,7 +124,7 @@ public class InboundCoreHandler implements ServerCoreEventHandler {
                 request.getConnectorId(), request.getIdTag(), transactionId, authorized ? "accepted" : "invalid");
         if (authorized) {
             deliver("StartTransaction", sessionIndex,
-                    () -> listener.onStartTransaction(sessionIndex, request, transactionId));
+                    () -> listener.onTransactionEvent(sessionIndex, Ocpp16Events.toStarted(request, transactionId)));
         }
         AuthorizationStatus status = authorized ? AuthorizationStatus.Accepted : AuthorizationStatus.Invalid;
         return new StartTransactionConfirmation(new IdTagInfo(status), transactionId);
@@ -133,15 +136,20 @@ public class InboundCoreHandler implements ServerCoreEventHandler {
             StatusNotificationRequest request) {
         logger.debug("StatusNotification from session {} connector {}: {} ({})", sessionIndex, request.getConnectorId(),
                 request.getStatus(), request.getErrorCode());
-        deliver("StatusNotification", sessionIndex, () -> listener.onStatusNotification(sessionIndex, request));
+        deliver("StatusNotification", sessionIndex,
+                () -> listener.onStatusNotification(sessionIndex, Ocpp16Events.toStatusInfo(request)));
         return new StatusNotificationConfirmation();
     }
 
     @Override
     @NonNullByDefault({})
     public StopTransactionConfirmation handleStopTransactionRequest(UUID sessionIndex, StopTransactionRequest request) {
-        logger.debug("StopTransaction from session {} txId {}", sessionIndex, request.getTransactionId());
-        deliver("StopTransaction", sessionIndex, () -> listener.onStopTransaction(sessionIndex, request));
+        Integer transactionId = request.getTransactionId();
+        logger.debug("StopTransaction from session {} txId {}", sessionIndex, transactionId);
+        if (transactionId != null) {
+            deliver("StopTransaction", sessionIndex,
+                    () -> listener.onTransactionEvent(sessionIndex, Ocpp16Events.toEnded(request, transactionId)));
+        }
         return new StopTransactionConfirmation();
     }
 }

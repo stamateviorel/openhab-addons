@@ -7,7 +7,7 @@
 	<!-- Server: the OCPP JSON WebSocket endpoint that chargers dial in to -->
 	<bridge-type id="server">
 		<label>OCPP Server</label>
-		<description>OCPP 1.6-J central system endpoint. Chargers connect to
+		<description>OCPP central system endpoint, speaking 1.6-J and 2.0.1. Chargers connect to
 			ws://&lt;host&gt;:&lt;port&gt;/&lt;chargePointId&gt;.</description>
 
 		<config-description>
@@ -74,15 +74,14 @@
 				<default>30</default>
 				<advanced>true</advanced>
 			</parameter>
-			<parameter name="authPassword" type="text" pattern="^$|^[\x21-\x7E]{16,20}$">
+			<parameter name="authPassword" type="text" pattern="^$|^[\x21-\x7E]{16,40}$">
 				<context>password</context>
 				<label>Charger Password</label>
 				<description>HTTP Basic authentication password chargers must present, with their charge point id as the
 					username
-					(OCPP security profile 1). Must be 16–20 visible ASCII characters — the OCPP library rejects
-					other lengths before
-					authentication even runs. Empty disables authentication — profile 0, for a trusted
-					LAN only.</description>
+					(OCPP security profile 1). 16–40 visible ASCII characters: 1.6 allows 16–20, 2.0.1 up to
+					40. Empty disables
+					authentication — profile 0, for a trusted LAN only.</description>
 				<advanced>true</advanced>
 			</parameter>
 			<parameter name="tlsKeystorePath" type="text">
@@ -123,6 +122,8 @@
 			<channel id="last-seen" typeId="last-seen"/>
 			<channel id="reset" typeId="reset"/>
 			<channel id="local-auth-list" typeId="local-auth-list"/>
+			<channel id="custom-message" typeId="custom-message"/>
+			<channel id="display-message" typeId="display-message"/>
 		</channels>
 
 		<properties>
@@ -157,6 +158,14 @@
 				<description>Per-charger heartbeat interval returned on boot, overriding the server default. Also sizes the liveness
 					window. 0 uses the server default.</description>
 				<default>0</default>
+				<advanced>true</advanced>
+			</parameter>
+			<parameter name="extraConfig" type="text" multiple="true">
+				<label>Extra Configuration</label>
+				<description>Extra ChangeConfiguration entries as key=value, applied to this charger on boot, after any
+					set on the
+					server. On a 2.0.1 charger a key the binding does not know has to be given as
+					Component.Variable.</description>
 				<advanced>true</advanced>
 			</parameter>
 		</config-description>
@@ -337,7 +346,7 @@
 		</supported-bridge-type-refs>
 
 		<label>OCPP User</label>
-		<description>A person and their RFID cards, for CPMS authorization and per-user usage.</description>
+		<description>A person and the cards and vehicles they charge with, for CPMS authorization and per-user usage.</description>
 
 		<channels>
 			<channel id="month-energy" typeId="energy">
@@ -351,12 +360,21 @@
 		<config-description>
 			<parameter name="enabled" type="boolean">
 				<label>Enabled</label>
-				<description>Whether this person's cards may start a charge.</description>
+				<description>Whether this person's cards and vehicles may start a charge.</description>
 				<default>true</default>
 			</parameter>
 			<parameter name="cards" type="text" multiple="true">
 				<label>Cards</label>
 				<description>The RFID idTags belonging to this person.</description>
+			</parameter>
+
+			<parameter name="vehicles" type="text" multiple="true">
+				<label>Vehicles</label>
+				<description>Tokens this person's vehicles present on their own, rather than a card: an AutoCharge MAC
+					address, or
+					the identifier a charger sends when it is set to start on plug-in. Managed exactly like
+					cards — either kind
+					authorizes a charge and counts towards the same usage.</description>
 			</parameter>
 			<parameter name="monthlyCapKwh" type="decimal" min="0">
 				<label>Monthly Cap (kWh)</label>
@@ -369,6 +387,24 @@
 	</thing-type>
 
 	<!-- Channel types -->
+	<channel-type id="display-message" advanced="true">
+		<item-type>String</item-type>
+		<label>Display Message</label>
+		<description>Text to show on the charger's own screen. An empty string clears it again. OCPP 2.0.1
+			only.</description>
+		<state pattern="%s"/>
+	</channel-type>
+
+	<channel-type id="custom-message" advanced="true">
+		<item-type>String</item-type>
+		<label>Custom Message</label>
+		<description>Sends a vendor-specific OCPP 2.0.1 DataTransfer to the charger, as
+			{"vendorId":"...","messageId":"...","data":...} — messageId and data are optional. The charger's answer is
+			published
+			back here as {"status":"...","data":...}. OCPP 2.0.1 only.</description>
+		<state pattern="%s"/>
+	</channel-type>
+
 	<channel-type id="connected">
 		<item-type>Switch</item-type>
 		<label>Connected</label>
@@ -602,9 +638,8 @@
 	<channel-type id="session-energy">
 		<item-type>Number:Energy</item-type>
 		<label>Session Energy</label>
-		<description>Energy delivered in the last charging session (meter-stop minus meter-start), published once when
-			the
-			transaction ends. Empty on a meter-less charger.</description>
+		<description>Energy delivered in the current charging session (meter reading minus meter-start), updated as the
+			charger reports and settled when the transaction ends. Empty on a meter-less charger.</description>
 		<category>Energy</category>
 		<tags>
 			<tag>Measurement</tag>
@@ -719,8 +754,7 @@
 	<channel-type id="id-tag">
 		<item-type>String</item-type>
 		<label>Id Tag</label>
-		<description>The idTag of the active transaction.</description>
-		<state readOnly="true"/>
+		<description>The token of the active transaction. A command sets the token the next remote start is sent with.</description>
 	</channel-type>
 
 	<channel-type id="transaction-id">

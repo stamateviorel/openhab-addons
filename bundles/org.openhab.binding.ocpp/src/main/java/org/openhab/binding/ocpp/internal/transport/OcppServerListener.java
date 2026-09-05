@@ -17,42 +17,62 @@ import java.util.UUID;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-
-import eu.chargetime.ocpp.model.core.BootNotificationRequest;
-import eu.chargetime.ocpp.model.core.MeterValuesRequest;
-import eu.chargetime.ocpp.model.core.StartTransactionRequest;
-import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
-import eu.chargetime.ocpp.model.core.StopTransactionRequest;
+import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 
 /**
  * Callbacks raised by the {@link OcppTransport} for inbound OCPP traffic, keyed by session id.
+ *
+ * <p>
+ * The events are protocol-neutral: each wire protocol translates its own messages into them, so
+ * everything above this interface is shared by every OCPP version the binding speaks.
  *
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
 public interface OcppServerListener {
 
-    void onSessionOpened(UUID session, @Nullable String chargePointId, @Nullable InetSocketAddress remote);
+    void onSessionOpened(UUID session, @Nullable String chargePointId, @Nullable InetSocketAddress remote,
+            OcppVersion version);
 
     void onSessionClosed(UUID session);
 
-    void onBootNotification(UUID session, BootNotificationRequest request);
+    void onBootNotification(UUID session, BootInfo boot);
 
-    void onStatusNotification(UUID session, StatusNotificationRequest request);
+    void onStatusNotification(UUID session, StatusInfo status);
 
-    void onMeterValues(UUID session, MeterValuesRequest request);
+    void onMeterValues(UUID session, MeterSample sample);
 
     void onHeartbeat(UUID session);
 
-    void onStartTransaction(UUID session, StartTransactionRequest request, int transactionId);
+    /**
+     * Capabilities a charger reported out of band. 1.6 answers GetConfiguration directly, but 2.0.1
+     * sends its device model as a separate stream of NotifyReport messages.
+     */
+    void onCapabilities(UUID session, java.util.Map<String, String> configurationKeys);
 
-    void onStopTransaction(UUID session, StopTransactionRequest request);
+    void onTransactionEvent(UUID session, TransactionEvent event);
 
-    void onAuthorize(UUID session, @Nullable String idTag);
+    void onAuthorize(UUID session, @Nullable String idToken, TokenType type);
 
-    boolean isTagAuthorized(@Nullable String idTag);
+    boolean isTagAuthorized(@Nullable String idToken);
 
     int heartbeatFor(UUID session);
 
     int nextTransactionId();
+
+    /**
+     * The id already given to the transaction a charger names {@code remoteId}, if any. It lets a
+     * transaction that began before the binding restarted keep its id and its connector.
+     */
+    @Nullable
+    Integer knownTransactionId(UUID session, String remoteId);
+
+    /** The connector a known transaction runs on, for an event that does not say. */
+    @Nullable
+    Integer knownConnector(UUID session, int transactionId);
 }

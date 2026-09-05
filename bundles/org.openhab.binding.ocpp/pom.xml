@@ -19,12 +19,13 @@
          bundle. Java-WebSocket is an OSGi bundle upstream but is inlined too to keep the feature
          self-contained (only this bundle + openHAB core). gson is provided by core, so it stays a
          normal import and is NOT inlined. -->
-    <bnd.includeresource>-${.}/NOTICE, -${.}/*.xsd, @ocpp16-2.0.jar, @ocpp-common-2.0.jar, @ocpp-json-2.0.jar, @Java-WebSocket-1.6.0.jar</bnd.includeresource>
+    <bnd.includeresource>-${.}/NOTICE, -${.}/*.xsd, @ocpp16-2.0.jar, @ocpp2-2.0.jar, @ocpp-common-2.0.jar, @ocpp-json-2.0.jar, @Java-WebSocket-1.6.0.jar</bnd.includeresource>
     <!-- The ChargeTime 'common' jar carries SOAP transport classes we never load (JSON only). Their
          javax.xml.bind / javax.xml.soap references were removed from the JDK after Java 8 and are
          not exported by the runtime, so make those imports optional; the bundle resolves without
-         them. -->
-    <bnd.importpackage>javax.xml.bind.*;resolution:=optional,javax.xml.soap.*;resolution:=optional,com.sun.net.httpserver.*;resolution:=optional</bnd.importpackage>
+         them. javax.annotation is the same case: the ocpp2 classes carry jsr305 annotations, which
+         are CLASS-retention and never loaded. -->
+    <bnd.importpackage>javax.xml.bind.*;resolution:=optional,javax.xml.soap.*;resolution:=optional,com.sun.net.httpserver.*;resolution:=optional,javax.annotation;resolution:=optional</bnd.importpackage>
   </properties>
 
   <dependencies>
@@ -44,6 +45,28 @@
         <exclusion>
           <groupId>javax.xml.bind</groupId>
           <artifactId>jaxb-api</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <!-- OCPP 2.0.1 models and server functions; same library family as ocpp16, so it shares
+         ocpp-common and ocpp-json. jsr305 carries only compile-time annotations. -->
+    <dependency>
+      <groupId>eu.chargetime.ocpp</groupId>
+      <artifactId>ocpp2</artifactId>
+      <version>2.0</version>
+      <scope>compile</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>com.google.code.findbugs</groupId>
+          <artifactId>jsr305</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>com.google.code.gson</groupId>
+          <artifactId>gson</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.slf4j</groupId>
+          <artifactId>slf4j-api</artifactId>
         </exclusion>
       </exclusions>
     </dependency>

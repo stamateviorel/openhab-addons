@@ -16,6 +16,7 @@ import static org.openhab.binding.ocpp.internal.OcppBindingConstants.*;
 
 import java.time.ZonedDateTime;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -28,8 +29,14 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.ocpp.internal.config.OcppConnectorConfiguration;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
-import org.openhab.binding.ocpp.internal.transport.ChargingProfileBuilder;
 import org.openhab.binding.ocpp.internal.transport.MeterValueMapper;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Commands;
+import org.openhab.binding.ocpp.internal.transport.OcppCommands;
+import org.openhab.binding.ocpp.internal.transport.event.ConnectorStatus;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
@@ -55,29 +62,10 @@ import org.openhab.core.types.UnDefType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import eu.chargetime.ocpp.model.core.AvailabilityStatus;
-import eu.chargetime.ocpp.model.core.AvailabilityType;
-import eu.chargetime.ocpp.model.core.ChangeAvailabilityConfirmation;
-import eu.chargetime.ocpp.model.core.ChangeAvailabilityRequest;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationRequest;
-import eu.chargetime.ocpp.model.core.ChargePointStatus;
 import eu.chargetime.ocpp.model.core.ChargingRateUnitType;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
-import eu.chargetime.ocpp.model.core.MeterValue;
-import eu.chargetime.ocpp.model.core.MeterValuesRequest;
-import eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest;
-import eu.chargetime.ocpp.model.core.RemoteStopTransactionRequest;
-import eu.chargetime.ocpp.model.core.StartTransactionRequest;
-import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
-import eu.chargetime.ocpp.model.core.StopTransactionRequest;
-import eu.chargetime.ocpp.model.core.UnlockConnectorRequest;
-import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequest;
-import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequestType;
-import eu.chargetime.ocpp.model.smartcharging.ChargingProfileStatus;
-import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileConfirmation;
-import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileStatus;
-import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
 
 /**
  * Handles one connector (outlet) of a charger: status, metering and transaction channels plus the
@@ -88,13 +76,13 @@ import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
 @NonNullByDefault
 public class OcppConnectorHandler extends BaseThingHandler {
 
-    private static final EnumSet<ChargePointStatus> CABLE_PRESENT = EnumSet.of(ChargePointStatus.Preparing,
-            ChargePointStatus.Charging, ChargePointStatus.SuspendedEV, ChargePointStatus.SuspendedEVSE,
-            ChargePointStatus.Finishing);
-    private static final EnumSet<ChargePointStatus> CHARGING_ACTIVE = EnumSet.of(ChargePointStatus.Charging,
-            ChargePointStatus.SuspendedEV, ChargePointStatus.SuspendedEVSE);
-    private static final EnumSet<ChargePointStatus> TRANSIENT = EnumSet.of(ChargePointStatus.Preparing,
-            ChargePointStatus.Finishing);
+    private static final EnumSet<ConnectorStatus> CABLE_PRESENT = EnumSet.of(ConnectorStatus.PREPARING,
+            ConnectorStatus.CHARGING, ConnectorStatus.SUSPENDED_EV, ConnectorStatus.SUSPENDED_EVSE,
+            ConnectorStatus.FINISHING);
+    private static final EnumSet<ConnectorStatus> CHARGING_ACTIVE = EnumSet.of(ConnectorStatus.CHARGING,
+            ConnectorStatus.SUSPENDED_EV, ConnectorStatus.SUSPENDED_EVSE);
+    private static final EnumSet<ConnectorStatus> TRANSIENT = EnumSet.of(ConnectorStatus.PREPARING,
+            ConnectorStatus.FINISHING);
     private static final long STUCK_STATE_SECONDS = 120;
     private static final long REMOTE_START_RETRY_DELAY_SECONDS = 5;
 
@@ -144,6 +132,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private volatile int profileMinIntervalMs;
     private volatile String hardwareMaxCurrentKey = "";
     private volatile String remoteStartTag = "openhab";
+    private volatile @Nullable String pendingStartTag;
     private volatile int refreshInterval;
     private volatile boolean stuckStateRecovery;
     private volatile double nominalVoltage = 230.0;
@@ -154,6 +143,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     private volatile @Nullable OcppChargePointHandler chargePoint;
     private volatile @Nullable Integer transactionId;
+    // 2.0.1 stops a transaction by the id the charger chose, so it is kept alongside the numeric one.
+    private volatile @Nullable String remoteTransactionId;
     private volatile @Nullable Integer meterStart;
     private volatile double currentLimitAmps;
     private volatile double powerLimitWatts;
@@ -165,6 +156,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     // Dedicated lock: the base class synchronizes on the handler monitor.
     private final Object lock = new Object();
+    private static final OcppCommands FALLBACK_COMMANDS = new Ocpp16Commands();
 
     private double pendingLimitAmps;
     private long lastProfileSentAt;
@@ -229,6 +221,12 @@ public class OcppConnectorHandler extends BaseThingHandler {
         Integer open = parent.recoverTransactionId(connectorId);
         if (open != null) {
             transactionId = open;
+            remoteTransactionId = parent.recoverRemoteId(open);
+            Integer start = parent.recoverMeterStart(open);
+            if (start != null) {
+                meterStart = start;
+                updateState(CHANNEL_METER_START, new QuantityType<>(start, Units.WATT_HOUR));
+            }
             updateState(CHANNEL_TRANSACTION_ID, new DecimalType(open));
             logger.debug("Recovered open transaction {} on connector {} after restart", open, connectorId);
         }
@@ -278,6 +276,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         cancel(remoteStartRetryTask);
         pollTask = null;
         remoteStartRetryTask = null;
+        pendingStartTag = null;
         synchronized (lock) {
             cancel(stuckTask);
             cancel(pendingFlush);
@@ -342,6 +341,12 @@ public class OcppConnectorHandler extends BaseThingHandler {
                     applyLimit();
                 }
                 break;
+            case CHANNEL_ID_TAG:
+                if (command instanceof StringType tag && !tag.toString().isBlank()) {
+                    pendingStartTag = tag.toString().trim();
+                    publishStartTag();
+                }
+                break;
             case CHANNEL_CHARGING:
                 if (command instanceof OnOffType onOff) {
                     if (onOff == OnOffType.ON) {
@@ -358,7 +363,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 break;
             case CHANNEL_UNLOCK:
                 if (command == OnOffType.ON) {
-                    dispatchIfReady(new UnlockConnectorRequest(connectorId), "UnlockConnector");
+                    dispatchIfReady(commands().unlock(connectorId), "UnlockConnector");
                     updateState(CHANNEL_UNLOCK, OnOffType.OFF);
                 }
                 break;
@@ -401,6 +406,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
             limitDeferred = false;
             applyLimit();
         }
+    }
+
+    private OcppCommands commands() {
+        OcppChargePointHandler cp = chargePoint;
+        return cp == null ? FALLBACK_COMMANDS : cp.commands();
     }
 
     private boolean isReadyToSend() {
@@ -491,10 +501,13 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     private void setProfile(ProfileClaim claim) {
-        dispatch(ChargingProfileBuilder.limit(connectorId, claim.wireUnit(), claim.wireValue(), claim.numberPhases(),
-                forceTxDefaultProfile, transactionId), "SetChargingProfile").whenComplete((confirmation, ex) -> {
-                    if (ex == null && confirmation instanceof SetChargingProfileConfirmation profile
-                            && profile.getStatus() == ChargingProfileStatus.Accepted) {
+        OcppCommands commands = commands();
+        Integer phases = claim.numberPhases();
+        dispatch(
+                commands.setChargingProfile(connectorId, claim.wireValue(), claim.wireUnit() == ChargingRateUnitType.W,
+                        phases == null ? 0 : phases, forceTxDefaultProfile, transactionId, remoteTransactionId),
+                "SetChargingProfile").whenComplete((confirmation, ex) -> {
+                    if (ex == null && commands.isAccepted(confirmation)) {
                         if (claimPublication(claim)) {
                             publishAcceptedLimit(claim);
                         } else {
@@ -522,11 +535,10 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     private void clearProfile(ProfileClaim claim) {
-        dispatch(ChargingProfileBuilder.clearLimit(connectorId), "ClearChargingProfile")
+        OcppCommands commands = commands();
+        dispatch(commands.clearChargingProfile(connectorId), "ClearChargingProfile")
                 .whenComplete((confirmation, ex) -> {
-                    if (ex == null && confirmation instanceof ClearChargingProfileConfirmation cleared
-                            && (cleared.getStatus() == ClearChargingProfileStatus.Accepted
-                                    || cleared.getStatus() == ClearChargingProfileStatus.Unknown)) {
+                    if (ex == null && commands.isAccepted(confirmation)) {
                         if (claimPublication(claim)) {
                             updateState(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
                             updateState(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
@@ -551,13 +563,24 @@ public class OcppConnectorHandler extends BaseThingHandler {
         }
         cancel(remoteStartRetryTask);
         remoteStartRetryTask = null;
-        attemptRemoteStart(remoteStartRetries);
+        String chosen = pendingStartTag;
+        attemptRemoteStart(remoteStartRetries, chosen != null ? chosen : remoteStartTag);
     }
 
-    private void attemptRemoteStart(int remaining) {
-        RemoteStartTransactionRequest request = new RemoteStartTransactionRequest(remoteStartTag);
-        request.setConnectorId(connectorId);
-        dispatch(request, "RemoteStart").whenComplete((confirmation, ex) -> {
+    /** Publishes the token the next remote start would present. */
+    private void publishStartTag() {
+        String pending = pendingStartTag;
+        updateState(CHANNEL_ID_TAG, new StringType(pending != null ? pending : remoteStartTag));
+    }
+
+    private void attemptRemoteStart(int remaining, String tag) {
+        OcppChargePointHandler parent = chargePointHandler();
+        TokenType type = parent == null ? TokenType.UNKNOWN : parent.tokenTypeOf(tag);
+        dispatch(commands().remoteStart(connectorId, tag, type), "RemoteStart").whenComplete((confirmation, ex) -> {
+            if (ex == null && commands().isAccepted(confirmation) && tag.equals(pendingStartTag)) {
+                pendingStartTag = null;
+                publishStartTag();
+            }
             if (ex == null || remaining <= 0 || transactionId != null || !isReadyToSend()) {
                 return;
             }
@@ -565,7 +588,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                     remaining);
             remoteStartRetryTask = scheduler.schedule(() -> {
                 if (transactionId == null && isReadyToSend()) {
-                    attemptRemoteStart(remaining - 1);
+                    attemptRemoteStart(remaining - 1, tag);
                 }
             }, REMOTE_START_RETRY_DELAY_SECONDS, TimeUnit.SECONDS);
         });
@@ -579,7 +602,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
             logger.debug("No active transaction to stop on connector {}", connectorId);
             return;
         }
-        dispatchIfReady(new RemoteStopTransactionRequest(transaction), "RemoteStop");
+        dispatchIfReady(commands().remoteStop(transaction, remoteTransactionId), "RemoteStop");
     }
 
     private void changeAvailability(boolean operative) {
@@ -587,11 +610,10 @@ public class OcppConnectorHandler extends BaseThingHandler {
             logger.debug("ChangeAvailability on connector {} skipped — charge point not ready", connectorId);
             return;
         }
-        AvailabilityType type = operative ? AvailabilityType.Operative : AvailabilityType.Inoperative;
-        dispatch(new ChangeAvailabilityRequest(connectorId, type), "ChangeAvailability")
+        OcppCommands commands = commands();
+        dispatch(commands.changeAvailability(connectorId, operative), "ChangeAvailability")
                 .whenComplete((confirmation, ex) -> {
-                    if (ex == null && confirmation instanceof ChangeAvailabilityConfirmation change
-                            && change.getStatus() == AvailabilityStatus.Accepted) {
+                    if (ex == null && commands.isAccepted(confirmation)) {
                         updateState(CHANNEL_AVAILABILITY, OnOffType.from(operative));
                     }
                 });
@@ -631,9 +653,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
                     connectorId);
             return;
         }
-        TriggerMessageRequest request = new TriggerMessageRequest(TriggerMessageRequestType.MeterValues);
-        request.setConnectorId(connectorId);
-        pendingPoll = dispatch(request, "TriggerMessage[MeterValues]").toCompletableFuture();
+        pendingPoll = dispatch(commands().triggerMeterValues(connectorId), "TriggerMessage[MeterValues]")
+                .toCompletableFuture();
     }
 
     public void requestStatus() {
@@ -649,8 +670,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (cp == null) {
             return;
         }
-        TriggerMessageRequest request = new TriggerMessageRequest(TriggerMessageRequestType.StatusNotification);
-        request.setConnectorId(connectorId);
+        eu.chargetime.ocpp.model.Request request = cp.commands().triggerStatusNotification(connectorId);
         CompletionStage<eu.chargetime.ocpp.model.Confirmation> result = bypassReadiness ? cp.sendNow(request)
                 : cp.send(request);
         result.whenComplete((confirmation, ex) -> {
@@ -721,21 +741,26 @@ public class OcppConnectorHandler extends BaseThingHandler {
         return value >= 0 && value <= 3 ? value : null;
     }
 
-    public void onStatusNotification(StatusNotificationRequest request) {
-        ChargePointStatus status = request.getStatus();
+    public void onStatusNotification(StatusInfo info) {
+        ConnectorStatus status = info.status();
+        // A bare 2.0.1 Occupied says only that a vehicle is present; the open transaction's events say more.
+        if (info.bare() && status == ConnectorStatus.PREPARING && transactionId != null) {
+            updateStatus(ThingStatus.ONLINE);
+            return;
+        }
         if (status != null) {
-            updateState(CHANNEL_STATUS, new StringType(status.name()));
+            updateState(CHANNEL_STATUS, new StringType(status.label()));
             updateState(CHANNEL_CABLE_CONNECTED, OnOffType.from(CABLE_PRESENT.contains(status)));
             // Faulted is a fault, not an availability/charging state; leave those channels.
-            if (status == ChargePointStatus.Unavailable) {
+            if (status == ConnectorStatus.UNAVAILABLE) {
                 updateState(CHANNEL_AVAILABILITY, OnOffType.OFF);
-            } else if (status != ChargePointStatus.Faulted) {
+            } else if (status != ConnectorStatus.FAULTED) {
                 updateState(CHANNEL_AVAILABILITY, OnOffType.ON);
             }
-            if (status != ChargePointStatus.Faulted) {
+            if (status != ConnectorStatus.FAULTED) {
                 updateState(CHANNEL_CHARGING, OnOffType.from(CHARGING_ACTIVE.contains(status)));
             }
-            if (status == ChargePointStatus.Available) {
+            if (status == ConnectorStatus.AVAILABLE) {
                 // Available means no active transaction; clear any stale one.
                 Integer stale = transactionId;
                 if (stale != null) {
@@ -752,19 +777,18 @@ public class OcppConnectorHandler extends BaseThingHandler {
         updateStatus(ThingStatus.ONLINE);
     }
 
-    public void onMeterValues(MeterValuesRequest request) {
-        Map<String, State> states = MeterValueMapper.toStates(request);
+    public void onMeterValues(MeterSample sample) {
+        Map<String, State> states = MeterValueMapper.toStates(sample);
         ensureDynamicChannels(states.keySet());
         states.forEach(this::updateState);
-        MeterValue[] meterValues = request.getMeterValue();
-        if (meterValues != null && meterValues.length > 0) {
-            ZonedDateTime timestamp = null;
-            for (int i = meterValues.length - 1; i >= 0 && timestamp == null; i--) {
-                timestamp = meterValues[i].getTimestamp();
-            }
-            if (timestamp != null) {
-                updateState(CHANNEL_TIMESTAMP, new DateTimeType(timestamp));
-            }
+        publishSessionEnergy(states.get(CHANNEL_ENERGY_ACTIVE_IMPORT));
+        List<MeterSample.Block> blocks = sample.blocks();
+        ZonedDateTime timestamp = null;
+        for (int i = blocks.size() - 1; i >= 0 && timestamp == null; i--) {
+            timestamp = blocks.get(i).timestamp();
+        }
+        if (timestamp != null) {
+            updateState(CHANNEL_TIMESTAMP, new DateTimeType(timestamp));
         }
         if (getThing().getStatus() != ThingStatus.ONLINE) {
             updateStatus(ThingStatus.ONLINE);
@@ -796,30 +820,65 @@ public class OcppConnectorHandler extends BaseThingHandler {
         }
     }
 
-    public void onTransactionStarted(StartTransactionRequest request, int transactionId) {
+    public void onTransactionStarted(TransactionEvent event) {
         cancel(remoteStartRetryTask);
         remoteStartRetryTask = null;
+        // Any start, remote or by card, is the one the chosen token was meant for.
+        pendingStartTag = null;
+        int transactionId = event.transactionId();
         this.transactionId = transactionId;
+        this.remoteTransactionId = event.remoteId();
         updateState(CHANNEL_TRANSACTION_ID, new DecimalType(transactionId));
-        String idTag = request.getIdTag();
+        String idTag = event.idToken();
         if (idTag != null) {
             updateState(CHANNEL_ID_TAG, new StringType(idTag));
         }
-        Integer meterStart = request.getMeterStart();
+        Integer meterStart = event.meterWh();
         if (meterStart != null) {
             this.meterStart = meterStart;
             updateState(CHANNEL_METER_START, new QuantityType<>(meterStart, Units.WATT_HOUR));
         }
-        ZonedDateTime timestamp = request.getTimestamp();
+        ZonedDateTime timestamp = event.timestamp();
         if (timestamp != null) {
             updateState(CHANNEL_TIMESTAMP_START, new DateTimeType(timestamp));
         }
     }
 
-    public void onTransactionStopped(StopTransactionRequest request) {
+    public void onTransactionUpdated(TransactionEvent event) {
+        String remoteId = event.remoteId();
+        if (remoteId != null) {
+            // Whatever this handler believed before, the charger has just said which transaction runs here.
+            Integer known = transactionId;
+            if (known == null || known != event.transactionId()) {
+                transactionId = event.transactionId();
+                updateState(CHANNEL_TRANSACTION_ID, new DecimalType(event.transactionId()));
+            }
+            remoteTransactionId = remoteId;
+        }
+        String idTag = event.idToken();
+        if (idTag != null) {
+            updateState(CHANNEL_ID_TAG, new StringType(idTag));
+        }
+    }
+
+    /** The session's energy so far, from the meter register against where it stood at the start. */
+    private void publishSessionEnergy(@Nullable State register) {
+        Integer start = meterStart;
+        if (start == null || !(register instanceof QuantityType<?> reading)) {
+            return;
+        }
+        QuantityType<?> wh = reading.toUnit(Units.WATT_HOUR);
+        if (wh != null) {
+            updateState(CHANNEL_SESSION_ENERGY,
+                    new QuantityType<>(Math.max(0, wh.intValue() - start), Units.WATT_HOUR));
+        }
+    }
+
+    public void onTransactionEnded(TransactionEvent event) {
         this.transactionId = null;
+        this.remoteTransactionId = null;
         updateState(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
-        Integer meterStop = request.getMeterStop();
+        Integer meterStop = event.meterWh();
         if (meterStop != null) {
             updateState(CHANNEL_METER_STOP, new QuantityType<>(meterStop, Units.WATT_HOUR));
             Integer start = meterStart;
@@ -828,13 +887,13 @@ public class OcppConnectorHandler extends BaseThingHandler {
             }
         }
         meterStart = null;
-        ZonedDateTime timestamp = request.getTimestamp();
+        ZonedDateTime timestamp = event.timestamp();
         if (timestamp != null) {
             updateState(CHANNEL_TIMESTAMP_STOP, new DateTimeType(timestamp));
         }
     }
 
-    private void armStuckWatchdog(ChargePointStatus status) {
+    private void armStuckWatchdog(ConnectorStatus status) {
         // Opt-in: auto-unlocking a normal Preparing/Finishing is a physical side effect.
         if (!stuckStateRecovery) {
             return;
@@ -848,10 +907,10 @@ public class OcppConnectorHandler extends BaseThingHandler {
         }
     }
 
-    private void onStuck(ChargePointStatus status) {
+    private void onStuck(ConnectorStatus status) {
         logger.warn("Connector {} stuck in {} for over {}s; sending UnlockConnector", connectorId, status,
                 STUCK_STATE_SECONDS);
-        dispatch(new UnlockConnectorRequest(connectorId), "UnlockConnector[stuck-recovery]");
+        dispatch(commands().unlock(connectorId), "UnlockConnector[stuck-recovery]");
     }
 
     private static void cancel(@Nullable ScheduledFuture<?> task) {

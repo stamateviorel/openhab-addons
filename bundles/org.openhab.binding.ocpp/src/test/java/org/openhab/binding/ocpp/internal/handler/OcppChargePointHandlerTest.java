@@ -15,7 +15,6 @@ package org.openhab.binding.ocpp.internal.handler;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,6 +27,10 @@ import java.util.UUID;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingUID;
@@ -71,18 +74,31 @@ class OcppChargePointHandlerTest {
         handler.registerConnector(2, connector2);
     }
 
-    private static StartTransactionRequest start(int connectorId) {
-        return new StartTransactionRequest(connectorId, "tag", 0, ZonedDateTime.now());
+    private static TransactionEvent started(int connectorId, int transactionId) {
+        return Ocpp16Events.toStarted(new StartTransactionRequest(connectorId, "tag", 0, ZonedDateTime.now()),
+                transactionId);
     }
 
-    private static StopTransactionRequest stop(int transactionId) {
-        return new StopTransactionRequest(0, ZonedDateTime.now(), transactionId);
+    private static TransactionEvent ended(int transactionId) {
+        return Ocpp16Events.toEnded(new StopTransactionRequest(0, ZonedDateTime.now(), transactionId), transactionId);
+    }
+
+    @Test
+    void aLateTokenReachesTheConnectorWhoseTransactionItIs() {
+        handler.onTransactionStarted(started(2, 5));
+        TransactionEvent update = new TransactionEvent(TransactionEvent.Kind.UPDATED, null, 5, null, "CARD-X",
+                TokenType.CARD, null, null, null, null);
+
+        handler.onTransactionUpdated(update);
+
+        verify(connector2).onTransactionUpdated(update);
+        verify(connector1, never()).onTransactionUpdated(any());
     }
 
     @Test
     void messagesReachTheConnectorTheyNameAndNoOther() {
-        handler.onStatusNotification(
-                new StatusNotificationRequest(2, ChargePointErrorCode.NoError, ChargePointStatus.Charging));
+        handler.onStatusNotification(Ocpp16Events.toStatusInfo(
+                new StatusNotificationRequest(2, ChargePointErrorCode.NoError, ChargePointStatus.Charging)));
 
         verify(connector2).onStatusNotification(any());
         verify(connector1, never()).onStatusNotification(any());
@@ -91,9 +107,9 @@ class OcppChargePointHandlerTest {
     @Test
     void chargePointWideMessagesAreNotRoutedToAConnector() {
         // Connector 0 addresses the charge point itself, so there is no connector to hand it to.
-        handler.onStatusNotification(
-                new StatusNotificationRequest(0, ChargePointErrorCode.NoError, ChargePointStatus.Available));
-        handler.onMeterValues(new MeterValuesRequest(0));
+        handler.onStatusNotification(Ocpp16Events.toStatusInfo(
+                new StatusNotificationRequest(0, ChargePointErrorCode.NoError, ChargePointStatus.Available)));
+        handler.onMeterValues(Ocpp16Events.toMeterSample(new MeterValuesRequest(0)));
 
         verify(connector1, never()).onStatusNotification(any());
         verify(connector1, never()).onMeterValues(any());
@@ -102,43 +118,43 @@ class OcppChargePointHandlerTest {
 
     @Test
     void aStoppedTransactionIsReportedToTheConnectorThatOwnsIt() {
-        handler.onStartTransaction(start(1), 100);
-        handler.onStartTransaction(start(2), 200);
+        handler.onTransactionStarted(started(1, 100));
+        handler.onTransactionStarted(started(2, 200));
 
-        handler.onStopTransaction(stop(200));
+        handler.onTransactionEnded(ended(200));
 
-        verify(connector2).onTransactionStopped(any());
-        verify(connector1, never()).onTransactionStopped(any());
+        verify(connector2).onTransactionEnded(any());
+        verify(connector1, never()).onTransactionEnded(any());
     }
 
     @Test
     void aTransactionThatWasNeverStoppedIsDiscardedWhenTheNextOneStarts() {
         // A connector runs one transaction at a time; a new start discards a prior one whose StopTransaction was lost.
-        handler.onStartTransaction(start(1), 100);
-        handler.onStartTransaction(start(1), 101);
+        handler.onTransactionStarted(started(1, 100));
+        handler.onTransactionStarted(started(1, 101));
 
-        handler.onStopTransaction(stop(100));
+        handler.onTransactionEnded(ended(100));
 
-        verify(connector1, never()).onTransactionStopped(any());
+        verify(connector1, never()).onTransactionEnded(any());
 
-        handler.onStopTransaction(stop(101));
-        verify(connector1).onTransactionStopped(any());
+        handler.onTransactionEnded(ended(101));
+        verify(connector1).onTransactionEnded(any());
     }
 
     @Test
     void anUnknownTransactionIdIsIgnored() {
-        handler.onStopTransaction(stop(999));
+        handler.onTransactionEnded(ended(999));
 
-        verify(connector1, never()).onTransactionStopped(any());
-        verify(connector2, never()).onTransactionStopped(any());
+        verify(connector1, never()).onTransactionEnded(any());
+        verify(connector2, never()).onTransactionEnded(any());
     }
 
     @Test
     void aTransactionOnAConnectorThatHasNoThingIsIgnored() {
-        handler.onStartTransaction(start(7), 300);
+        handler.onTransactionStarted(started(7, 300));
 
-        verify(connector1, never()).onTransactionStarted(any(), anyInt());
-        verify(connector2, never()).onTransactionStarted(any(), anyInt());
+        verify(connector1, never()).onTransactionStarted(any());
+        verify(connector2, never()).onTransactionStarted(any());
     }
 
     private void awaitReady() throws InterruptedException {
@@ -151,10 +167,10 @@ class OcppChargePointHandlerTest {
 
     @Test
     void aChargePointIsNotReadyUntilItHasBooted() throws InterruptedException {
-        handler.onConnected(UUID.randomUUID());
+        handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
         assertFalse(handler.isReady(), "a just-connected charger has not booted yet");
 
-        handler.onBootNotification(new BootNotificationRequest("vendor", "model"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         // Readiness must NOT flip inside the boot handler; it flips asynchronously once the confirmation is sent.
         assertFalse(handler.isReady(), "not ready while the boot notification is still being handled");
         awaitReady();
@@ -162,7 +178,7 @@ class OcppChargePointHandlerTest {
 
     @Test
     void becomingReadyReleasesConnectorsThatDeferredASend() {
-        handler.onConnected(UUID.randomUUID());
+        handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
         // A heartbeat also proves the charger booted (socket reopened, no fresh BootNotification); release is async.
         handler.onHeartbeat();
 
@@ -173,7 +189,7 @@ class OcppChargePointHandlerTest {
     @Test
     void aDisconnectMakesItNotReadyAgain() throws InterruptedException {
         UUID session = UUID.randomUUID();
-        handler.onConnected(session);
+        handler.onConnected(session, OcppVersion.V1_6);
         handler.onHeartbeat();
         awaitReady();
 

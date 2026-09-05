@@ -97,6 +97,30 @@ class TransactionStoreTest {
     }
 
     @Test
+    void aTransactionIsFoundByTheNameTheChargerGaveIt() {
+        MemoryStorage storage = new MemoryStorage();
+        TransactionStore store = new TransactionStore(storage);
+        store.begin(9, "charx", 2, "10848555779671014738");
+
+        assertEquals(Integer.valueOf(9), store.byRemoteId("charx", "10848555779671014738"));
+        assertEquals(new Location("charx", 2, "10848555779671014738"), store.locate(9));
+        assertNull(store.byRemoteId("other", "10848555779671014738"));
+        assertEquals(Integer.valueOf(9), new TransactionStore(storage).byRemoteId("charx", "10848555779671014738"));
+    }
+
+    @Test
+    void theMeterRegisterAtTheStartIsKeptWithTheTransaction() {
+        MemoryStorage storage = new MemoryStorage();
+        TransactionStore store = new TransactionStore(storage);
+        store.begin(9, "charx", 2, null, 1000);
+        store.begin(10, "charx", 1, "abc", 2500);
+
+        assertEquals(new Location("charx", 2, null, 1000), new TransactionStore(storage).locate(9));
+        assertEquals(new Location("charx", 1, "abc", 2500), store.locate(10));
+        assertEquals(Integer.valueOf(10), store.byRemoteId("charx", "abc"));
+    }
+
+    @Test
     void endForgetsTheTransaction() {
         MemoryStorage storage = new MemoryStorage();
         TransactionStore store = new TransactionStore(storage);

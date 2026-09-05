@@ -21,6 +21,7 @@ import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.unit.Units;
@@ -72,7 +73,8 @@ class MeterValueMapperTest {
 
     @Test
     void omittedMeasurandDefaultsToEnergyRegister() {
-        assertEquals("Energy.Active.Import.Register", MeterValueMapper.measurandOf(new SampledValue("0")));
+        assertEquals("Energy.Active.Import.Register",
+                MeterValueMapper.measurandOf(new MeterSample.Reading(null, null, null, "0")));
     }
 
     @Test
@@ -143,10 +145,10 @@ class MeterValueMapperTest {
         return sampledValue;
     }
 
-    private static MeterValuesRequest requestOf(SampledValue... samples) {
+    private static MeterSample requestOf(SampledValue... samples) {
         MeterValuesRequest request = new MeterValuesRequest(1);
         request.setMeterValue(new MeterValue[] { new MeterValue(ZonedDateTime.now(), samples) });
-        return request;
+        return Ocpp16Events.toMeterSample(request);
     }
 
     @Test
@@ -210,7 +212,7 @@ class MeterValueMapperTest {
         request.setMeterValue(
                 new MeterValue[] { new MeterValue(ZonedDateTime.now(), new SampledValue[] { l1, voltage }) });
 
-        Map<String, State> states = MeterValueMapper.toStates(request);
+        Map<String, State> states = MeterValueMapper.toStates(Ocpp16Events.toMeterSample(request));
 
         assertEquals(2, states.size());
         assertEquals(Units.AMPERE, assertInstanceOf(QuantityType.class, states.get("current-import-l1")).getUnit());

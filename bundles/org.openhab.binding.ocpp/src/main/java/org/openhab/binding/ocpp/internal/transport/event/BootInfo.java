@@ -10,23 +10,17 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.ocpp.internal.config;
-
-import java.util.List;
+package org.openhab.binding.ocpp.internal.transport.event;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 
 /**
- * Configuration for a {@code chargepoint} — one physical charger.
+ * Charge point identity reported at boot, protocol-neutral.
  *
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-public class OcppChargePointConfiguration {
-
-    public String chargePointId = "";
-    public int configSettleSeconds = 0;
-    public boolean meterless = false;
-    public int heartbeat = 0;
-    public List<String> extraConfig = List.of();
+public record BootInfo(@Nullable String vendor, @Nullable String model, @Nullable String firmwareVersion,
+        @Nullable String serialNumber) {
 }

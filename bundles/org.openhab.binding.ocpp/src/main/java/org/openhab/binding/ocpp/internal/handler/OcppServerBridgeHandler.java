@@ -36,6 +36,12 @@ import org.openhab.binding.ocpp.internal.transport.ChargeTimeTransport;
 import org.openhab.binding.ocpp.internal.transport.OcppServerListener;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.binding.ocpp.internal.transport.TransactionStore;
+import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.library.types.DecimalType;
@@ -56,12 +62,6 @@ import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
 
-import eu.chargetime.ocpp.model.core.BootNotificationRequest;
-import eu.chargetime.ocpp.model.core.MeterValuesRequest;
-import eu.chargetime.ocpp.model.core.StartTransactionRequest;
-import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
-import eu.chargetime.ocpp.model.core.StopTransactionRequest;
-
 /**
  * Owns the OCPP JSON WebSocket endpoint and routes inbound traffic to the matching
  * {@link OcppChargePointHandler}.
@@ -76,6 +76,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private static final long POWER_SAMPLE_SECONDS = 30;
 
     private final Map<UUID, String> sessionChargePoints = new ConcurrentHashMap<>();
+    private final Map<UUID, OcppVersion> sessionVersions = new ConcurrentHashMap<>();
     private final Map<String, OcppChargePointHandler> chargePoints = new ConcurrentHashMap<>();
     private final Map<Integer, PowerTally> powerTallies = new ConcurrentHashMap<>();
     private volatile @Nullable ScheduledFuture<?> powerSampler;
@@ -127,10 +128,10 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     public void initialize() {
         config = getConfigAs(OcppServerConfiguration.class);
         OcppServerConfiguration localConfig = config;
-        if (!localConfig.authPassword.isEmpty() && !localConfig.authPassword.matches("[\\x21-\\x7E]{16,20}")) {
+        if (!localConfig.authPassword.isEmpty() && !localConfig.authPassword.matches("[\\x21-\\x7E]{16,40}")) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                    "authPassword must be 16-20 visible ASCII characters — the OCPP library rejects other lengths "
-                            + "before authentication, so every charger connection would fail");
+                    "authPassword must be 16-40 visible ASCII characters (OCPP security profile 1: 16-20 for 1.6, "
+                            + "up to 40 for 2.0.1); no charger could match one outside that window");
             return;
         }
         disposed = false;
@@ -231,7 +232,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         chargePoints.put(chargePointId, handler);
         for (Map.Entry<UUID, String> entry : sessionChargePoints.entrySet()) {
             if (chargePointId.equals(entry.getValue())) {
-                handler.onConnected(entry.getKey());
+                handler.onConnected(entry.getKey(), sessionVersions.getOrDefault(entry.getKey(), OcppVersion.V1_6));
                 return;
             }
         }
@@ -250,7 +251,8 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     @Override
-    public void onSessionOpened(UUID session, @Nullable String chargePointId, @Nullable InetSocketAddress remote) {
+    public void onSessionOpened(UUID session, @Nullable String chargePointId, @Nullable InetSocketAddress remote,
+            OcppVersion version) {
         if (chargePointId == null || chargePointId.isBlank()) {
             Object peer = remote != null ? remote : session;
             logger.warn(
@@ -280,16 +282,17 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             return false;
         });
         sessionChargePoints.put(session, chargePointId);
+        sessionVersions.put(session, version);
         OcppTransport localTransport = transport;
         if (localTransport != null) {
             for (UUID stale : staleSessions) {
                 localTransport.closeSession(stale);
             }
         }
-        logger.debug("Charger connected: id={} session={} from={}", chargePointId, session, remote);
+        logger.debug("Charger connected: id={} session={} from={} ({})", chargePointId, session, remote, version);
         OcppChargePointHandler handler = chargePoints.get(chargePointId);
         if (handler != null) {
-            handler.onConnected(session);
+            handler.onConnected(session, version);
         } else {
             OcppDiscoveryService discovery = discoveryService;
             if (discovery != null) {
@@ -300,6 +303,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
 
     @Override
     public void onSessionClosed(UUID session) {
+        sessionVersions.remove(session);
         String chargePointId = sessionChargePoints.remove(session);
         if (chargePointId != null) {
             OcppChargePointHandler handler = chargePoints.get(chargePointId);
@@ -310,49 +314,60 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     @Override
-    public void onBootNotification(UUID session, BootNotificationRequest request) {
+    public void onBootNotification(UUID session, BootInfo boot) {
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
-            handler.onBootNotification(request);
+            handler.onBootNotification(boot);
         }
     }
 
     @Override
-    public void onStatusNotification(UUID session, StatusNotificationRequest request) {
+    public void onStatusNotification(UUID session, StatusInfo status) {
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
-            handler.onStatusNotification(request);
+            handler.onStatusNotification(status);
         }
     }
 
     @Override
-    public void onAuthorize(UUID session, @Nullable String idTag) {
-        enrollCard(idTag);
+    public void onAuthorize(UUID session, @Nullable String idToken, TokenType type) {
+        // An Authorize names no connector in either protocol; only a transaction says where.
+        enrollToken(session, idToken, type, null);
     }
 
     /**
-     * Learn or offer an unknown card. Called on Authorize and on StartTransaction, since a charger may skip Authorize.
+     * Learn or offer an unknown token. Called on Authorize and on a transaction start, since a charger may skip
+     * Authorize. A token is a card, a vehicle recognised by AutoCharge, or an identifier the charger presents on its
+     * own; they are all managed the same way, and the kind only decides how the offer is labelled.
      */
-    private void enrollCard(@Nullable String idTag) {
-        if (idTag == null) {
+    private void enrollToken(UUID session, @Nullable String idToken, TokenType type, @Nullable Integer connectorId) {
+        if (idToken == null) {
             return;
         }
-        if (bindingConfig.isAutoLearn() && !bindingConfig.getWhitelist().contains(idTag)) {
-            bindingConfig.addToWhitelist(idTag);
+        if (bindingConfig.isAutoLearn() && !bindingConfig.getWhitelist().contains(idToken)) {
+            bindingConfig.addToWhitelist(idToken);
         } else if (bindingConfig.isDiscoverCards()) {
             CpmsService service = cpms;
             OcppDiscoveryService discovery = discoveryService;
-            if (service != null && discovery != null && service.userForCard(idTag) == null) {
-                discovery.cardDiscovered(idTag);
+            if (service != null && discovery != null && service.userForCard(idToken) == null) {
+                discovery.tokenDiscovered(idToken, type, whereOf(session, connectorId));
             }
         }
     }
 
     @Override
-    public void onMeterValues(UUID session, MeterValuesRequest request) {
+    public void onMeterValues(UUID session, MeterSample sample) {
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
-            handler.onMeterValues(request);
+            handler.onMeterValues(sample);
+        }
+    }
+
+    @Override
+    public void onCapabilities(UUID session, Map<String, String> configurationKeys) {
+        OcppChargePointHandler handler = resolve(session);
+        if (handler != null) {
+            handler.onCapabilities(configurationKeys);
         }
     }
 
@@ -365,67 +380,111 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     @Override
-    public void onStartTransaction(UUID session, StartTransactionRequest request, int transactionId) {
-        enrollCard(request.getIdTag());
+    public void onTransactionEvent(UUID session, TransactionEvent event) {
+        switch (event.kind()) {
+            case STARTED -> onTransactionStarted(session, event);
+            case ENDED -> onTransactionEnded(session, event);
+            case UPDATED -> onTransactionUpdated(session, event);
+        }
+    }
+
+    private void onTransactionStarted(UUID session, TransactionEvent event) {
+        int transactionId = event.transactionId();
+        enrollToken(session, event.idToken(), event.tokenType(), event.connectorId());
         String chargePointId = sessionChargePoints.get(session);
-        Integer connectorId = request.getConnectorId();
+        Integer connectorId = event.connectorId();
         if (chargePointId != null && connectorId != null) {
             // Persist at accept time so a later stop routes even before a Thing exists.
-            rememberTransaction(transactionId, chargePointId, connectorId);
+            rememberTransaction(transactionId, chargePointId, connectorId, event.remoteId(), event.meterWh());
         }
         CpmsService service = cpms;
         if (service != null && chargePointId != null && connectorId != null) {
             OcppChargePointHandler.ExternalMeter meter = externalMeterFor(chargePointId, connectorId);
             Integer meterStart;
             if (meter == null) {
-                meterStart = request.getMeterStart();
+                meterStart = event.meterWh();
             } else if (meter.power()) {
                 startPowerTally(transactionId, meter);
                 meterStart = 0;
             } else {
                 Integer reading = energyMeterWh(meter);
-                meterStart = reading != null ? reading : request.getMeterStart();
+                meterStart = reading != null ? reading : event.meterWh();
             }
-            service.onTransactionStart(transactionId, request.getIdTag(), chargePointId, connectorId, meterStart,
-                    epochOf(request.getTimestamp()));
+            service.onTransactionStart(transactionId, event.idToken(), chargePointId, connectorId, meterStart,
+                    epochOf(event.timestamp()));
         }
         OcppChargePointHandler handler = chargePointId != null ? chargePoints.get(chargePointId) : null;
         if (handler != null) {
-            handler.onStartTransaction(request, transactionId);
+            handler.onTransactionStarted(event);
         }
     }
 
-    @Override
-    public void onStopTransaction(UUID session, StopTransactionRequest request) {
+    private void onTransactionUpdated(UUID session, TransactionEvent event) {
+        adoptToken(session, event);
+        OcppChargePointHandler handler = resolve(session);
+        if (handler != null) {
+            handler.onTransactionUpdated(event);
+        }
+    }
+
+    private void adoptToken(UUID session, TransactionEvent event) {
+        String idToken = event.idToken();
+        if (idToken == null) {
+            return;
+        }
         CpmsService service = cpms;
-        Integer stopTransactionId = request.getTransactionId();
-        if (service != null && stopTransactionId != null) {
+        boolean adopted = service != null && service.onTransactionAuthorized(event.transactionId(), idToken);
+        // On 1.6 every stop carries a tag, possibly one the binding refused at the start.
+        if (event.kind() != TransactionEvent.Kind.ENDED || adopted) {
+            enrollToken(session, idToken, event.tokenType(), event.connectorId());
+        }
+    }
+
+    private void onTransactionEnded(UUID session, TransactionEvent event) {
+        int transactionId = event.transactionId();
+        CpmsService service = cpms;
+        adoptToken(session, event);
+        if (service != null) {
             String cpId = sessionChargePoints.get(session);
-            Integer connId = cpId == null ? null : transactionConnector(stopTransactionId, cpId);
+            Integer connId = cpId == null ? null : transactionConnector(transactionId, cpId);
             OcppChargePointHandler.ExternalMeter meter = cpId != null && connId != null ? externalMeterFor(cpId, connId)
                     : null;
             Integer meterStop;
             if (meter == null) {
-                meterStop = request.getMeterStop();
+                meterStop = event.meterWh();
             } else if (meter.power()) {
-                meterStop = finishPowerTally(stopTransactionId);
+                meterStop = finishPowerTally(transactionId);
             } else {
                 Integer reading = energyMeterWh(meter);
-                meterStop = reading != null ? reading : request.getMeterStop();
+                meterStop = reading != null ? reading : event.meterWh();
             }
-            service.onTransactionStop(stopTransactionId, meterStop, epochOf(request.getTimestamp()));
+            service.onTransactionStop(transactionId, meterStop, epochOf(event.timestamp()));
         }
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
-            handler.onStopTransaction(request);
+            handler.onTransactionEnded(event);
             return;
         }
         String chargePointId = sessionChargePoints.get(session);
-        Integer transactionId = request.getTransactionId();
-        if (chargePointId != null && transactionId != null
-                && transactionConnector(transactionId, chargePointId) != null) {
+        if (chargePointId != null && transactionConnector(transactionId, chargePointId) != null) {
             forgetTransaction(transactionId);
         }
+    }
+
+    /** A vehicle token is sent as such; without users to say, a token is treated as a card. */
+    public TokenType tokenTypeOf(String token) {
+        CpmsService service = cpms;
+        return service == null ? TokenType.UNKNOWN : service.tokenTypeOf(token);
+    }
+
+    /** The charger's label if it has a Thing, else its id, plus the connector when one is known. */
+    private String whereOf(UUID session, @Nullable Integer connectorId) {
+        String chargePointId = sessionChargePoints.get(session);
+        OcppChargePointHandler handler = chargePointId == null ? null : chargePoints.get(chargePointId);
+        String label = handler == null ? null : handler.getThing().getLabel();
+        String where = label != null && !label.isBlank() ? label
+                : chargePointId != null ? chargePointId : "unknown charger";
+        return connectorId == null || connectorId == 0 ? where : where + " connector " + connectorId;
     }
 
     @Override
@@ -606,10 +665,40 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     public void rememberTransaction(int transactionId, String chargePointId, int connectorId) {
+        rememberTransaction(transactionId, chargePointId, connectorId, null);
+    }
+
+    public void rememberTransaction(int transactionId, String chargePointId, int connectorId,
+            @Nullable String remoteId) {
+        rememberTransaction(transactionId, chargePointId, connectorId, remoteId, null);
+    }
+
+    public void rememberTransaction(int transactionId, String chargePointId, int connectorId, @Nullable String remoteId,
+            @Nullable Integer meterStart) {
         TransactionStore store = transactionStore;
         if (store != null) {
-            store.begin(transactionId, chargePointId, connectorId);
+            store.begin(transactionId, chargePointId, connectorId, remoteId, meterStart);
         }
+    }
+
+    /** The meter register at the start of a transaction, for the connector that resumes it. */
+    public @Nullable Integer meterStartOf(int transactionId, String chargePointId) {
+        TransactionStore store = transactionStore;
+        TransactionStore.Location location = store == null ? null : store.locate(transactionId);
+        return location != null && chargePointId.equals(location.chargePointId()) ? location.meterStart() : null;
+    }
+
+    @Override
+    public @Nullable Integer knownTransactionId(UUID session, String remoteId) {
+        TransactionStore store = transactionStore;
+        String chargePointId = sessionChargePoints.get(session);
+        return store != null && chargePointId != null ? store.byRemoteId(chargePointId, remoteId) : null;
+    }
+
+    @Override
+    public @Nullable Integer knownConnector(UUID session, int transactionId) {
+        String chargePointId = sessionChargePoints.get(session);
+        return chargePointId == null ? null : transactionConnector(transactionId, chargePointId);
     }
 
     public void forgetTransaction(int transactionId) {
@@ -626,6 +715,13 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
         TransactionStore.Location location = store.locate(transactionId);
         return location != null && chargePointId.equals(location.chargePointId()) ? location.connectorId() : null;
+    }
+
+    /** The name the charger gave a transaction, for the connector that resumes it after a restart. */
+    public @Nullable String remoteIdOf(int transactionId, String chargePointId) {
+        TransactionStore store = transactionStore;
+        TransactionStore.Location location = store == null ? null : store.locate(transactionId);
+        return location != null && chargePointId.equals(location.chargePointId()) ? location.remoteId() : null;
     }
 
     public @Nullable Integer openTransactionFor(String chargePointId, int connectorId) {

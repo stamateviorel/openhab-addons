@@ -22,6 +22,7 @@ import javax.measure.Unit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.unit.ImperialUnits;
@@ -32,12 +33,8 @@ import org.openhab.core.types.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import eu.chargetime.ocpp.model.core.MeterValue;
-import eu.chargetime.ocpp.model.core.MeterValuesRequest;
-import eu.chargetime.ocpp.model.core.SampledValue;
-
 /**
- * Maps an OCPP 1.6 {@code MeterValues} request to connector channel states.
+ * Maps a metering sample to connector channel states.
  *
  * @author Stamate Viorel - Initial contribution
  */
@@ -60,31 +57,23 @@ public final class MeterValueMapper {
     private MeterValueMapper() {
     }
 
-    /** Flatten a MeterValues request into channelId -&gt; state. */
-    public static Map<String, State> toStates(MeterValuesRequest request) {
+    /** Flatten a metering sample into channelId -&gt; state. */
+    public static Map<String, State> toStates(MeterSample sample) {
         Map<String, State> states = new LinkedHashMap<>();
-        MeterValue[] meterValues = request.getMeterValue();
-        if (meterValues == null) {
-            return states;
-        }
-        for (MeterValue meterValue : meterValues) {
-            SampledValue[] samples = meterValue.getSampledValue();
-            if (samples == null) {
-                continue;
-            }
+        for (MeterSample.Block block : sample.blocks()) {
             Map<String, State> direct = new LinkedHashMap<>();
             Map<String, State> summed = new LinkedHashMap<>();
-            for (SampledValue sample : samples) {
+            for (MeterSample.Reading reading : block.readings()) {
                 try {
-                    String measurand = measurandOf(sample);
-                    String phase = sample.getPhase();
+                    String measurand = measurandOf(reading);
+                    String phase = reading.phase();
                     String channelId = channelFor(measurand, phase);
                     if (channelId == null) {
                         LOGGER.debug("No channel represents measurand {} with phase {}; sample ignored", measurand,
                                 phase);
                         continue;
                     }
-                    State state = toState(sample.getValue(), sample.getUnit(), measurand);
+                    State state = toState(reading.value(), reading.unit(), measurand);
                     if (state == null) {
                         continue;
                     }
@@ -97,8 +86,8 @@ public final class MeterValueMapper {
                                 measurand, channelId);
                     }
                 } catch (RuntimeException e) {
-                    LOGGER.warn("Skipping MeterValues sample (measurand={} value={} unit={}): {}",
-                            sample.getMeasurand(), sample.getValue(), sample.getUnit(), e.getMessage());
+                    LOGGER.warn("Skipping MeterValues sample (measurand={} value={} unit={}): {}", reading.measurand(),
+                            reading.value(), reading.unit(), e.getMessage());
                 }
             }
             summed.forEach((channelId, state) -> {
@@ -131,8 +120,8 @@ public final class MeterValueMapper {
         return converted == null ? null : ((QuantityType) first).add(converted);
     }
 
-    static String measurandOf(SampledValue sample) {
-        String measurand = sample.getMeasurand();
+    static String measurandOf(MeterSample.Reading reading) {
+        String measurand = reading.measurand();
         return measurand == null || measurand.isBlank() ? DEFAULT_MEASURAND : measurand;
     }
 

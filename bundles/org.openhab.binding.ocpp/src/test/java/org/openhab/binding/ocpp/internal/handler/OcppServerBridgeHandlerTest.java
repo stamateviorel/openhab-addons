@@ -37,7 +37,12 @@ import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.OcppBindingConfig;
+import org.openhab.binding.ocpp.internal.discovery.OcppDiscoveryService;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.library.types.DecimalType;
@@ -108,7 +113,17 @@ class OcppServerBridgeHandlerTest {
         private final OcppTransport injected;
 
         TestableBridgeHandler(Bridge bridge, StorageService storageService, OcppTransport injected) {
-            super(bridge, storageService, new OcppBindingConfig(mock(ConfigurationAdmin.class), null),
+            this(bridge, storageService, injected, null);
+        }
+
+        TestableBridgeHandler(Bridge bridge, StorageService storageService, OcppTransport injected,
+                @Nullable Map<String, Object> bindingProperties) {
+            this(bridge, storageService, injected, mock(ConfigurationAdmin.class), bindingProperties);
+        }
+
+        TestableBridgeHandler(Bridge bridge, StorageService storageService, OcppTransport injected,
+                ConfigurationAdmin configAdmin, @Nullable Map<String, Object> bindingProperties) {
+            super(bridge, storageService, new OcppBindingConfig(configAdmin, bindingProperties),
                     mock(ItemRegistry.class));
             this.injected = injected;
         }
@@ -121,12 +136,13 @@ class OcppServerBridgeHandlerTest {
     }
 
     private @NonNullByDefault({}) Bridge thing;
+    private @NonNullByDefault({}) StorageService storageService;
 
     @BeforeEach
     void setUp() {
         transport = mock(OcppTransport.class);
 
-        StorageService storageService = mock(StorageService.class);
+        storageService = mock(StorageService.class);
         when(storageService.<String> getStorage(anyString())).thenReturn(new MemoryStorage());
 
         thing = mock(Bridge.class);
@@ -162,8 +178,8 @@ class OcppServerBridgeHandlerTest {
     }
 
     @Test
-    void aPasswordTheLibraryWouldRejectFailsInitializationInstead() {
-        // The library only accepts 16-20 byte Basic-auth passwords; out-of-range must fail config, not lock them out.
+    void aPasswordOutsideTheProfile1WindowFailsInitialization() {
+        // A configured password outside the 16-40 profile-1 window must fail config, not lock chargers out.
         when(thing.getConfiguration()).thenReturn(new Configuration(java.util.Map.of("authPassword", "tooshort")));
 
         handler.initialize();
@@ -175,14 +191,78 @@ class OcppServerBridgeHandlerTest {
     }
 
     @Test
+    void aDiscoveredTokenSaysWhichChargerAndConnectorItCameFrom() {
+        handler = new TestableBridgeHandler(thing, storageService, transport, Map.of("discoverCards", true));
+        handler.setCallback(callback);
+        handler.initialize();
+        verify(callback, timeout(2000)).statusUpdated(any(),
+                argThat(status -> status.getStatus() == ThingStatus.ONLINE));
+        OcppDiscoveryService discovery = mock(OcppDiscoveryService.class);
+        handler.setDiscoveryService(discovery);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        Bridge chargePointThing = mock(Bridge.class);
+        when(chargePointThing.getLabel()).thenReturn("Charger 2");
+        when(chargePoint.getThing()).thenReturn(chargePointThing);
+        handler.registerChargePoint("charx", chargePoint);
+        UUID session = UUID.randomUUID();
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V2_0_1);
+
+        // An Authorize says nothing about the connector; a transaction does.
+        handler.onAuthorize(session, "CARD-NEW", TokenType.CARD);
+        verify(discovery).tokenDiscovered("CARD-NEW", TokenType.CARD, "Charger 2");
+
+        handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 5, "t1", "CARD-NEW",
+                TokenType.CARD, null, null, null, null));
+        verify(discovery).tokenDiscovered("CARD-NEW", TokenType.CARD, "Charger 2 connector 2");
+    }
+
+    @Test
+    void anUpdateWithoutATokenStillReachesTheChargePoint() {
+        handler.initialize();
+        verify(callback, timeout(2000)).statusUpdated(any(),
+                argThat(status -> status.getStatus() == ThingStatus.ONLINE));
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        handler.registerChargePoint("charx", chargePoint);
+        UUID session = UUID.randomUUID();
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V2_0_1);
+        TransactionEvent update = new TransactionEvent(TransactionEvent.Kind.UPDATED, 2, 5, "t1", null,
+                TokenType.UNKNOWN, null, null, null, null);
+
+        handler.onTransactionEvent(session, update);
+
+        verify(chargePoint).onTransactionUpdated(update);
+    }
+
+    @Test
+    void aTransactionKeepsItsIdAcrossARestartByTheNameTheChargerGaveIt() {
+        handler.initialize();
+        verify(callback, timeout(2000)).statusUpdated(any(),
+                argThat(status -> status.getStatus() == ThingStatus.ONLINE));
+        UUID session = UUID.randomUUID();
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V2_0_1);
+        handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
+                TokenType.CARD, null, null, null, null));
+
+        OcppServerBridgeHandler restarted = new TestableBridgeHandler(thing, storageService, transport);
+        restarted.setCallback(callback);
+        restarted.initialize();
+        UUID newSession = UUID.randomUUID();
+        restarted.onSessionOpened(newSession, "charx", null, OcppVersion.V2_0_1);
+
+        assertEquals(Integer.valueOf(77), restarted.knownTransactionId(newSession, "t1"));
+        assertEquals(Integer.valueOf(2), restarted.knownConnector(newSession, 77));
+    }
+
+    @Test
     void aTransactionAcceptedBeforeItsHandlerExistsIsStillPersisted() {
         handler.initialize();
         verify(callback, timeout(2000)).statusUpdated(any(),
                 argThat(status -> status.getStatus() == ThingStatus.ONLINE));
 
         UUID session = UUID.randomUUID();
-        handler.onSessionOpened(session, "charx", null);
-        handler.onStartTransaction(session, new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77);
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
+        handler.onTransactionEvent(session,
+                Ocpp16Events.toStarted(new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77));
 
         assertEquals(Integer.valueOf(77), handler.openTransactionFor("charx", 2),
                 "the transaction must be recoverable even though no handler existed at accept time");
@@ -195,14 +275,50 @@ class OcppServerBridgeHandlerTest {
                 argThat(status -> status.getStatus() == ThingStatus.ONLINE));
 
         UUID session = UUID.randomUUID();
-        handler.onSessionOpened(session, "charx", null);
-        handler.onStartTransaction(session, new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77);
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
+        handler.onTransactionEvent(session,
+                Ocpp16Events.toStarted(new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77));
         assertEquals(Integer.valueOf(77), handler.openTransactionFor("charx", 2));
 
-        handler.onStopTransaction(session, new StopTransactionRequest(0, ZonedDateTime.now(), 77));
+        handler.onTransactionEvent(session,
+                Ocpp16Events.toEnded(new StopTransactionRequest(0, ZonedDateTime.now(), 77), 77));
 
         org.junit.jupiter.api.Assertions.assertNull(handler.openTransactionFor("charx", 2),
                 "a stop before the handler exists must clear the persisted transaction");
+    }
+
+    @Test
+    void aStopTagIsNotLearnedButALaterTokenOnAnOwnerlessSessionIs() throws Exception {
+        // On 1.6 every StopTransaction carries a tag, possibly one the binding refused at the start.
+        ConfigurationAdmin configAdmin = mock(ConfigurationAdmin.class);
+        org.osgi.service.cm.Configuration configuration = mock(org.osgi.service.cm.Configuration.class);
+        java.util.Hashtable<String, Object> props = new java.util.Hashtable<>();
+        props.put("whitelistTagIds", java.util.List.of("KNOWN"));
+        when(configAdmin.getConfiguration(any(), any())).thenReturn(configuration);
+        when(configuration.getProperties()).thenReturn(props);
+        handler = new TestableBridgeHandler(thing, storageService, transport, configAdmin,
+                Map.of("autoLearn", true, "whitelistTagIds", java.util.List.of("KNOWN")));
+        handler.setCallback(callback);
+        handler.initialize();
+        verify(callback, timeout(2000)).statusUpdated(any(),
+                argThat(status -> status.getStatus() == ThingStatus.ONLINE));
+        UUID session = UUID.randomUUID();
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
+
+        handler.onTransactionEvent(session,
+                Ocpp16Events.toStarted(new StartTransactionRequest(2, "KNOWN", 0, ZonedDateTime.now()), 77));
+        StopTransactionRequest stop = new StopTransactionRequest(0, ZonedDateTime.now(), 77);
+        stop.setIdTag("STRANGER");
+        handler.onTransactionEvent(session, Ocpp16Events.toEnded(stop, 77));
+        verify(configuration, never()).update(any());
+
+        handler.onTransactionEvent(session,
+                new org.openhab.binding.ocpp.internal.transport.event.TransactionEvent(
+                        org.openhab.binding.ocpp.internal.transport.event.TransactionEvent.Kind.UPDATED, 2, 78, null,
+                        "PLUGFIRST", org.openhab.binding.ocpp.internal.transport.event.TokenType.UNKNOWN, null, null,
+                        null, null));
+        verify(configuration)
+                .update(argThat(updated -> String.valueOf(updated.get("whitelistTagIds")).contains("PLUGFIRST")));
     }
 
     @Test
@@ -213,8 +329,8 @@ class OcppServerBridgeHandlerTest {
 
         UUID first = UUID.randomUUID();
         UUID second = UUID.randomUUID();
-        handler.onSessionOpened(first, "charx", null);
-        handler.onSessionOpened(second, "charx", null);
+        handler.onSessionOpened(first, "charx", null, OcppVersion.V1_6);
+        handler.onSessionOpened(second, "charx", null, OcppVersion.V1_6);
 
         verify(transport).closeSession(first);
         verify(transport, never()).closeSession(second);
@@ -228,8 +344,9 @@ class OcppServerBridgeHandlerTest {
                 argThat(status -> status.getStatus() == ThingStatus.ONLINE));
 
         UUID session = UUID.randomUUID();
-        handler.onSessionOpened(session, "", null);
-        handler.onStartTransaction(session, new StartTransactionRequest(1, "tag", 0, ZonedDateTime.now()), 55);
+        handler.onSessionOpened(session, "", null, OcppVersion.V1_6);
+        handler.onTransactionEvent(session,
+                Ocpp16Events.toStarted(new StartTransactionRequest(1, "tag", 0, ZonedDateTime.now()), 55));
 
         org.junit.jupiter.api.Assertions.assertNull(handler.openTransactionFor("", 1),
                 "a session with no charge point id must be ignored, mapping nothing");
@@ -242,7 +359,7 @@ class OcppServerBridgeHandlerTest {
                 argThat(status -> status.getStatus() == ThingStatus.ONLINE));
 
         UUID session = UUID.randomUUID();
-        handler.onSessionOpened(session, "", null);
+        handler.onSessionOpened(session, "", null, OcppVersion.V1_6);
 
         verify(transport).closeSession(session);
     }

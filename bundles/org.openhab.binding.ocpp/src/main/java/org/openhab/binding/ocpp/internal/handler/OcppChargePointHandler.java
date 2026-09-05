@@ -17,6 +17,7 @@ import static org.openhab.binding.ocpp.internal.OcppBindingConstants.*;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
@@ -37,7 +38,16 @@ import org.openhab.binding.ocpp.internal.config.OcppChargePointConfiguration;
 import org.openhab.binding.ocpp.internal.config.OcppServerConfiguration;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
 import org.openhab.binding.ocpp.internal.transport.Measurands;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Commands;
+import org.openhab.binding.ocpp.internal.transport.Ocpp201Commands;
+import org.openhab.binding.ocpp.internal.transport.OcppCommands;
 import org.openhab.binding.ocpp.internal.transport.OcppTransport;
+import org.openhab.binding.ocpp.internal.transport.event.BootInfo;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
+import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
+import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.StringType;
@@ -53,29 +63,18 @@ import org.openhab.core.types.Command;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
-import eu.chargetime.ocpp.model.core.AuthorizationStatus;
-import eu.chargetime.ocpp.model.core.BootNotificationRequest;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
-import eu.chargetime.ocpp.model.core.ChangeConfigurationRequest;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 import eu.chargetime.ocpp.model.core.GetConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
-import eu.chargetime.ocpp.model.core.IdTagInfo;
-import eu.chargetime.ocpp.model.core.MeterValuesRequest;
-import eu.chargetime.ocpp.model.core.ResetRequest;
-import eu.chargetime.ocpp.model.core.ResetType;
-import eu.chargetime.ocpp.model.core.StartTransactionRequest;
-import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
-import eu.chargetime.ocpp.model.core.StopTransactionRequest;
-import eu.chargetime.ocpp.model.localauthlist.AuthorizationData;
-import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionConfirmation;
-import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest;
-import eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest;
-import eu.chargetime.ocpp.model.localauthlist.UpdateType;
-import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequest;
-import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequestType;
+import eu.chargetime.ocpp.v201.model.messages.DataTransferResponse;
 
 /**
  * Represents one physical charger: tracks its session and routes its OCPP messages to the connectors.
@@ -115,10 +114,15 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private volatile String chargePointId = "";
     private volatile int configSettleSeconds;
     private volatile boolean meterless;
+    private volatile List<String> extraConfig = List.of();
     private volatile int heartbeat;
 
     private volatile @Nullable OcppServerBridgeHandler server;
     private volatile @Nullable UUID session;
+    private volatile OcppVersion version = OcppVersion.V1_6;
+    private static final Gson GSON = new Gson();
+    private static final OcppCommands COMMANDS_16 = new Ocpp16Commands();
+    private static final OcppCommands COMMANDS_201 = new Ocpp201Commands();
     private volatile boolean operational;
     private final Map<String, String> acceptedMeasurands = new ConcurrentHashMap<>();
     private volatile ChargerCapabilities capabilities = ChargerCapabilities.unknown();
@@ -144,9 +148,13 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     public void handleCommand(ChannelUID channelUID, Command command) {
         if (CHANNEL_RESET.equals(channelUID.getId()) && command == OnOffType.ON) {
             if (isReady()) {
-                send(new ResetRequest(ResetType.Soft)).whenComplete((confirmation, ex) -> {
+                send(commands().reset()).whenComplete((confirmation, ex) -> {
                     if (ex != null) {
                         logger.warn("Reset of {} failed: {}", chargePointId, ex.getMessage());
+                    } else if (!commands().isAccepted(confirmation)) {
+                        logger.warn("Charge point {} refused the reset: {}", chargePointId, confirmation);
+                    } else {
+                        logger.info("Charge point {} accepted the reset", chargePointId);
                     }
                 });
             } else {
@@ -155,7 +163,88 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             updateState(CHANNEL_RESET, OnOffType.OFF);
         } else if (CHANNEL_LOCAL_AUTH_LIST.equals(channelUID.getId()) && command instanceof StringType text) {
             setLocalAuthList(parseTagList(text.toString()));
+        } else if (CHANNEL_CUSTOM_MESSAGE.equals(channelUID.getId()) && command instanceof StringType text) {
+            sendCustomMessage(text.toString());
+        } else if (CHANNEL_DISPLAY_MESSAGE.equals(channelUID.getId()) && command instanceof StringType text) {
+            sendDisplayMessage(text.toString());
         }
+    }
+
+    private void sendDisplayMessage(String text) {
+        Request message = commands().displayMessage(text);
+        if (message == null) {
+            logger.warn("Charge point {} speaks {}; display messages are offered for 2.0.1 only", chargePointId,
+                    version);
+            return;
+        }
+        if (!isReady()) {
+            logger.debug("Display message for {} skipped — charge point not ready", chargePointId);
+            return;
+        }
+        OcppCommands commands = commands();
+        send(message).whenComplete((confirmation, ex) -> {
+            if (ex != null) {
+                logger.warn("Display message to {} failed: {}", chargePointId, ex.getMessage());
+            } else if (commands.isAccepted(confirmation)) {
+                updateState(CHANNEL_DISPLAY_MESSAGE, new StringType(text));
+            } else {
+                logger.info("Charge point {} refused the display message: {}", chargePointId, confirmation);
+            }
+        });
+    }
+
+    /**
+     * Sends a vendor-specific message, given as {@code {"vendorId":…,"messageId":…,"data":…}}. The
+     * charger's answer is published back on the channel so a rule can read what came of it.
+     */
+    private void sendCustomMessage(String request) {
+        JsonObject json;
+        try {
+            json = JsonParser.parseString(request).getAsJsonObject();
+        } catch (RuntimeException e) {
+            logger.warn("Custom message for {} is not a JSON object: {}", chargePointId, request);
+            return;
+        }
+        JsonElement vendor = json.get("vendorId");
+        if (vendor == null || !vendor.isJsonPrimitive()) {
+            logger.warn("Custom message for {} needs a vendorId", chargePointId);
+            return;
+        }
+        JsonElement messageId = json.get("messageId");
+        JsonElement data = json.get("data");
+        Request message = commands().customMessage(vendor.getAsString(),
+                messageId == null || messageId.isJsonNull() ? null : messageId.getAsString(),
+                data == null || data.isJsonNull() ? null : data);
+        if (message == null) {
+            logger.warn("Charge point {} speaks {}; custom messages are offered for 2.0.1 only", chargePointId,
+                    version);
+            return;
+        }
+        if (!isReady()) {
+            logger.debug("Custom message for {} skipped — charge point not ready", chargePointId);
+            return;
+        }
+        send(message).whenComplete((confirmation, ex) -> {
+            if (ex != null) {
+                logger.warn("Custom message to {} failed: {}", chargePointId, ex.getMessage());
+                return;
+            }
+            updateState(CHANNEL_CUSTOM_MESSAGE, new StringType(describeCustomResponse(confirmation)));
+        });
+    }
+
+    private static String describeCustomResponse(@Nullable Confirmation confirmation) {
+        JsonObject answer = new JsonObject();
+        if (confirmation instanceof DataTransferResponse response) {
+            answer.addProperty("status", String.valueOf(response.getStatus()));
+            Object data = response.getData();
+            if (data != null) {
+                answer.add("data", GSON.toJsonTree(data));
+            }
+        } else {
+            answer.addProperty("status", String.valueOf(confirmation));
+        }
+        return answer.toString();
     }
 
     private void setLocalAuthList(List<String> tags) {
@@ -177,6 +266,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         chargePointId = config.chargePointId;
         configSettleSeconds = config.configSettleSeconds;
         meterless = config.meterless;
+        extraConfig = config.extraConfig;
         heartbeat = config.heartbeat;
         String savedAuthList = getThing().getProperties().get(PROPERTY_LOCAL_AUTH_LIST);
         if (savedAuthList != null && !savedAuthList.isBlank()) {
@@ -459,15 +549,26 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
     }
 
+    /** The OCPP version this charger negotiated; it decides which dialect outbound commands use. */
+    public OcppVersion getVersion() {
+        return version;
+    }
+
+    /** The outbound dialect for the version this charger negotiated. */
+    public OcppCommands commands() {
+        return version == OcppVersion.V2_0_1 ? COMMANDS_201 : COMMANDS_16;
+    }
+
     public boolean isReady() {
         return session != null && operational;
     }
 
-    public void onConnected(UUID session) {
+    public void onConnected(UUID session, OcppVersion version) {
         synchronized (stateLock) {
             bootAccepted = false;
             operational = false;
             this.session = session;
+            this.version = version;
         }
         failPendingSends();
         cancel(readyTask);
@@ -481,8 +582,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         UUID connectedSession = session;
         statusFallbackTask = scheduler.schedule(() -> {
             if (!bootAccepted) {
-                readCapabilitiesNow(connectedSession);
-                requestConnectorStatusesNow();
+                reconnectedWithoutBoot(connectedSession);
             }
         }, STATUS_FALLBACK_SECONDS, TimeUnit.SECONDS);
     }
@@ -508,8 +608,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 continue;
             }
             int connectorId = id;
-            TriggerMessageRequest request = new TriggerMessageRequest(TriggerMessageRequestType.StatusNotification);
-            request.setConnectorId(connectorId);
+            Request request = commands().triggerStatusNotification(connectorId);
             CompletionStage<Confirmation> result = bypassReadiness ? sendNow(request) : send(request);
             result.whenComplete((confirmation, ex) -> {
                 if (ex != null) {
@@ -534,14 +633,14 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         updateState(CHANNEL_CONNECTED, OnOffType.OFF);
     }
 
-    public void onBootNotification(BootNotificationRequest request) {
+    public void onBootNotification(BootInfo boot) {
         bootAccepted = true;
         cancel(statusFallbackTask);
         statusFallbackTask = null;
-        setProperty(Thing.PROPERTY_VENDOR, request.getChargePointVendor());
-        setProperty(Thing.PROPERTY_MODEL_ID, request.getChargePointModel());
-        setProperty(Thing.PROPERTY_FIRMWARE_VERSION, request.getFirmwareVersion());
-        setProperty(Thing.PROPERTY_SERIAL_NUMBER, request.getChargePointSerialNumber());
+        setProperty(Thing.PROPERTY_VENDOR, boot.vendor());
+        setProperty(Thing.PROPERTY_MODEL_ID, boot.model());
+        setProperty(Thing.PROPERTY_FIRMWARE_VERSION, boot.firmwareVersion());
+        setProperty(Thing.PROPERTY_SERIAL_NUMBER, boot.serialNumber());
         recordActivity();
         UUID bootSession = session;
         if (bootSession == null) {
@@ -552,15 +651,15 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         scheduleBootConfig(bootSession);
     }
 
-    public void onStatusNotification(StatusNotificationRequest request) {
+    public void onStatusNotification(StatusInfo status) {
         touch();
-        int connectorId = request.getConnectorId() == null ? 0 : request.getConnectorId();
+        int connectorId = status.connectorId();
         if (connectorId <= 0) {
             return; // connectorId 0 is a charger-wide status; no per-connector channel for it
         }
         OcppConnectorHandler connector = connectors.get(connectorId);
         if (connector != null) {
-            connector.onStatusNotification(request);
+            connector.onStatusNotification(status);
         } else {
             OcppServerBridgeHandler serverHandler = server;
             if (serverHandler != null) {
@@ -569,15 +668,15 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
     }
 
-    public void onMeterValues(MeterValuesRequest request) {
+    public void onMeterValues(MeterSample sample) {
         touch();
-        int connectorId = request.getConnectorId() == null ? 0 : request.getConnectorId();
+        int connectorId = sample.connectorId();
         if (connectorId <= 0) {
             return; // connector 0 addresses the charge point itself; nothing to route to
         }
         OcppConnectorHandler connector = connectors.get(connectorId);
         if (connector != null) {
-            connector.onMeterValues(request);
+            connector.onMeterValues(sample);
         } else {
             logger.debug("MeterValues for {} connector {} with no matching thing", chargePointId, connectorId);
         }
@@ -595,23 +694,40 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         return capabilities;
     }
 
-    public void onStartTransaction(StartTransactionRequest request, int transactionId) {
+    public void onTransactionStarted(TransactionEvent event) {
         touch();
-        int connectorId = request.getConnectorId() == null ? 0 : request.getConnectorId();
+        Integer eventConnector = event.connectorId();
+        int connectorId = eventConnector == null ? 0 : eventConnector;
+        int transactionId = event.transactionId();
         OcppConnectorHandler connector = connectors.get(connectorId);
         if (connector != null) {
             transactions.values().remove(connector);
             transactions.put(transactionId, connector);
-            connector.onTransactionStarted(request, transactionId);
+            connector.onTransactionStarted(event);
         }
     }
 
-    public void onStopTransaction(StopTransactionRequest request) {
+    public void onTransactionUpdated(TransactionEvent event) {
         touch();
-        Integer transactionId = request.getTransactionId();
-        if (transactionId == null) {
-            return;
+        int transactionId = event.transactionId();
+        OcppConnectorHandler connector = transactions.get(transactionId);
+        Integer connectorId = event.connectorId();
+        if (connector == null && connectorId != null) {
+            // First word of a transaction this handler has not seen start, typically after a restart.
+            connector = connectors.get(connectorId);
+            if (connector != null) {
+                transactions.values().remove(connector);
+                transactions.put(transactionId, connector);
+            }
         }
+        if (connector != null) {
+            connector.onTransactionUpdated(event);
+        }
+    }
+
+    public void onTransactionEnded(TransactionEvent event) {
+        touch();
+        int transactionId = event.transactionId();
         OcppConnectorHandler connector = transactions.remove(transactionId);
         OcppServerBridgeHandler serverHandler = server;
         boolean ownsTransaction = connector != null;
@@ -624,11 +740,21 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             }
         }
         if (connector != null) {
-            connector.onTransactionStopped(request);
+            connector.onTransactionEnded(event);
         }
         if (ownsTransaction && serverHandler != null) {
             serverHandler.forgetTransaction(transactionId);
         }
+    }
+
+    public @Nullable Integer recoverMeterStart(int transactionId) {
+        OcppServerBridgeHandler serverHandler = server;
+        return serverHandler != null ? serverHandler.meterStartOf(transactionId, chargePointId) : null;
+    }
+
+    public @Nullable String recoverRemoteId(int transactionId) {
+        OcppServerBridgeHandler serverHandler = server;
+        return serverHandler != null ? serverHandler.remoteIdOf(transactionId, chargePointId) : null;
     }
 
     public @Nullable Integer recoverTransactionId(int connectorId) {
@@ -659,7 +785,19 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         readCapabilities(bootSession);
     }
 
+    /** Capabilities reported out of band, which is how 2.0.1 answers. */
+    public void onCapabilities(Map<String, String> configurationKeys) {
+        capabilities = ChargerCapabilities.fromKeys(configurationKeys);
+        publishCapabilities(capabilities);
+    }
+
     private void readCapabilities(UUID bootSession) {
+        if (version == OcppVersion.V2_0_1) {
+            // The device model arrives as NotifyReport messages, so the burst cannot wait on this.
+            send(commands().readCapabilities());
+            runBootConfigBurst(bootSession);
+            return;
+        }
         send(new GetConfigurationRequest()).whenComplete((confirmation, ex) -> {
             if (!bootSession.equals(session)) {
                 return;
@@ -669,13 +807,20 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         });
     }
 
-    private void readCapabilitiesNow(UUID connectedSession) {
-        sendNow(new GetConfigurationRequest()).whenComplete((confirmation, ex) -> {
-            if (!connectedSession.equals(session)) {
-                return;
-            }
-            applyCapabilities(confirmation, ex);
-        });
+    /**
+     * A charger that reconnects without booting is one that was already up, typically because the
+     * binding restarted rather than the charger. Its BootNotification is not coming, so it is taken
+     * as ready here, and its configuration is read and applied the same way a boot would, which
+     * also lets a setting changed while it was connected reach it.
+     */
+    void reconnectedWithoutBoot(UUID connectedSession) {
+        if (!connectedSession.equals(session)) {
+            return;
+        }
+        logger.debug("Charge point {} reconnected without booting; treating it as ready", chargePointId);
+        becomeReady(connectedSession);
+        readCapabilities(connectedSession);
+        requestConnectorStatusesNow();
     }
 
     private void applyCapabilities(@Nullable Confirmation confirmation, @Nullable Throwable ex) {
@@ -697,7 +842,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
         logger.info("Charge point {} capabilities: {}", chargePointId, caps.summary());
         if (logger.isDebugEnabled()) {
-            caps.raw().forEach((key, value) -> logger.debug("  {} {} = {}", chargePointId, key, value));
+            caps.raw().forEach((key, value) -> logger.debug("  {} {} = {}{}", chargePointId, key, value,
+                    caps.isWritable(key) ? "" : "  (read-only)"));
         }
         caps.featureProfiles()
                 .ifPresent(profiles -> updateProperty("ocppSupportedFeatureProfiles", String.join(", ", profiles)));
@@ -755,7 +901,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         if (config.disableRemoteTxAuthorization) {
             steps.add(() -> sendConfig("AuthorizeRemoteTxRequests", "false"));
         }
-        for (String pair : config.extraConfig) {
+        // The charger's own entries come last so they win over a site-wide setting of the same key.
+        for (String pair : concat(config.extraConfig, extraConfig)) {
             int equals = pair.indexOf('=');
             if (equals > 0) {
                 String key = pair.substring(0, equals).trim();
@@ -773,19 +920,29 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private String configFingerprint(OcppServerConfiguration config) {
         return chargePointId + "|" + meterless + "|" + config.meterValueSampleInterval + "|"
                 + config.clockAlignedDataInterval + "|" + config.meterValuesData + "|"
-                + config.disableRemoteTxAuthorization + "|" + String.join(",", config.extraConfig);
+                + config.disableRemoteTxAuthorization + "|" + String.join(",", config.extraConfig) + "|"
+                + String.join(",", extraConfig);
+    }
+
+    private static List<String> concat(List<String> first, List<String> second) {
+        if (second.isEmpty()) {
+            return first;
+        }
+        List<String> all = new ArrayList<>(first);
+        all.addAll(second);
+        return all;
     }
 
     private CompletableFuture<Confirmation> provisionLocalAuthList(List<String> tags) {
         int version = localAuthListVersion(tags);
-        return send(new GetLocalListVersionRequest()).thenCompose(current -> {
-            if (current instanceof GetLocalListVersionConfirmation reported
-                    && Integer.valueOf(version).equals(reported.getListVersion())) {
+        OcppCommands commands = commands();
+        return send(commands.readLocalListVersion()).thenCompose(current -> {
+            if (Integer.valueOf(version).equals(commands.localListVersionOf(current))) {
                 return CompletableFuture.completedFuture(current);
             }
-            SendLocalListRequest request = new SendLocalListRequest(version, UpdateType.Full);
-            request.setLocalAuthorizationList(authorizationData(tags));
-            return send(request).thenApply(result -> {
+            Map<String, TokenType> tokens = new LinkedHashMap<>();
+            tags.forEach(tag -> tokens.put(tag, tokenTypeOf(tag)));
+            return send(commands.sendLocalList(version, tokens)).thenApply(result -> {
                 logger.info("Local authorization list sent to {}: version {}, {} tag(s), {}", chargePointId, version,
                         tags.size(), result);
                 return result;
@@ -793,16 +950,13 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }).toCompletableFuture();
     }
 
-    private static int localAuthListVersion(List<String> tags) {
-        return tags.stream().sorted().toList().hashCode() & Integer.MAX_VALUE;
+    public TokenType tokenTypeOf(String token) {
+        OcppServerBridgeHandler server = serverHandler();
+        return server == null ? TokenType.UNKNOWN : server.tokenTypeOf(token);
     }
 
-    private static AuthorizationData[] authorizationData(List<String> tags) {
-        return tags.stream().map(tag -> {
-            AuthorizationData data = new AuthorizationData(tag);
-            data.setIdTagInfo(new IdTagInfo(AuthorizationStatus.Accepted));
-            return data;
-        }).toArray(AuthorizationData[]::new);
+    private static int localAuthListVersion(List<String> tags) {
+        return tags.stream().sorted().toList().hashCode() & Integer.MAX_VALUE;
     }
 
     private static List<String> parseTagList(String csv) {
@@ -851,14 +1005,11 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private boolean isConfigApplied(@Nullable Confirmation confirmation) {
-        if (confirmation instanceof ChangeConfigurationConfirmation change) {
-            ConfigurationStatus status = change.getStatus();
-            if (status == ConfigurationStatus.RebootRequired) {
-                logger.warn("Boot config for {} accepted but needs a charger reboot to take effect", chargePointId);
-            }
-            return status == ConfigurationStatus.Accepted || status == ConfigurationStatus.RebootRequired;
+        if (confirmation instanceof ChangeConfigurationConfirmation change
+                && change.getStatus() == ConfigurationStatus.RebootRequired) {
+            logger.warn("Boot config for {} accepted but needs a charger reboot to take effect", chargePointId);
         }
-        return true;
+        return commands().isAccepted(confirmation) || commands().isNotApplicable(confirmation);
     }
 
     private static String configStatusOf(@Nullable Confirmation confirmation) {
@@ -867,7 +1018,12 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private CompletableFuture<Confirmation> sendConfig(String key, String value) {
-        return send(new ChangeConfigurationRequest(key, value)).toCompletableFuture();
+        Request request = commands().setConfiguration(key, value);
+        if (request == null) {
+            logger.debug("Charge point {} has no {} setting to write on {}", chargePointId, key, version);
+            return CompletableFuture.failedFuture(new UnsupportedOperationException(key + " is not settable"));
+        }
+        return send(request).toCompletableFuture();
     }
 
     private CompletableFuture<Confirmation> negotiateMeasurand(String key, String value) {
@@ -877,21 +1033,26 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private void attemptMeasurand(String key, String value, CompletableFuture<Confirmation> result) {
-        send(new ChangeConfigurationRequest(key, value)).whenComplete((confirmation, ex) -> {
+        Request request = commands().setConfiguration(key, value);
+        if (request == null) {
+            logger.debug("Charge point {} has no {} setting to write on {}", chargePointId, key, version);
+            result.completeExceptionally(new UnsupportedOperationException(key + " is not settable"));
+            return;
+        }
+        send(request).whenComplete((confirmation, ex) -> {
             if (ex != null) {
                 result.completeExceptionally(ex);
                 return;
             }
-            if (confirmation instanceof ChangeConfigurationConfirmation change) {
-                if (change.getStatus() == ConfigurationStatus.Rejected) {
-                    String shorter = Measurands.dropLast(value);
-                    if (!shorter.isEmpty() && !shorter.equals(value)) {
-                        logger.debug("Charger {} rejected {}={}, retrying with {}", chargePointId, key, value, shorter);
-                        attemptMeasurand(key, shorter, result);
-                        return;
-                    }
-                } else if (change.getStatus() == ConfigurationStatus.Accepted) {
-                    acceptedMeasurands.put(key, value);
+            // A charger that turns the value down (not the setting) is offered a shorter list.
+            if (commands().isAccepted(confirmation)) {
+                acceptedMeasurands.put(key, value);
+            } else if (commands().isValueRejected(confirmation)) {
+                String shorter = Measurands.dropLast(value);
+                if (!shorter.isEmpty() && !shorter.equals(value)) {
+                    logger.debug("Charger {} rejected {}={}, retrying with {}", chargePointId, key, value, shorter);
+                    attemptMeasurand(key, shorter, result);
+                    return;
                 }
             }
             result.complete(confirmation);

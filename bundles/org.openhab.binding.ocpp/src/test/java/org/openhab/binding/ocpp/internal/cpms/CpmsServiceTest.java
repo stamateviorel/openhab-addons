@@ -29,6 +29,7 @@ import java.util.Map;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.Test;
+import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.core.storage.Storage;
 
 /**
@@ -50,8 +51,8 @@ class CpmsServiceTest {
 
     @Test
     void aCardOfAnEnabledUserIsAllowedAndAnUnknownOrDisabledOneIsNot() {
-        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
-        cpms.registerUser(new CpmsUser("u2", "Anna", false, 0, List.of("CARD-B")));
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
+        cpms.registerUser(new CpmsUser("u2", "Anna", false, 0, List.of("CARD-B"), List.of()));
 
         assertEquals(Boolean.TRUE, cpms.authorize("CARD-A"));
         assertEquals(Boolean.FALSE, cpms.authorize("CARD-B"));
@@ -60,7 +61,7 @@ class CpmsServiceTest {
 
     @Test
     void aSessionIsLoggedWithTheResolvedUserAndEnergyAndSurvivesARestart() {
-        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
         cpms.onTransactionStart(7, "CARD-A", "charger3", 1, 1000, 100L);
         cpms.onTransactionStop(7, 7200, 200L);
 
@@ -73,6 +74,37 @@ class CpmsServiceTest {
         assertEquals(6200.0, tx.energyWh());
         assertEquals(100L, tx.startEpoch());
         assertEquals(200L, tx.stopEpoch());
+    }
+
+    @Test
+    void aTokenPresentedAfterAPlugFirstStartIsWhatTheSessionIsLoggedUnder() {
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
+        cpms.onTransactionStart(9, null, "charger3", 1, 1000, 100L);
+        cpms.onTransactionAuthorized(9, "CARD-A");
+        cpms.onTransactionStop(9, 1500, 200L);
+
+        CpmsTransaction tx = cpms.transactions().get(0);
+        assertEquals("CARD-A", tx.idTag());
+        assertEquals("u1", tx.userId());
+        assertEquals(500.0, tx.energyWh());
+    }
+
+    @Test
+    void aSessionThatNeverSawATokenIsNotRecorded() {
+        cpms.onTransactionStart(10, null, "charger3", 1, 1000, 100L);
+        cpms.onTransactionStop(10, 1500, 200L);
+
+        assertTrue(cpms.transactions().isEmpty());
+        assertNull(storage.get("open:10"));
+    }
+
+    @Test
+    void aTokenIsTypedByWhereAUserListsIt() {
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of("AA:BB:CC:DD:EE:FF")));
+
+        assertEquals(TokenType.CARD, cpms.tokenTypeOf("CARD-A"));
+        assertEquals(TokenType.VEHICLE, cpms.tokenTypeOf("AA:BB:CC:DD:EE:FF"));
+        assertEquals(TokenType.UNKNOWN, cpms.tokenTypeOf("nobody"));
     }
 
     @Test
@@ -92,7 +124,7 @@ class CpmsServiceTest {
 
     @Test
     void removingAUserDropsTheirAuthorization() {
-        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
         cpms.unregisterUser("u1");
 
         assertNull(cpms.authorize("CARD-A"));
@@ -100,8 +132,8 @@ class CpmsServiceTest {
 
     @Test
     void usageSumsPerUserForTheMonthAndTheYear() {
-        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
-        cpms.registerUser(new CpmsUser("u2", "Anna", true, 0, List.of("CARD-B")));
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
+        cpms.registerUser(new CpmsUser("u2", "Anna", true, 0, List.of("CARD-B"), List.of()));
         session(1, "CARD-A", 1_500L, 4000);
         session(2, "CARD-A", 6_000L, 2000);
         session(3, "CARD-B", 6_000L, 10000);
@@ -133,7 +165,7 @@ class CpmsServiceTest {
     void aCardIsBlockedOnceThisMonthReachesTheCap() {
         CpmsService capped = new CpmsService(storage,
                 Clock.fixed(Instant.parse("2026-06-15T12:00:00Z"), ZoneOffset.UTC));
-        capped.registerUser(new CpmsUser("u1", "Geert", true, 10, List.of("CARD-A")));
+        capped.registerUser(new CpmsUser("u1", "Geert", true, 10, List.of("CARD-A"), List.of()));
 
         cappedSession(capped, 1, "CARD-A", "2026-06-10T00:00:00Z", 6000);
         assertEquals(Boolean.TRUE, capped.authorize("CARD-A"));
@@ -146,7 +178,7 @@ class CpmsServiceTest {
     void lastMonthUsageDoesNotCountAgainstThisMonthsCap() {
         CpmsService capped = new CpmsService(storage,
                 Clock.fixed(Instant.parse("2026-06-15T12:00:00Z"), ZoneOffset.UTC));
-        capped.registerUser(new CpmsUser("u1", "Geert", true, 10, List.of("CARD-A")));
+        capped.registerUser(new CpmsUser("u1", "Geert", true, 10, List.of("CARD-A"), List.of()));
 
         cappedSession(capped, 1, "CARD-A", "2026-05-20T00:00:00Z", 50000);
 
@@ -155,7 +187,7 @@ class CpmsServiceTest {
 
     @Test
     void everySessionIsRetainedAndPastYearsStayComputable() {
-        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A")));
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
         cappedSession(cpms, 1, "CARD-A", "2025-01-10T00:00:00Z", 3000);
         cappedSession(cpms, 2, "CARD-A", "2026-06-10T00:00:00Z", 4000);
 
@@ -171,6 +203,29 @@ class CpmsServiceTest {
         cpms.onTransactionStop(5, 5000, 200L);
 
         assertEquals("{not a valid transaction array", storage.get("transactions"));
+    }
+
+    @Test
+    void aStopByAnotherCardDoesNotReattributeASessionThatHasAnOwner() {
+        // On 1.6 every StopTransaction carries a tag, and it need not be the one that started the session.
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
+        cpms.registerUser(new CpmsUser("u2", "Anna", true, 0, List.of("CARD-B"), List.of()));
+        cpms.onTransactionStart(11, "CARD-A", "charger3", 1, 1000, 100L);
+        cpms.onTransactionAuthorized(11, "CARD-B");
+        cpms.onTransactionStop(11, 1500, 200L);
+
+        CpmsTransaction tx = cpms.transactions().get(0);
+        assertEquals("CARD-A", tx.idTag());
+        assertEquals("u1", tx.userId());
+    }
+
+    @Test
+    void adoptingATokenReportsWhetherItTookOwnership() {
+        cpms.onTransactionStart(12, null, "charger3", 1, 1000, 100L);
+
+        org.junit.jupiter.api.Assertions.assertTrue(cpms.onTransactionAuthorized(12, "CARD-B"));
+        org.junit.jupiter.api.Assertions.assertFalse(cpms.onTransactionAuthorized(12, "CARD-C"));
+        org.junit.jupiter.api.Assertions.assertFalse(cpms.onTransactionAuthorized(99, "CARD-B"));
     }
 
     private static long ms(String iso) {
@@ -220,5 +275,15 @@ class CpmsServiceTest {
         public Collection<@Nullable String> getValues() {
             return new ArrayList<>(map.values());
         }
+    }
+
+    @Test
+    void aVehicleAuthorizesJustAsACardDoes() {
+        // AutoCharge and plug-and-charge tokens are managed the same way as cards.
+        cpms.registerUser(new CpmsUser("u1", "Stijn", true, 0, List.of("CARD1"), List.of("001122334455")));
+
+        assertEquals(Boolean.TRUE, cpms.authorize("CARD1"));
+        assertEquals(Boolean.TRUE, cpms.authorize("001122334455"));
+        assertEquals(Boolean.FALSE, cpms.authorize("SOMEONE-ELSE"));
     }
 }

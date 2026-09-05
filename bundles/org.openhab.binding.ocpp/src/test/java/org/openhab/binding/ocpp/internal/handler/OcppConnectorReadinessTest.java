@@ -29,6 +29,8 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Commands;
+import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
@@ -77,6 +79,7 @@ class OcppConnectorReadinessTest {
     @BeforeEach
     void setUp() {
         parent = mock(OcppChargePointHandler.class);
+        when(parent.commands()).thenReturn(new Ocpp16Commands());
         when(parent.isReady()).thenAnswer(invocation -> ready.get());
         when(parent.getChargePointId()).thenReturn("charger");
         when(parent.getCapabilities()).thenReturn(ChargerCapabilities.unknown());
@@ -350,8 +353,8 @@ class OcppConnectorReadinessTest {
     @Test
     void aTransientStateDoesNotAutoUnlockWhenStuckRecoveryIsOff() {
         ready.set(true);
-        handler.onStatusNotification(
-                new StatusNotificationRequest(1, ChargePointErrorCode.NoError, ChargePointStatus.Preparing));
+        handler.onStatusNotification(Ocpp16Events.toStatusInfo(
+                new StatusNotificationRequest(1, ChargePointErrorCode.NoError, ChargePointStatus.Preparing)));
 
         verify(parent, org.mockito.Mockito.after(300).never()).send(argThat(r -> r instanceof UnlockConnectorRequest));
     }

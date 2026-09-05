@@ -10,23 +10,20 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.ocpp.internal.config;
-
-import java.util.List;
+package org.openhab.binding.ocpp.internal.transport.event;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 
 /**
- * Configuration for a {@code chargepoint} — one physical charger.
+ * A connector status change, protocol-neutral. Connector 0 addresses the charge point itself.
  *
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-public class OcppChargePointConfiguration {
+public record StatusInfo(int connectorId, @Nullable ConnectorStatus status, @Nullable String errorCode, boolean bare) {
 
-    public String chargePointId = "";
-    public int configSettleSeconds = 0;
-    public boolean meterless = false;
-    public int heartbeat = 0;
-    public List<String> extraConfig = List.of();
+    public StatusInfo(int connectorId, @Nullable ConnectorStatus status, @Nullable String errorCode) {
+        this(connectorId, status, errorCode, false);
+    }
 }
