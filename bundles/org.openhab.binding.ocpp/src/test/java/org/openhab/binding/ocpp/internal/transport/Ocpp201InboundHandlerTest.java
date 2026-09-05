@@ -312,6 +312,32 @@ class Ocpp201InboundHandlerTest {
         verify(listener, never()).nextTransactionId();
     }
 
+    @Test
+    void aRetransmittedRefusedStartIsRefusedAgain() {
+        when(listener.isTagAuthorized(any())).thenReturn(false);
+
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
+        TransactionEventResponse again = handler.handleTransactionEventRequest(session,
+                seq(TransactionEventEnum.Started, "abc", 0));
+
+        org.junit.jupiter.api.Assertions.assertEquals(
+                eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum.Invalid,
+                again.getIdTokenInfo().getStatus());
+    }
+
+    @Test
+    void anEventReplayedOnANewSocketIsStillRecognised() {
+        // A charger that reconnects gets a new session; the events it re-sends belong to the same charger.
+        UUID reconnected = UUID.randomUUID();
+        handler.bindSession(session, "charger");
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
+        handler.forget(session);
+        handler.bindSession(reconnected, "charger");
+        handler.handleTransactionEventRequest(reconnected, seq(TransactionEventEnum.Started, "abc", 0));
+
+        verify(listener, times(1)).onTransactionEvent(any(), any());
+    }
+
     private TransactionEventRequest seq(TransactionEventEnum kind, String transactionId, int seqNo) {
         TransactionEventRequest request = transaction(kind, transactionId, null);
         request.setSeqNo(seqNo);

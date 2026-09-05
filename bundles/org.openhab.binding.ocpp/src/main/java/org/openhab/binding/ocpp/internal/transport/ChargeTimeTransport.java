@@ -201,6 +201,7 @@ public class ChargeTimeTransport implements OcppTransport {
                     return;
                 }
                 String identifier = normalizeIdentifier(information != null ? information.getIdentifier() : null);
+                handler201.bindSession(sessionIndex, identifier);
                 ProtocolVersion negotiated = information == null ? null : information.getProtocolVersion();
                 OcppVersion version = negotiated == ProtocolVersion.OCPP2_0_1 ? OcppVersion.V2_0_1 : OcppVersion.V1_6;
                 logger.debug("Charger session opened: {} (id={}, {})", sessionIndex, identifier, version);

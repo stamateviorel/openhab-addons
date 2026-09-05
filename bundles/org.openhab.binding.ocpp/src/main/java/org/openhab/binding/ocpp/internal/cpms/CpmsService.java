@@ -129,16 +129,17 @@ public class CpmsService {
         storage.put(OPEN_PREFIX + transactionId, gson.toJson(open));
     }
 
-    /** The token presented after a plug-first start; the session is logged under it. */
-    /** Adopts a later token into an ownerless session only; on 1.6 the stopping tag need not be the starting one. */
-    public synchronized void onTransactionAuthorized(int transactionId, String idTag) {
+    /** Adopts a later token into an ownerless session; on 1.6 the stopping tag need not be the starting one. */
+    public synchronized boolean onTransactionAuthorized(int transactionId, String idTag) {
         String key = OPEN_PREFIX + transactionId;
         String json = storage.get(key);
         OpenTx open = json == null ? null : gson.fromJson(json, OpenTx.class);
-        if (open != null && open.idTag() == null) {
-            storage.put(key, gson.toJson(
-                    new OpenTx(idTag, open.chargePointId(), open.connectorId(), open.meterStart(), open.startEpoch())));
+        if (open == null || open.idTag() != null) {
+            return false;
         }
+        storage.put(key, gson.toJson(
+                new OpenTx(idTag, open.chargePointId(), open.connectorId(), open.meterStart(), open.startEpoch())));
+        return true;
     }
 
     public synchronized void onTransactionStop(int transactionId, @Nullable Integer meterStop, long stopEpoch) {

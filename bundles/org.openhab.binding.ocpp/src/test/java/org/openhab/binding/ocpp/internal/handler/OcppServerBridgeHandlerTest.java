@@ -118,7 +118,12 @@ class OcppServerBridgeHandlerTest {
 
         TestableBridgeHandler(Bridge bridge, StorageService storageService, OcppTransport injected,
                 @Nullable Map<String, Object> bindingProperties) {
-            super(bridge, storageService, new OcppBindingConfig(mock(ConfigurationAdmin.class), bindingProperties),
+            this(bridge, storageService, injected, mock(ConfigurationAdmin.class), bindingProperties);
+        }
+
+        TestableBridgeHandler(Bridge bridge, StorageService storageService, OcppTransport injected,
+                ConfigurationAdmin configAdmin, @Nullable Map<String, Object> bindingProperties) {
+            super(bridge, storageService, new OcppBindingConfig(configAdmin, bindingProperties),
                     mock(ItemRegistry.class));
             this.injected = injected;
         }
@@ -173,7 +178,7 @@ class OcppServerBridgeHandlerTest {
     }
 
     @Test
-    void aPasswordTheLibraryWouldRejectFailsInitializationInstead() {
+    void aPasswordOutsideTheProfile1WindowFailsInitialization() {
         // A configured password outside the 16-40 profile-1 window must fail config, not lock chargers out.
         when(thing.getConfiguration()).thenReturn(new Configuration(java.util.Map.of("authPassword", "tooshort")));
 
@@ -280,6 +285,40 @@ class OcppServerBridgeHandlerTest {
 
         org.junit.jupiter.api.Assertions.assertNull(handler.openTransactionFor("charx", 2),
                 "a stop before the handler exists must clear the persisted transaction");
+    }
+
+    @Test
+    void aStopTagIsNotLearnedButALaterTokenOnAnOwnerlessSessionIs() throws Exception {
+        // On 1.6 every StopTransaction carries a tag, possibly one the binding refused at the start.
+        ConfigurationAdmin configAdmin = mock(ConfigurationAdmin.class);
+        org.osgi.service.cm.Configuration configuration = mock(org.osgi.service.cm.Configuration.class);
+        java.util.Hashtable<String, Object> props = new java.util.Hashtable<>();
+        props.put("whitelistTagIds", java.util.List.of("KNOWN"));
+        when(configAdmin.getConfiguration(any(), any())).thenReturn(configuration);
+        when(configuration.getProperties()).thenReturn(props);
+        handler = new TestableBridgeHandler(thing, storageService, transport, configAdmin,
+                Map.of("autoLearn", true, "whitelistTagIds", java.util.List.of("KNOWN")));
+        handler.setCallback(callback);
+        handler.initialize();
+        verify(callback, timeout(2000)).statusUpdated(any(),
+                argThat(status -> status.getStatus() == ThingStatus.ONLINE));
+        UUID session = UUID.randomUUID();
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
+
+        handler.onTransactionEvent(session,
+                Ocpp16Events.toStarted(new StartTransactionRequest(2, "KNOWN", 0, ZonedDateTime.now()), 77));
+        StopTransactionRequest stop = new StopTransactionRequest(0, ZonedDateTime.now(), 77);
+        stop.setIdTag("STRANGER");
+        handler.onTransactionEvent(session, Ocpp16Events.toEnded(stop, 77));
+        verify(configuration, never()).update(any());
+
+        handler.onTransactionEvent(session,
+                new org.openhab.binding.ocpp.internal.transport.event.TransactionEvent(
+                        org.openhab.binding.ocpp.internal.transport.event.TransactionEvent.Kind.UPDATED, 2, 78, null,
+                        "PLUGFIRST", org.openhab.binding.ocpp.internal.transport.event.TokenType.UNKNOWN, null, null,
+                        null, null));
+        verify(configuration)
+                .update(argThat(updated -> String.valueOf(updated.get("whitelistTagIds")).contains("PLUGFIRST")));
     }
 
     @Test

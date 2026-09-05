@@ -31,6 +31,7 @@ import eu.chargetime.ocpp.v201.model.messages.GetBaseReportRequest;
 import eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionRequest;
 import eu.chargetime.ocpp.v201.model.messages.GetLocalListVersionResponse;
 import eu.chargetime.ocpp.v201.model.messages.RequestStartTransactionRequest;
+import eu.chargetime.ocpp.v201.model.messages.RequestStartTransactionResponse;
 import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
 import eu.chargetime.ocpp.v201.model.messages.ResetRequest;
 import eu.chargetime.ocpp.v201.model.messages.ResetResponse;
@@ -69,6 +70,7 @@ import eu.chargetime.ocpp.v201.model.types.MessagePriorityEnum;
 import eu.chargetime.ocpp.v201.model.types.MessageTriggerEnum;
 import eu.chargetime.ocpp.v201.model.types.OperationalStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ReportBaseEnum;
+import eu.chargetime.ocpp.v201.model.types.RequestStartStopStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.SetVariableData;
@@ -146,8 +148,9 @@ public class Ocpp201Commands implements OcppCommands {
     @Override
     public Request setChargingProfile(int connectorId, double value, boolean inWatts, int numberPhases,
             boolean txDefault, @Nullable Integer transactionId, @Nullable String remoteId) {
-        // 2.0.1 requires a TxProfile to name its transaction; without the charger's id use a TxDefaultProfile.
-        boolean useTxProfile = transactionId != null && !txDefault && remoteId != null;
+        // 2.0.1 requires a TxProfile to name its transaction; without the charger's id the binding's is sent
+        // and rejected, leaving the limit visibly unapplied rather than a TxDefaultProfile outliving the session.
+        boolean useTxProfile = transactionId != null && !txDefault;
         ChargingSchedulePeriod period = new ChargingSchedulePeriod(0, value);
         if (numberPhases > 0) {
             period.setNumberPhases(numberPhases);
@@ -158,7 +161,7 @@ public class Ocpp201Commands implements OcppCommands {
                 useTxProfile ? ChargingProfilePurposeEnum.TxProfile : ChargingProfilePurposeEnum.TxDefaultProfile,
                 ChargingProfileKindEnum.Relative, new ChargingSchedule[] { schedule });
         if (useTxProfile) {
-            profile.setTransactionId(remoteId);
+            profile.setTransactionId(remoteId != null ? remoteId : String.valueOf(transactionId));
         }
         return new SetChargingProfileRequest(connectorId, profile);
     }
@@ -276,7 +279,29 @@ public class Ocpp201Commands implements OcppCommands {
         if (confirmation instanceof TriggerMessageResponse trigger) {
             return trigger.getStatus() == TriggerMessageStatusEnum.Accepted;
         }
+        if (confirmation instanceof RequestStartTransactionResponse start) {
+            return start.getStatus() == RequestStartStopStatusEnum.Accepted;
+        }
         return confirmation != null;
+    }
+
+    @Override
+    public boolean isNotApplicable(@Nullable Confirmation confirmation) {
+        if (!(confirmation instanceof SetVariablesResponse variables)) {
+            return false;
+        }
+        SetVariableResult[] results = variables.getSetVariableResult();
+        if (results == null || results.length == 0) {
+            return true;
+        }
+        for (SetVariableResult result : results) {
+            SetVariableStatusEnum status = result.getAttributeStatus();
+            if (status == SetVariableStatusEnum.UnknownComponent || status == SetVariableStatusEnum.UnknownVariable
+                    || status == SetVariableStatusEnum.NotSupportedAttributeType) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** A vehicle identifies itself by MAC address; anything else is presented as an RFID card. */

@@ -219,6 +219,15 @@ class CpmsServiceTest {
         assertEquals("u1", tx.userId());
     }
 
+    @Test
+    void adoptingATokenReportsWhetherItTookOwnership() {
+        cpms.onTransactionStart(12, null, "charger3", 1, 1000, 100L);
+
+        org.junit.jupiter.api.Assertions.assertTrue(cpms.onTransactionAuthorized(12, "CARD-B"));
+        org.junit.jupiter.api.Assertions.assertFalse(cpms.onTransactionAuthorized(12, "CARD-C"));
+        org.junit.jupiter.api.Assertions.assertFalse(cpms.onTransactionAuthorized(99, "CARD-B"));
+    }
+
     private static long ms(String iso) {
         return Instant.parse(iso).toEpochMilli();
     }

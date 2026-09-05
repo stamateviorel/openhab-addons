@@ -97,4 +97,7 @@ public interface OcppCommands {
 
     /** Whether the charger refused the value itself (not the setting), so a shorter list is worth a retry. */
     boolean isValueRejected(@Nullable Confirmation confirmation);
+
+    /** Whether the charger has no such setting at all, so it is skipped rather than counted as a failure. */
+    boolean isNotApplicable(@Nullable Confirmation confirmation);
 }

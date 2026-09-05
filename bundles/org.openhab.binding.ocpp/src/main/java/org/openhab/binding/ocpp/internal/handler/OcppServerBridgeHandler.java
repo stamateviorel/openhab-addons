@@ -432,10 +432,11 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         if (idToken == null) {
             return;
         }
-        enrollToken(session, idToken, event.tokenType(), event.connectorId());
         CpmsService service = cpms;
-        if (service != null) {
-            service.onTransactionAuthorized(event.transactionId(), idToken);
+        boolean adopted = service != null && service.onTransactionAuthorized(event.transactionId(), idToken);
+        // On 1.6 every stop carries a tag, possibly one the binding refused at the start.
+        if (event.kind() != TransactionEvent.Kind.ENDED || adopted) {
+            enrollToken(session, idToken, event.tokenType(), event.connectorId());
         }
     }
 

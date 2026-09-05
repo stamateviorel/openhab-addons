@@ -1009,7 +1009,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 && change.getStatus() == ConfigurationStatus.RebootRequired) {
             logger.warn("Boot config for {} accepted but needs a charger reboot to take effect", chargePointId);
         }
-        return commands().isAccepted(confirmation);
+        return commands().isAccepted(confirmation) || commands().isNotApplicable(confirmation);
     }
 
     private static String configStatusOf(@Nullable Confirmation confirmation) {
@@ -1044,8 +1044,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 result.completeExceptionally(ex);
                 return;
             }
-            // A charger that turns the measurand list down is offered a shorter one; both versions
-            // report that the same way once isAccepted has read their own status enum.
+            // A charger that turns the value down (not the setting) is offered a shorter list.
             if (commands().isAccepted(confirmation)) {
                 acceptedMeasurands.put(key, value);
             } else if (commands().isValueRejected(confirmation)) {

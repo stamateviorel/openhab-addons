@@ -98,6 +98,8 @@ public class Ocpp201InboundHandler
     // A charger need not repeat the EVSE on every event of a transaction; this keeps the one it started on.
     private final Map<String, Integer> transactionConnectors = new ConcurrentHashMap<>();
     private final Map<String, DeviceModelReport> reports = new ConcurrentHashMap<>();
+    // Transaction state is kept per charger, not per socket, so a reconnect does not lose it.
+    private final Map<UUID, String> sessionIdentity = new ConcurrentHashMap<>();
     // The last event seen per transaction, so a replayed or duplicated one is not counted twice.
     private final Map<String, Integer> lastSeqNo = new ConcurrentHashMap<>();
 
@@ -202,12 +204,23 @@ public class Ocpp201InboundHandler
     }
 
     /** Drops half-received reports and per-transaction state when a session goes away. */
+    /** Ties a session to its charger id; without one the socket id stands in. */
+    public void bindSession(UUID session, @Nullable String chargePointId) {
+        if (chargePointId != null) {
+            sessionIdentity.put(session, chargePointId);
+        }
+    }
+
+    /** Drops half-received reports and the session binding when a socket goes away; transaction state outlives it. */
     public void forget(UUID session) {
         String prefix = session + "/";
         reports.keySet().removeIf(key -> key.startsWith(prefix));
-        transactionIds.keySet().removeIf(key -> key.startsWith(prefix));
-        transactionConnectors.keySet().removeIf(key -> key.startsWith(prefix));
-        lastSeqNo.keySet().removeIf(key -> key.startsWith(prefix));
+        sessionIdentity.remove(session);
+    }
+
+    private String identity(UUID session) {
+        String bound = sessionIdentity.get(session);
+        return bound != null ? bound : session.toString();
     }
 
     @Override
@@ -216,8 +229,7 @@ public class Ocpp201InboundHandler
             StatusNotificationRequest request) {
         logger.debug("StatusNotification (2.0.1) from session {} evse {}: {}", sessionIndex, request.getEvseId(),
                 request.getConnectorStatus());
-        // A bare 2.0.1 Occupied carries no charging detail; while a transaction is open on the EVSE the
-        // transaction events already say more, so it is not delivered.
+        // A bare Occupied says only that a vehicle is present.
         if (request.getConnectorStatus() == ConnectorStatusEnum.Occupied
                 && hasOpenTransaction(sessionIndex, request.getEvseId())) {
             return new StatusNotificationResponse();
@@ -231,7 +243,7 @@ public class Ocpp201InboundHandler
         if (evseId == null) {
             return false;
         }
-        String prefix = session + "/";
+        String prefix = identity(session) + "/";
         for (Map.Entry<String, Integer> entry : transactionConnectors.entrySet()) {
             if (entry.getKey().startsWith(prefix) && evseId.equals(entry.getValue())) {
                 return true;
@@ -280,25 +292,25 @@ public class Ocpp201InboundHandler
             case Updated -> TransactionEvent.Kind.UPDATED;
         };
 
-        if (remoteId != null && isReplay(sessionIndex, remoteId, request.getSeqNo())) {
-            logger.debug("TransactionEvent {} for {} seq {} already seen; not counted again", kind, remoteId,
-                    request.getSeqNo());
-            return new TransactionEventResponse();
-        }
         // A plug-first session starts with no token and presents one in a later update, so whichever
         // event carries a token is the one that is answered; without one there is nothing to refuse.
         boolean authorized = idToken == null || listener.isTagAuthorized(idToken);
+        // Refused before the replay guard records it, so a retransmitted refused start is refused again.
         if (!authorized && kind == TransactionEvent.Kind.STARTED) {
             logger.debug("TransactionEvent {} from session {} tx {} refused", kind, sessionIndex, remoteId);
             TransactionEventResponse refused = new TransactionEventResponse();
             refused.setIdTokenInfo(new IdTokenInfo(AuthorizationStatusEnum.Invalid));
             return refused;
         }
+        if (remoteId != null && isReplay(sessionIndex, remoteId, request.getSeqNo())) {
+            logger.debug("TransactionEvent {} for {} seq {} already seen; not counted again", kind, remoteId,
+                    request.getSeqNo());
+            return new TransactionEventResponse();
+        }
         int transactionId = idFor(sessionIndex, remoteId);
         logger.debug("TransactionEvent {} from session {} tx {} -> id {} ({})", kind, sessionIndex, remoteId,
                 transactionId, authorized ? "accepted" : "invalid");
 
-        // A refused token on a later event still counts, or the transaction would never be seen to end.
         Integer connectorId = connectorOf(sessionIndex, request.getEvse(), remoteId, transactionId);
         ConnectorStatus chargingState = info == null ? null : Ocpp201Events.toConnectorStatus(info.getChargingState());
         Integer meterWh = meterWhOf(request);
@@ -377,8 +389,8 @@ public class Ocpp201InboundHandler
     }
 
     /** A 2.0.1 transaction id is chosen by the station, so two chargers can pick the same one. */
-    private static String key(UUID session, String remoteId) {
-        return session + "/" + remoteId;
+    private String key(UUID session, String remoteId) {
+        return identity(session) + "/" + remoteId;
     }
 
     /** The energy register, which is what the usage log and the session-energy channel are built on. */

@@ -274,6 +274,40 @@ class OcppConnectorHandlerTest {
     }
 
     @Test
+    void aChosenTokenSurvivesAStartTheChargerRejected() {
+        ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
+        when(thing.getBridgeUID()).thenReturn(chargePointUID);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
+        when(chargePoint.isReady()).thenReturn(true);
+        when(chargePoint.getChargePointId()).thenReturn("charger");
+        when(chargePoint.tokenTypeOf(any())).thenReturn(TokenType.VEHICLE);
+        when(chargePoint.send(any())).thenReturn(
+                CompletableFuture.completedFuture(new eu.chargetime.ocpp.model.core.RemoteStartTransactionConfirmation(
+                        eu.chargetime.ocpp.model.core.RemoteStartStopStatus.Rejected)));
+        Bridge bridge = mock(Bridge.class);
+        when(bridge.getHandler()).thenReturn(chargePoint);
+        when(callback.getBridge(chargePointUID)).thenReturn(bridge);
+        handler.initialize();
+
+        command(CHANNEL_ID_TAG, new StringType("AA:BB:CC:DD:EE:FF"));
+        command(CHANNEL_CHARGING, OnOffType.ON);
+        command(CHANNEL_CHARGING, OnOffType.ON);
+
+        ArgumentCaptor<eu.chargetime.ocpp.model.Request> captor = ArgumentCaptor
+                .forClass(eu.chargetime.ocpp.model.Request.class);
+        verify(chargePoint, timeout(2000).times(2))
+                .send(argThat(r -> r instanceof eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest));
+        verify(chargePoint, org.mockito.Mockito.atLeastOnce()).send(captor.capture());
+        java.util.List<String> tags = captor.getAllValues().stream()
+                .filter(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest.class::isInstance)
+                .map(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest.class::cast)
+                .map(eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest::getIdTag).toList();
+        assertEquals(java.util.List.of("AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF"), tags);
+        assertChannel(CHANNEL_ID_TAG, new StringType("AA:BB:CC:DD:EE:FF"));
+    }
+
+    @Test
     void aRemoteStartTheChargerDoesNotAnswerIsRetried() {
         ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
         when(thing.getBridgeUID()).thenReturn(chargePointUID);

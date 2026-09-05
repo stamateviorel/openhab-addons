@@ -276,6 +276,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         cancel(remoteStartRetryTask);
         pollTask = null;
         remoteStartRetryTask = null;
+        pendingStartTag = null;
         synchronized (lock) {
             cancel(stuckTask);
             cancel(pendingFlush);
@@ -342,9 +343,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 break;
             case CHANNEL_ID_TAG:
                 if (command instanceof StringType tag && !tag.toString().isBlank()) {
-                    String chosen = tag.toString().trim();
-                    pendingStartTag = chosen;
-                    updateState(CHANNEL_ID_TAG, new StringType(chosen));
+                    pendingStartTag = tag.toString().trim();
+                    publishStartTag();
                 }
                 break;
             case CHANNEL_CHARGING:
@@ -564,14 +564,23 @@ public class OcppConnectorHandler extends BaseThingHandler {
         cancel(remoteStartRetryTask);
         remoteStartRetryTask = null;
         String chosen = pendingStartTag;
-        pendingStartTag = null;
         attemptRemoteStart(remoteStartRetries, chosen != null ? chosen : remoteStartTag);
+    }
+
+    /** Publishes the token the next remote start would present. */
+    private void publishStartTag() {
+        String pending = pendingStartTag;
+        updateState(CHANNEL_ID_TAG, new StringType(pending != null ? pending : remoteStartTag));
     }
 
     private void attemptRemoteStart(int remaining, String tag) {
         OcppChargePointHandler parent = chargePointHandler();
         TokenType type = parent == null ? TokenType.UNKNOWN : parent.tokenTypeOf(tag);
         dispatch(commands().remoteStart(connectorId, tag, type), "RemoteStart").whenComplete((confirmation, ex) -> {
+            if (ex == null && commands().isAccepted(confirmation) && tag.equals(pendingStartTag)) {
+                pendingStartTag = null;
+                publishStartTag();
+            }
             if (ex == null || remaining <= 0 || transactionId != null || !isReadyToSend()) {
                 return;
             }
@@ -734,6 +743,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     public void onStatusNotification(StatusInfo info) {
         ConnectorStatus status = info.status();
+        // A bare 2.0.1 Occupied says only that a vehicle is present; the open transaction's events say more.
+        if (info.bare() && status == ConnectorStatus.PREPARING && transactionId != null) {
+            updateStatus(ThingStatus.ONLINE);
+            return;
+        }
         if (status != null) {
             updateState(CHANNEL_STATUS, new StringType(status.label()));
             updateState(CHANNEL_CABLE_CONNECTED, OnOffType.from(CABLE_PRESENT.contains(status)));
@@ -809,6 +823,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
     public void onTransactionStarted(TransactionEvent event) {
         cancel(remoteStartRetryTask);
         remoteStartRetryTask = null;
+        // Any start, remote or by card, is the one the chosen token was meant for.
+        pendingStartTag = null;
         int transactionId = event.transactionId();
         this.transactionId = transactionId;
         this.remoteTransactionId = event.remoteId();

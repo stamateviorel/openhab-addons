@@ -64,7 +64,8 @@ public final class Ocpp201Events {
      */
     public static StatusInfo toStatusInfo(StatusNotificationRequest request) {
         Integer evseId = request.getEvseId();
-        return new StatusInfo(evseId == null ? 0 : evseId, toConnectorStatus(request.getConnectorStatus()), null);
+        // A plain StatusNotification carries no charging detail, unlike the state on a transaction event.
+        return new StatusInfo(evseId == null ? 0 : evseId, toConnectorStatus(request.getConnectorStatus()), null, true);
     }
 
     public static MeterSample toMeterSample(int connectorId, MeterValue @Nullable [] meterValues) {

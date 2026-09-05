@@ -169,6 +169,16 @@ class Ocpp201CommandsTest {
                 result(SetVariableStatusEnum.Accepted), result(SetVariableStatusEnum.UnknownVariable) })));
     }
 
+    @Test
+    void aSettingTheChargerDoesNotHaveIsNotApplicableRatherThanRefused() {
+        assertTrue(commands.isNotApplicable(
+                new SetVariablesResponse(new SetVariableResult[] { result(SetVariableStatusEnum.UnknownComponent) })));
+        assertFalse(commands.isNotApplicable(
+                new SetVariablesResponse(new SetVariableResult[] { result(SetVariableStatusEnum.Rejected) })));
+        assertFalse(commands.isNotApplicable(
+                new SetVariablesResponse(new SetVariableResult[] { result(SetVariableStatusEnum.Accepted) })));
+    }
+
     private static SetVariableResult result(SetVariableStatusEnum status) {
         return new SetVariableResult(status, new Component("SampledDataCtrlr"), new Variable("TxUpdatedInterval"));
     }

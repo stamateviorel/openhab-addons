@@ -21,5 +21,9 @@ import org.eclipse.jdt.annotation.Nullable;
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-public record StatusInfo(int connectorId, @Nullable ConnectorStatus status, @Nullable String errorCode) {
+public record StatusInfo(int connectorId, @Nullable ConnectorStatus status, @Nullable String errorCode, boolean bare) {
+
+    public StatusInfo(int connectorId, @Nullable ConnectorStatus status, @Nullable String errorCode) {
+        this(connectorId, status, errorCode, false);
+    }
 }
