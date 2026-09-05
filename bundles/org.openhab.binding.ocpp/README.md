@@ -27,7 +27,8 @@ A few differences are worth knowing about, because they show up in what the chan
 - Capabilities come from the 2.0.1 device model rather than a flat key list, so they arrive a moment
   after the charger connects rather than in a single answer.
 - A 2.0.1 charger can open a transaction on plug-in and take the card afterwards. The session is
-  logged under whichever token is presented before it ends, and the `id-tag` channel follows.
+  logged under the first token it presents, and the `id-tag` channel follows. A later token is taken
+  only while the session still has none, so a stop by a different card does not re-attribute it.
 - A session survives an openHAB restart on either version: the transaction keeps its id and its
   connector, and a stop sent afterwards still names the transaction the way the charger knows it.
 
@@ -196,7 +197,7 @@ The connector's writable channels map to OCPP commands, and each updates only on
 `charging` starts and stops a transaction: sending it `ON` issues a `RemoteStartTransaction`, `OFF` a `RemoteStopTransaction`.
 The transaction is started with the idTag from the connector's `remoteStartTag` (default `openhab`), which has to be authorized: by this binding through the Authorized Tag IDs list in [Add-on Settings](#add-on-settings) (empty accepts any tag), and by the charger itself if it enforces its own whitelist.
 So if `ON` does nothing, set `remoteStartTag` to a tag your charger accepts, or allow that tag on the charger.
-To start as someone else — a particular card, or a vehicle's own AutoCharge identity — send that token as a command to the connector's `id-tag` channel first; the next `ON` presents it, typed as a vehicle where a user lists it under `vehicles`. It applies to that one start and is then dropped, so the following session goes back to the connector's configured `remoteStartTag` rather than silently running as the last token used.
+To start as someone else — a particular card, or a vehicle's own AutoCharge identity — send that token as a command to the connector's `id-tag` channel first; the next `ON` presents it, typed as a vehicle where a user lists it under `vehicles`. It is spent by a start the charger accepts — a start the charger rejects keeps it, so it does not have to be set again — and any session beginning clears it. The following session goes back to the connector's configured `remoteStartTag` rather than silently running as the last token used, and the channel shows the token the next start would present.
 Most chargers also only start once a vehicle is plugged in, so a `RemoteStart` on an idle connector is often ignored.
 Because `charging` follows the charger's reported status, it also reads `ON` on its own whenever a transaction is running, however it was started.
 
