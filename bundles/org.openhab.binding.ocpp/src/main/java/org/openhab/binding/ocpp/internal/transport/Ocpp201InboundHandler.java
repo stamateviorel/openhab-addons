@@ -14,6 +14,7 @@ package org.openhab.binding.ocpp.internal.transport;
 
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -396,8 +397,11 @@ public class Ocpp201InboundHandler
     /** The energy register, which is what the usage log and the session-energy channel are built on. */
     private static @Nullable Integer meterWhOf(TransactionEventRequest request) {
         MeterSample sample = Ocpp201Events.toMeterSample(0, request.getMeterValue());
-        for (MeterSample.Block block : sample.blocks()) {
-            for (MeterSample.Reading reading : block.readings()) {
+        // An end event carries the transaction's first reading as well as its last; the register that
+        // counts is the latest one, so the blocks are read newest first.
+        List<MeterSample.Block> blocks = sample.blocks();
+        for (int i = blocks.size() - 1; i >= 0; i--) {
+            for (MeterSample.Reading reading : blocks.get(i).readings()) {
                 String measurand = reading.measurand();
                 String value = reading.value();
                 if (value == null || reading.phase() != null

@@ -434,6 +434,25 @@ class Ocpp201InboundHandlerTest {
         verify(listener, never()).nextTransactionId();
     }
 
+    @Test
+    void anEndTakesTheRegisterFromItsLatestBlockNotTheTransactionsFirst() {
+        handler.handleTransactionEventRequest(session, transaction(TransactionEventEnum.Started, "abc", null));
+        SampledValue begin = new SampledValue(21483d);
+        begin.setMeasurand(MeasurandEnum.EnergyActiveImportRegister);
+        SampledValue end = new SampledValue(33970d);
+        end.setMeasurand(MeasurandEnum.EnergyActiveImportRegister);
+        TransactionEventRequest ended = transaction(TransactionEventEnum.Ended, "abc", null);
+        ended.setMeterValue(new MeterValue[] {
+                new MeterValue(new SampledValue[] { begin }, ZonedDateTime.now(ZoneOffset.UTC).minusHours(9)),
+                new MeterValue(new SampledValue[] { end }, ZonedDateTime.now(ZoneOffset.UTC)) });
+
+        handler.handleTransactionEventRequest(session, ended);
+
+        ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener, times(2)).onTransactionEvent(eq(session), captor.capture());
+        assertEquals(33970, captor.getAllValues().get(1).meterWh());
+    }
+
     private TransactionEventRequest transaction(TransactionEventEnum kind, @Nullable String transactionId,
             SampledValue @Nullable [] samples) {
         Transaction info = new Transaction(transactionId == null ? "" : transactionId);
