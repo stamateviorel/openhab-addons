@@ -95,6 +95,11 @@ public interface OcppCommands {
     /** Whether a confirmation reports the command as accepted, across both versions' status enums. */
     boolean isAccepted(@Nullable Confirmation confirmation);
 
+    /** A one-line account of an answer for the log, naming what was refused where the answer says. */
+    default String describe(@Nullable Confirmation confirmation) {
+        return String.valueOf(confirmation);
+    }
+
     /** Whether the charger refused the value itself (not the setting), so a shorter list is worth a retry. */
     boolean isValueRejected(@Nullable Confirmation confirmation);
 

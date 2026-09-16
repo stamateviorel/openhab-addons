@@ -272,6 +272,15 @@ class Ocpp201CommandsTest {
         assertEquals(IdTokenEnum.MacAddress, list.getLocalAuthorizationList()[1].getIdToken().getType());
     }
 
+    @Test
+    void aRefusedVariableIsNamedInTheDescription() {
+        SetVariableResult refused = new SetVariableResult(SetVariableStatusEnum.Rejected,
+                new Component("OCPPCommCtrlr"), new Variable("NetworkConfigurationPriority"));
+        SetVariablesResponse response = new SetVariablesResponse(new SetVariableResult[] { refused });
+
+        assertEquals("OCPPCommCtrlr.NetworkConfigurationPriority=Rejected", commands.describe(response));
+    }
+
     private static Map<String, TokenType> tokens(String... ids) {
         Map<String, TokenType> map = new LinkedHashMap<>();
         for (String id : ids) {

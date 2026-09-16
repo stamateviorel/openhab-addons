@@ -162,6 +162,12 @@ public class Ocpp16Commands implements OcppCommands {
     }
 
     @Override
+    public String describe(@Nullable Confirmation confirmation) {
+        return confirmation instanceof ChangeConfigurationConfirmation change ? String.valueOf(change.getStatus())
+                : String.valueOf(confirmation);
+    }
+
+    @Override
     public boolean isAccepted(@Nullable Confirmation confirmation) {
         if (confirmation instanceof SetChargingProfileConfirmation profile) {
             return profile.getStatus() == ChargingProfileStatus.Accepted;

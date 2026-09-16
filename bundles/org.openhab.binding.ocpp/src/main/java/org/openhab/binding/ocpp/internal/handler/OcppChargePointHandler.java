@@ -505,7 +505,13 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             return CompletableFuture
                     .failedFuture(new IllegalStateException("Charger " + chargePointId + " is offline"));
         }
-        return transport.send(localSession, request);
+        // A reply is proof of life as much as a message the charger sends on its own: an idle Alfen
+        // answers every poll yet skips its heartbeat because of them, and must not read as silent.
+        return transport.send(localSession, request).whenComplete((confirmation, ex) -> {
+            if (ex == null && localSession.equals(session)) {
+                recordActivity();
+            }
+        });
     }
 
     private void becomeReady(UUID expectedSession) {
@@ -1012,9 +1018,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         return commands().isAccepted(confirmation) || commands().isNotApplicable(confirmation);
     }
 
-    private static String configStatusOf(@Nullable Confirmation confirmation) {
-        return confirmation instanceof ChangeConfigurationConfirmation change ? String.valueOf(change.getStatus())
-                : String.valueOf(confirmation);
+    private String configStatusOf(@Nullable Confirmation confirmation) {
+        return commands().describe(confirmation);
     }
 
     private CompletableFuture<Confirmation> sendConfig(String key, String value) {

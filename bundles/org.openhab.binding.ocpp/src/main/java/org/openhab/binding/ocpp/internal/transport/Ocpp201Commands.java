@@ -246,6 +246,25 @@ public class Ocpp201Commands implements OcppCommands {
     }
 
     @Override
+    public String describe(@Nullable Confirmation confirmation) {
+        if (confirmation instanceof SetVariablesResponse variables && variables.getSetVariableResult() != null) {
+            StringBuilder text = new StringBuilder();
+            for (SetVariableResult result : variables.getSetVariableResult()) {
+                if (text.length() > 0) {
+                    text.append(", ");
+                }
+                text.append(result.getComponent().getName()).append('.').append(result.getVariable().getName())
+                        .append('=').append(result.getAttributeStatus());
+                if (result.getAttributeStatusInfo() != null) {
+                    text.append(" (").append(result.getAttributeStatusInfo().getReasonCode()).append(')');
+                }
+            }
+            return text.toString();
+        }
+        return String.valueOf(confirmation);
+    }
+
+    @Override
     public boolean isAccepted(@Nullable Confirmation confirmation) {
         if (confirmation instanceof SetVariablesResponse variables) {
             SetVariableResult[] results = variables.getSetVariableResult();

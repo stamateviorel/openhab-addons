@@ -39,6 +39,7 @@ import org.openhab.binding.ocpp.internal.transport.OcppTransport;
 import org.openhab.binding.ocpp.internal.transport.event.OcppVersion;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.thing.Bridge;
+import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingUID;
@@ -67,6 +68,7 @@ class OcppBootConfigTest {
 
     private @NonNullByDefault({}) OcppChargePointHandler handler;
     private @NonNullByDefault({}) OcppTransport transport;
+    private @NonNullByDefault({}) ThingHandlerCallback callback;
     private @NonNullByDefault({}) OcppServerConfiguration serverConfig;
     private final List<ChangeConfigurationRequest> sent = new ArrayList<>();
 
@@ -93,7 +95,7 @@ class OcppBootConfigTest {
         when(cpThing.getConfiguration())
                 .thenReturn(new Configuration(Map.of("chargePointId", "charger", "configSettleSeconds", 0)));
 
-        ThingHandlerCallback callback = mock(ThingHandlerCallback.class);
+        callback = mock(ThingHandlerCallback.class);
         when(callback.getBridge(SERVER_UID)).thenReturn(serverThing);
 
         handler = new OcppChargePointHandler(cpThing);
@@ -241,6 +243,16 @@ class OcppBootConfigTest {
             Thread.sleep(20);
         }
         assertEquals(List.of("false"), sentValuesFor("AuthorizeRemoteTxRequests"));
+    }
+
+    @Test
+    void aReplyFromTheChargerCountsAsActivity() {
+        // An idle Alfen answers every poll but sends nothing of its own; the answer must keep it alive.
+        org.mockito.Mockito.clearInvocations(callback);
+
+        handler.sendNow(new eu.chargetime.ocpp.model.core.GetConfigurationRequest());
+
+        verify(callback, timeout(2000)).stateUpdated(eq(new ChannelUID(CP_UID, CHANNEL_LAST_SEEN)), any());
     }
 
     @Test
