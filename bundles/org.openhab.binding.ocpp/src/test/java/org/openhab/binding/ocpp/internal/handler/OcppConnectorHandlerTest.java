@@ -183,6 +183,27 @@ class OcppConnectorHandlerTest {
     }
 
     @Test
+    void theLastSessionTotalIsPublishedOnceAndSurvivesTheNextSessionsMeterValues() {
+        handler.onTransactionStarted(Ocpp16Events.toStarted(
+                new eu.chargetime.ocpp.model.core.StartTransactionRequest(1, "tag", 100, java.time.ZonedDateTime.now()),
+                7));
+        handler.onTransactionEnded(Ocpp16Events.toEnded(
+                new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600, java.time.ZonedDateTime.now(), 7), 7));
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 1600, java.time.ZonedDateTime.now()), 8));
+        handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "1.9"));
+
+        // A running session moves session-energy; the finished total must not move with it.
+        verify(callback, times(1)).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_LAST_SESSION_ENERGY)),
+                eq(new org.openhab.core.library.types.QuantityType<>(1500,
+                        org.openhab.core.library.unit.Units.WATT_HOUR)));
+        verify(callback, org.mockito.Mockito.never()).stateUpdated(
+                eq(new ChannelUID(THING_UID, CHANNEL_LAST_SESSION_ENERGY)),
+                eq(new org.openhab.core.library.types.QuantityType<>(300,
+                        org.openhab.core.library.unit.Units.WATT_HOUR)));
+    }
+
+    @Test
     void anUpdateTellsTheConnectorWhichTransactionAStopMustName() {
         ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
         when(thing.getBridgeUID()).thenReturn(chargePointUID);

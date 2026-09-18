@@ -22,6 +22,11 @@
 				<type>ocpp:session-energy</type>
 			</add-channel>
 		</instruction-set>
+		<instruction-set targetVersion="2">
+			<add-channel id="last-session-energy">
+				<type>ocpp:last-session-energy</type>
+			</add-channel>
+		</instruction-set>
 	</thing-type>
 
 </update:update-descriptions>

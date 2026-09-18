@@ -875,17 +875,21 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     public void onTransactionEnded(TransactionEvent event) {
-        this.transactionId = null;
-        this.remoteTransactionId = null;
-        updateState(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
         Integer meterStop = event.meterWh();
         if (meterStop != null) {
             updateState(CHANNEL_METER_STOP, new QuantityType<>(meterStop, Units.WATT_HOUR));
             Integer start = meterStart;
             if (start != null) {
-                updateState(CHANNEL_SESSION_ENERGY, new QuantityType<>(meterStop - start, Units.WATT_HOUR));
+                int total = meterStop - start;
+                updateState(CHANNEL_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
+                updateState(CHANNEL_LAST_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
             }
         }
+        // The totals settle before the transaction is cleared, so a rule watching for the end reads the
+        // finished session and not the last reading taken during it.
+        this.transactionId = null;
+        this.remoteTransactionId = null;
+        updateState(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
         meterStart = null;
         ZonedDateTime timestamp = event.timestamp();
         if (timestamp != null) {

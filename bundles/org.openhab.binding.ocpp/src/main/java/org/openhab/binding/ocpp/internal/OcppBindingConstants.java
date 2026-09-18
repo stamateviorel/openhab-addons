@@ -91,6 +91,7 @@ public class OcppBindingConstants {
     public static final String CHANNEL_METER_START = "meter-start";
     public static final String CHANNEL_METER_STOP = "meter-stop";
     public static final String CHANNEL_SESSION_ENERGY = "session-energy";
+    public static final String CHANNEL_LAST_SESSION_ENERGY = "last-session-energy";
     public static final String CHANNEL_TIMESTAMP = "timestamp";
     public static final String CHANNEL_TIMESTAMP_START = "timestamp-start";
     public static final String CHANNEL_TIMESTAMP_STOP = "timestamp-stop";
