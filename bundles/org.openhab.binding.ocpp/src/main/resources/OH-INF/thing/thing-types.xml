@@ -214,6 +214,7 @@
 			<channel id="power-offered" typeId="power-offered"/>
 			<channel id="energy-active-import" typeId="energy-active-import"/>
 			<channel id="session-energy" typeId="session-energy"/>
+			<channel id="last-session-energy" typeId="last-session-energy"/>
 			<!-- Extra OCPP telemetry measurands — aggregate current/voltage, export direction,
 				reactive/apparent power, power factor, frequency, interval energy, soc, rpm,
 				temperature — are NOT declared here. OcppConnectorHandler creates them dynamically
@@ -238,7 +239,7 @@
 		</channels>
 
 		<properties>
-			<property name="thingTypeVersion">1</property>
+			<property name="thingTypeVersion">2</property>
 		</properties>
 
 		<representation-property>uniqueId</representation-property>
@@ -640,6 +641,20 @@
 		<label>Session Energy</label>
 		<description>Energy delivered in the current charging session (meter reading minus meter-start), updated as the
 			charger reports and settled when the transaction ends. Empty on a meter-less charger.</description>
+		<category>Energy</category>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Energy</tag>
+		</tags>
+		<state readOnly="true" pattern="%.2f kWh"/>
+	</channel-type>
+
+	<channel-type id="last-session-energy">
+		<item-type>Number:Energy</item-type>
+		<label>Last Session Energy</label>
+		<description>Energy of the last completed charging session, published once when the transaction ends and kept
+			until the
+			next one ends. One value per session, so persistence logs a session total without a rule.</description>
 		<category>Energy</category>
 		<tags>
 			<tag>Measurement</tag>

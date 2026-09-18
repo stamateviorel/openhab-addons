@@ -177,6 +177,7 @@ The list lives on the `local-auth-list` channel as a comma-separated set of idTa
 | power-offered           | Number:Power             | R          | Power offered to the vehicle                                                                    |
 | energy-active-import    | Number:Energy            | R          | Energy register (Energy.Active.Import.Register)                                                 |
 | session-energy          | Number:Energy            | R          | Energy of the current session so far, from the meter register; final value at stop              |
+| last-session-energy     | Number:Energy            | R          | Total of the last completed session, published once at its stop and kept until the next one ends |
 | charging                | Switch                   | RW         | ON while a transaction runs; command to remote start/stop                                       |
 | charge-limit            | Number:ElectricCurrent   | RW         | Charge current cap via SetChargingProfile                                                       |
 | power-limit             | Number:Power             | RW         | Charge power cap (watts) for power-only chargers; takes over from charge-limit until a later charge-limit clears it |
