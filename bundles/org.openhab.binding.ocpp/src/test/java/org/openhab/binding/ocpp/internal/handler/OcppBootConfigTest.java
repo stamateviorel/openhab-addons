@@ -52,6 +52,7 @@ import eu.chargetime.ocpp.model.core.ChangeConfigurationRequest;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 import eu.chargetime.ocpp.model.core.GetConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
+import eu.chargetime.ocpp.model.core.KeyValueType;
 
 /**
  * Tests the configuration a charge point receives after it boots and the outbound-request
@@ -378,6 +379,51 @@ class OcppBootConfigTest {
         handler.onHeartbeat();
         verify(transport, org.mockito.Mockito.after(1500).never()).send(any(),
                 eq(new ChangeConfigurationRequest("Key", "1")));
+    }
+
+    @Test
+    void aSettingTheChargerHasForgottenIsSentAgainOnItsNextBoot() {
+        serverConfig.extraConfig = List.of("DynamicCircuitCurrent=16");
+        reportConfiguration(Map.of("DynamicCircuitCurrent", "40"));
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "16")));
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+
+        verify(transport, timeout(3000).times(2)).send(any(),
+                eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "16")));
+    }
+
+    @Test
+    void aSettingTheChargerStillReportsIsNotSentAgain() {
+        serverConfig.extraConfig = List.of("DynamicCircuitCurrent=16");
+        reportConfiguration(Map.of("DynamicCircuitCurrent", "16", "AuthorizeRemoteTxRequests", "false"));
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "16")));
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+
+        verify(transport, org.mockito.Mockito.after(1500).times(1)).send(any(),
+                eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "16")));
+    }
+
+    private void reportConfiguration(Map<String, String> keys) {
+        GetConfigurationConfirmation answer = new GetConfigurationConfirmation();
+        answer.setConfigurationKey(keys.entrySet().stream().map(entry -> {
+            KeyValueType value = new KeyValueType(entry.getKey(), false);
+            value.setValue(entry.getValue());
+            return value;
+        }).toArray(KeyValueType[]::new));
+        when(transport.send(any(), any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(1);
+            record(request);
+            if (request instanceof GetConfigurationRequest) {
+                return CompletableFuture.completedFuture(answer);
+            }
+            return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
+        });
     }
 
     @Test

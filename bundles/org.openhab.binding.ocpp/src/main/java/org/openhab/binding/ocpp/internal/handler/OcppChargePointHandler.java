@@ -876,9 +876,14 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             acceptedMeasurands.clear();
         }
         if (fingerprint.equals(appliedConfigFingerprint)) {
-            logger.debug("Boot config for {} already applied; skipping", chargePointId);
-            requestConnectorStatuses();
-            return;
+            if (stillSetOnCharger(config)) {
+                logger.debug("Boot config for {} already applied; skipping", chargePointId);
+                requestConnectorStatuses();
+                return;
+            }
+            logger.debug("Boot config for {} no longer set on the charger; sending it again", chargePointId);
+            appliedConfigFingerprint = null;
+            bootConfigAttempts.set(0);
         }
         if (bootConfigAttempts.incrementAndGet() > MAX_BOOT_CONFIG_ATTEMPTS) {
             logger.debug("Boot config for {} not attempted again after {} failed tries", chargePointId,
@@ -921,6 +926,43 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             steps.add(() -> provisionLocalAuthList(tags));
         }
         runBootConfigStep(steps, 0, fingerprint, bootSession, new AtomicBoolean(true));
+    }
+
+    /**
+     * Whether the charger still reports the settings it accepted. A charger that resets them when it
+     * reboots reports something else, and a setting it does not report at all cannot be confirmed.
+     */
+    private boolean stillSetOnCharger(OcppServerConfiguration config) {
+        Map<String, String> reported = capabilities.raw();
+        if (reported.isEmpty()) {
+            return true;
+        }
+        Map<String, String> wanted = new LinkedHashMap<>();
+        if (meterless) {
+            wanted.put("ClockAlignedDataInterval", "0");
+        } else {
+            if (config.meterValueSampleInterval >= 0) {
+                wanted.put("MeterValueSampleInterval", Integer.toString(config.meterValueSampleInterval));
+            }
+            if (config.clockAlignedDataInterval >= 0) {
+                wanted.put("ClockAlignedDataInterval", Integer.toString(config.clockAlignedDataInterval));
+            }
+        }
+        if (config.disableRemoteTxAuthorization) {
+            wanted.put("AuthorizeRemoteTxRequests", "false");
+        }
+        for (String pair : concat(config.extraConfig, extraConfig)) {
+            int equals = pair.indexOf('=');
+            if (equals > 0) {
+                wanted.put(pair.substring(0, equals).trim(), pair.substring(equals + 1).trim());
+            }
+        }
+        for (Map.Entry<String, String> entry : wanted.entrySet()) {
+            if (!entry.getValue().equalsIgnoreCase(reported.get(entry.getKey()))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private String configFingerprint(OcppServerConfiguration config) {
