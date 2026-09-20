@@ -75,12 +75,15 @@ class OcppChargePointHandlerTest {
     }
 
     private static TransactionEvent started(int connectorId, int transactionId) {
-        return Ocpp16Events.toStarted(new StartTransactionRequest(connectorId, "tag", 0, ZonedDateTime.now()),
+        return Ocpp16Events.toStarted(
+                new StartTransactionRequest(connectorId, "tag", 0, ZonedDateTime.now(java.time.ZoneOffset.UTC)),
                 transactionId);
     }
 
     private static TransactionEvent ended(int transactionId) {
-        return Ocpp16Events.toEnded(new StopTransactionRequest(0, ZonedDateTime.now(), transactionId), transactionId);
+        return Ocpp16Events.toEnded(
+                new StopTransactionRequest(0, ZonedDateTime.now(java.time.ZoneOffset.UTC), transactionId),
+                transactionId);
     }
 
     @Test
@@ -129,7 +132,6 @@ class OcppChargePointHandlerTest {
 
     @Test
     void aTransactionThatWasNeverStoppedIsDiscardedWhenTheNextOneStarts() {
-        // A connector runs one transaction at a time; a new start discards a prior one whose StopTransaction was lost.
         handler.onTransactionStarted(started(1, 100));
         handler.onTransactionStarted(started(1, 101));
 

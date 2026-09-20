@@ -52,11 +52,8 @@ import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 
 /**
- * Serves the charging dashboard from the binding: an overview page in the sidebar with the month's
- * figures, a stacked chart of the last twelve months, the split per charger and the people, and one
- * page per person with their own history. A read-only {@link UIComponentProvider} in the
- * {@code ui:page} namespace, rebuilt from the binding's own CPMS state — no items to wire.
- *
+ * Read-only {@link UIComponentProvider} in the {@code ui:page} namespace serving the CPMS dashboard from binding state.
+ * 
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
@@ -110,19 +107,18 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
         return pages;
     }
 
-    /** The pages only exist once there are users — without them a CPMS view makes no sense. */
     private List<RootUIComponent> computePages() {
         CpmsService cpms = cpms();
         if (cpms == null || cpms.users().isEmpty()) {
             return List.of();
         }
-        Dashboard dashboard = new Dashboard(cpms, chargerLabels(), ZonedDateTime.now());
+        Dashboard dashboard = new Dashboard(cpms, chargerLabels(), ZonedDateTime.now(ZoneId.systemDefault()));
         List<RootUIComponent> result = new ArrayList<>();
         result.add(dashboard.overview());
         for (CpmsUser user : cpms.users()) {
             result.add(dashboard.userPage(user));
         }
-        return result;
+        return List.copyOf(result);
     }
 
     private void refresh() {
@@ -159,7 +155,6 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
         return null;
     }
 
-    /** What the site calls each charger, so the dashboard says "Charger 2" rather than its serial. */
     private Map<String, String> chargerLabels() {
         Map<String, String> labels = new HashMap<>();
         for (Thing thing : thingRegistry.getAll()) {
@@ -174,15 +169,23 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
         return labels;
     }
 
+    // MainUI evaluates a config string starting with '=' as an expression; a zero-width space keeps it text.
+    private static String text(String value) {
+        return value.startsWith("=") ? "\u200B" + value : value;
+    }
+
     private String signatureOf(@Nullable CpmsService cpms) {
         if (cpms == null) {
             return "none";
         }
         // Include the month so the "this month" totals rebuild at the rollover, not only on the next session.
-        StringBuilder sb = new StringBuilder().append(YearMonth.now()).append('#').append(cpms.transactions().size());
+        StringBuilder sb = new StringBuilder().append(YearMonth.now(ZoneId.systemDefault())).append('#')
+                .append(cpms.transactions().size());
         for (CpmsUser user : cpms.users()) {
-            sb.append('|').append(user.id()).append(user.enabled()).append(user.name()).append(user.monthlyCapKwh());
+            sb.append('|').append(user.id()).append(user.enabled()).append(user.name()).append(user.monthlyCapKwh())
+                    .append(user.cards()).append(user.vehicles());
         }
+        sb.append('#').append(cpms.transactions().stream().mapToLong(CpmsTransaction::stopEpoch).max().orElse(0L));
         return sb.toString();
     }
 
@@ -255,12 +258,12 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
             for (CpmsService.Usage usage : cpms.usage(monthStart, yearStart, nowMs)) {
                 CpmsUser user = usage.user();
                 UIComponent item = new UIComponent("oh-list-item");
-                item.addConfig("title", user.name());
+                item.addConfig("title", text(user.name()));
                 item.addConfig("icon", user.vehicles().isEmpty() ? "f7:person_fill" : "f7:car_fill");
                 item.addConfig("after", kwh(usage.monthKwh()) + " kWh");
                 String cap = user.monthlyCapKwh() > 0 ? " · cap " + kwh(user.monthlyCapKwh()) + " kWh" : "";
                 item.addConfig("subtitle", kwh(usage.yearKwh()) + " kWh this year" + cap);
-                item.addConfig("footer", tokensOf(user));
+                item.addConfig("footer", text(tokensOf(user)));
                 if (!user.enabled()) {
                     item.addConfig("badge", "disabled");
                     item.addConfig("badgeColor", "red");
@@ -289,7 +292,7 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
 
         RootUIComponent userPage(CpmsUser user) {
             RootUIComponent page = new RootUIComponent(userPageUid(user), "oh-layout-page");
-            page.addConfig("label", user.name());
+            page.addConfig("label", text(user.name()));
             page.addConfig("sidebar", Boolean.FALSE);
             page.addConfig("icon", user.vehicles().isEmpty() ? "f7:person_fill" : "f7:car_fill");
             page.updateTimestamp();
@@ -409,7 +412,7 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
             }
             for (Map.Entry<String, Double> charger : year.entrySet()) {
                 UIComponent item = new UIComponent("oh-list-item");
-                item.addConfig("title", charger.getKey());
+                item.addConfig("title", text(charger.getKey()));
                 item.addConfig("icon", "f7:bolt_car");
                 item.addConfig("after", kwh(charger.getValue()) + " kWh");
                 item.addConfig("subtitle", kwh(month.getOrDefault(charger.getKey(), 0.0)) + " kWh this month");
@@ -435,8 +438,9 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
                         withUser ? who : chargerLabel(tx.chargePointId()) + " · socket " + tx.connectorId());
                 item.addConfig("icon", "f7:bolt_fill");
                 item.addConfig("after", kwh(tx.energyWh() / 1000.0) + " kWh");
-                item.addConfig("subtitle", withUser ? chargerLabel(tx.chargePointId()) + " · socket " + tx.connectorId()
-                        : start.format(WHEN));
+                item.addConfig("subtitle",
+                        withUser ? text(chargerLabel(tx.chargePointId())) + " · socket " + tx.connectorId()
+                                : start.format(WHEN));
                 item.addConfig("footer", start.format(WHEN) + " → " + stop.format(CLOCK) + " · "
                         + duration(Duration.ofMillis(Math.max(0, tx.stopEpoch() - tx.startEpoch()))));
                 items.add(item);
@@ -502,14 +506,12 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
         return block;
     }
 
-    /** A grid row inside a block, so cards line up in columns instead of stacking. */
     private static List<UIComponent> row(UIComponent block) {
         UIComponent row = new UIComponent("oh-grid-row");
         block.addSlot("default").add(row);
         return row.addSlot("default");
     }
 
-    /** A column taking the whole width on a phone and a {@code share}-th of it on a wide screen. */
     private static UIComponent col(UIComponent content, int share) {
         UIComponent col = new UIComponent("oh-grid-col");
         col.addConfig("width", "100");
@@ -525,7 +527,7 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
         UIComponent card = new UIComponent("oh-label-card");
         card.addConfig("icon", icon);
         card.addConfig("title", title);
-        card.addConfig("label", value);
+        card.addConfig("label", text(value));
         card.addConfig("vertical", Boolean.TRUE);
         return card;
     }

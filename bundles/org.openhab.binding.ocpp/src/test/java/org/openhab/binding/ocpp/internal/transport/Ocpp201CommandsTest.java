@@ -243,7 +243,6 @@ class Ocpp201CommandsTest {
 
     @Test
     void aClearThatFindsNoProfileStillCounts() {
-        // The connector was already uncapped, which is the state the caller asked for.
         ClearChargingProfileResponse unknown = new ClearChargingProfileResponse(ClearChargingProfileStatusEnum.Unknown);
 
         assertTrue(commands.isAccepted(unknown));

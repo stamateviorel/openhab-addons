@@ -92,7 +92,8 @@ class InboundCoreHandlerTest {
     @Test
     void startTransactionFromAnUnknownTagIsRejectedAndNotRoutedOnwards() {
         when(listener.isTagAuthorized("stranger")).thenReturn(false);
-        StartTransactionRequest request = new StartTransactionRequest(1, "stranger", 0, java.time.ZonedDateTime.now());
+        StartTransactionRequest request = new StartTransactionRequest(1, "stranger", 0,
+                java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC));
 
         StartTransactionConfirmation confirmation = handler.handleStartTransactionRequest(session, request);
 
@@ -104,7 +105,8 @@ class InboundCoreHandlerTest {
 
     @Test
     void anAcceptedStartTransactionIsRoutedWithAUniqueId() {
-        StartTransactionRequest request = new StartTransactionRequest(1, "known", 0, java.time.ZonedDateTime.now());
+        StartTransactionRequest request = new StartTransactionRequest(1, "known", 0,
+                java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC));
 
         int first = handler.handleStartTransactionRequest(session, request).getTransactionId();
         int second = handler.handleStartTransactionRequest(session, request).getTransactionId();

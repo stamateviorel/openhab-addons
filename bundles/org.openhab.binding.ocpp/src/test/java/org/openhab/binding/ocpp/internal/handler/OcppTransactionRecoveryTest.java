@@ -76,12 +76,15 @@ class OcppTransactionRecoveryTest {
     }
 
     private static TransactionEvent started(int connectorId, int transactionId) {
-        return Ocpp16Events.toStarted(new StartTransactionRequest(connectorId, "tag", 0, ZonedDateTime.now()),
+        return Ocpp16Events.toStarted(
+                new StartTransactionRequest(connectorId, "tag", 0, ZonedDateTime.now(java.time.ZoneOffset.UTC)),
                 transactionId);
     }
 
     private static TransactionEvent ended(int transactionId) {
-        return Ocpp16Events.toEnded(new StopTransactionRequest(0, ZonedDateTime.now(), transactionId), transactionId);
+        return Ocpp16Events.toEnded(
+                new StopTransactionRequest(0, ZonedDateTime.now(java.time.ZoneOffset.UTC), transactionId),
+                transactionId);
     }
 
     @Test
@@ -92,7 +95,6 @@ class OcppTransactionRecoveryTest {
         handler.onTransactionStarted(started(1, 100));
 
         verify(connector).onTransactionStarted(any());
-        // Persistence is the server bridge's job; the charge-point handler only routes in memory.
         verify(server, org.mockito.Mockito.never()).rememberTransaction(org.mockito.ArgumentMatchers.anyInt(), any(),
                 org.mockito.ArgumentMatchers.anyInt());
     }
@@ -101,7 +103,6 @@ class OcppTransactionRecoveryTest {
     void aStopAfterARestartRecoversTheConnectorFromThePersistedMapping() {
         OcppConnectorHandler connector = mock(OcppConnectorHandler.class);
         handler.registerConnector(1, connector);
-        // No onStartTransaction here, so the in-memory map is empty, as after a restart.
         when(server.transactionConnector(100, "charger")).thenReturn(1);
 
         handler.onTransactionEnded(ended(100));

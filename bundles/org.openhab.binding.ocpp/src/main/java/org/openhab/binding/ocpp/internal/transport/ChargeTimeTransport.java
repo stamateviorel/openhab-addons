@@ -22,6 +22,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
+import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -134,14 +135,11 @@ public class ChargeTimeTransport implements OcppTransport {
 
         JSONConfiguration configuration = JSONConfiguration.get();
         configuration = configuration.setParameter(JSONConfiguration.REUSE_ADDR_PARAMETER, true);
-        // Off: many chargers never pong, so WebSocket pings would drop healthy sessions.
+        // Many chargers never pong, so a nonzero WebSocket ping interval drops their healthy sessions.
         configuration = configuration.setParameter(JSONConfiguration.PING_INTERVAL_PARAMETER,
                 pingIntervalSeconds > 0 ? pingIntervalSeconds : 0);
-        // The library refuses a handshake whose Basic-auth password falls outside a fixed window
-        // (16-20 for 1.6, 16-40 for 2.0.1) before the binding is consulted, which silently locks out
-        // chargers that always send a header with a short or empty password. Both windows are opened
-        // so authenticateSession is the only thing that decides: it accepts every charger when no
-        // authPassword is set, and compares the password exactly when one is.
+        // The library rejects Basic-auth passwords outside 16-20 (1.6) / 16-40 (2.0.1) chars before
+        // authenticateSession runs.
         configuration = configuration.setParameter(MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY, 0);
         configuration = configuration.setParameter(MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY, Integer.MAX_VALUE);
         configuration = configuration.setParameter(MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY_201, 0);
@@ -266,7 +264,7 @@ public class ChargeTimeTransport implements OcppTransport {
         if (username == null || !username.equals(chargePointId)) {
             throw new AuthenticationException(401, "basic auth username must be the charge point id");
         }
-        if (password == null || !authPassword.equals(new String(password, StandardCharsets.UTF_8))) {
+        if (password == null || !MessageDigest.isEqual(authPassword.getBytes(StandardCharsets.UTF_8), password)) {
             throw new AuthenticationException(401, "invalid password");
         }
     }

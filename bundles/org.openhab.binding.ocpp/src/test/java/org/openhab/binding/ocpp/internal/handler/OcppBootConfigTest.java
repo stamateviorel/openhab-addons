@@ -390,7 +390,6 @@ class OcppBootConfigTest {
         verify(transport, org.mockito.Mockito.after(1500).times(1)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
 
-        // The applied latch is keyed on the effective settings, so a changed value resends the burst.
         serverConfig.extraConfig = List.of("VendorKey=42");
         handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
         verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("VendorKey", "42")));

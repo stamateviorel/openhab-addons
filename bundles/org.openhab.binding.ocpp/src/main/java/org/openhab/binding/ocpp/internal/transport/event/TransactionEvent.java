@@ -18,19 +18,14 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 
 /**
- * The start, progress or end of a charging transaction, protocol-neutral.
+ * A 1.6 StopTransaction carries no connectorId; remoteId is the station's own id (2.0.1 quotes it back); chargingState
+ * is 2.0.1-only.
  *
- * <p>
- * OCPP 1.6 sends StartTransaction and StopTransaction; 2.0.1 sends one TransactionEvent carrying
  * the same three kinds. {@code connectorId} is null where the protocol does not carry it — a 1.6
- * StopTransaction identifies the transaction only by id.
- *
- * <p>
  * {@code transactionId} is the binding's own id, kept numeric because the usage log is persisted
  * under it. {@code remoteId} is the id as the charger states it, which a 2.0.1 RequestStopTransaction
  * has to quote back verbatim. {@code chargingState} is 2.0.1 only: it carries the detail that 1.6
- * puts in StatusNotification.
- *
+ * 
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault

@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
+import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -90,6 +91,11 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private record PendingSend(UUID session, Request request, CompletableFuture<Confirmation> future) {
+    }
+
+    /** {@code poll} is typed non-null through a non-null element type, though an empty queue returns null. */
+    private static <T> @Nullable T poll(Queue<T> queue) {
+        return queue.poll();
     }
 
     private static final long LIVENESS_FLOOR_SECONDS = 180;
@@ -188,14 +194,14 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             } else if (commands.isAccepted(confirmation)) {
                 updateState(CHANNEL_DISPLAY_MESSAGE, new StringType(text));
             } else {
-                logger.info("Charge point {} refused the display message: {}", chargePointId, confirmation);
+                logger.debug("Charge point {} refused the display message: {}", chargePointId, confirmation);
             }
         });
     }
 
     /**
-     * Sends a vendor-specific message, given as {@code {"vendorId":…,"messageId":…,"data":…}}. The
-     * charger's answer is published back on the channel so a rule can read what came of it.
+     * Payload {@code {"vendorId":…,"messageId":…,"data":…}}; the DataTransfer answer is published back on the same
+     * channel.
      */
     private void sendCustomMessage(String request) {
         JsonObject json;
@@ -307,6 +313,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 operational = false;
             }
             failPendingSends();
+            updateState(CHANNEL_CONNECTED, OnOffType.OFF);
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_OFFLINE);
         }
     }
@@ -356,7 +363,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         connectors.remove(connectorId);
     }
 
-    /** The external energy meter configured on a connector, or {@code null} when none is. */
     public @Nullable ExternalMeter externalMeter(int connectorId) {
         OcppConnectorHandler connector = connectors.get(connectorId);
         if (connector == null) {
@@ -391,9 +397,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                         new IllegalStateException("Charger " + chargePointId + " not ready and its queue is full"));
             }
             pendingSends.add(pending);
-            // Bound the wait: a charger that connects but never becomes operational must not hang a queued command
-            // until the liveness watchdog. If it is still queued when this fires, fail it; otherwise it already
-            // drained.
             scheduler.schedule(() -> {
                 if (pendingSends.remove(pending)) {
                     future.completeExceptionally(new TimeoutException("Charger " + chargePointId
@@ -459,7 +462,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 if (epoch != dispatchEpoch) {
                     return;
                 }
-                next = outbound.poll();
+                next = poll(outbound);
                 if (next == null) {
                     dispatching = false;
                     return;
@@ -505,8 +508,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             return CompletableFuture
                     .failedFuture(new IllegalStateException("Charger " + chargePointId + " is offline"));
         }
-        // A reply is proof of life as much as a message the charger sends on its own: an idle Alfen
-        // answers every poll yet skips its heartbeat because of them, and must not read as silent.
+        // OCPP 1.6 §4.6 lets a charger skip Heartbeat while other traffic flows (Alfen does), so a reply
+        // counts as activity.
         return transport.send(localSession, request).whenComplete((confirmation, ex) -> {
             if (ex == null && localSession.equals(session)) {
                 recordActivity();
@@ -522,7 +525,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             operational = true;
         }
         PendingSend pending;
-        while (expectedSession.equals(session) && (pending = pendingSends.poll()) != null) {
+        while (expectedSession.equals(session) && (pending = poll(pendingSends)) != null) {
             enqueue(pending);
         }
         if (expectedSession.equals(session)) {
@@ -533,7 +536,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private void failPendingSends() {
         List<PendingSend> toFail = new ArrayList<>();
         PendingSend pending;
-        while ((pending = pendingSends.poll()) != null) {
+        while ((pending = poll(pendingSends)) != null) {
             toFail.add(pending);
         }
         synchronized (dispatchLock) {
@@ -545,7 +548,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 inFlight = null;
             }
             PendingSend queued;
-            while ((queued = outbound.poll()) != null) {
+            while ((queued = poll(outbound)) != null) {
                 toFail.add(queued);
             }
             dispatching = false;
@@ -555,12 +558,10 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
     }
 
-    /** The OCPP version this charger negotiated; it decides which dialect outbound commands use. */
     public OcppVersion getVersion() {
         return version;
     }
 
-    /** The outbound dialect for the version this charger negotiated. */
     public OcppCommands commands() {
         return version == OcppVersion.V2_0_1 ? COMMANDS_201 : COMMANDS_16;
     }
@@ -678,7 +679,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         touch();
         int connectorId = sample.connectorId();
         if (connectorId <= 0) {
-            return; // connector 0 addresses the charge point itself; nothing to route to
+            return;
         }
         OcppConnectorHandler connector = connectors.get(connectorId);
         if (connector != null) {
@@ -719,7 +720,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         OcppConnectorHandler connector = transactions.get(transactionId);
         Integer connectorId = event.connectorId();
         if (connector == null && connectorId != null) {
-            // First word of a transaction this handler has not seen start, typically after a restart.
             connector = connectors.get(connectorId);
             if (connector != null) {
                 transactions.values().remove(connector);
@@ -738,7 +738,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         OcppServerBridgeHandler serverHandler = server;
         boolean ownsTransaction = connector != null;
         if (connector == null && serverHandler != null) {
-            // Not in memory after a restart mid-transaction; recover from persistence.
             Integer connectorId = serverHandler.transactionConnector(transactionId, chargePointId);
             if (connectorId != null) {
                 ownsTransaction = true;
@@ -791,7 +790,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         readCapabilities(bootSession);
     }
 
-    /** Capabilities reported out of band, which is how 2.0.1 answers. */
+    /** 2.0.1 answers GetBaseReport with NotifyReport messages, not in the response. */
     public void onCapabilities(Map<String, String> configurationKeys) {
         capabilities = ChargerCapabilities.fromKeys(configurationKeys);
         publishCapabilities(capabilities);
@@ -800,7 +799,11 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private void readCapabilities(UUID bootSession) {
         if (version == OcppVersion.V2_0_1) {
             // The device model arrives as NotifyReport messages, so the burst cannot wait on this.
-            send(commands().readCapabilities());
+            send(commands().readCapabilities()).whenComplete((confirmation, ex) -> {
+                if (ex != null) {
+                    logger.debug("Capability read for {} failed: {}", chargePointId, ex.getMessage());
+                }
+            });
             runBootConfigBurst(bootSession);
             return;
         }
@@ -814,10 +817,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     /**
-     * A charger that reconnects without booting is one that was already up, typically because the
-     * binding restarted rather than the charger. Its BootNotification is not coming, so it is taken
-     * as ready here, and its configuration is read and applied the same way a boot would, which
-     * also lets a setting changed while it was connected reach it.
+     * A charger that stayed up across a binding restart sends no BootNotification; it is taken as ready and its config
+     * re-read.
      */
     void reconnectedWithoutBoot(UUID connectedSession) {
         if (!connectedSession.equals(session)) {
@@ -846,7 +847,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             logger.debug("Charge point {} reported no configuration", chargePointId);
             return;
         }
-        logger.info("Charge point {} capabilities: {}", chargePointId, caps.summary());
+        logger.debug("Charge point {} capabilities: {}", chargePointId, caps.summary());
         if (logger.isDebugEnabled()) {
             caps.raw().forEach((key, value) -> logger.debug("  {} {} = {}{}", chargePointId, key, value,
                     caps.isWritable(key) ? "" : "  (read-only)"));
@@ -907,7 +908,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         if (config.disableRemoteTxAuthorization) {
             steps.add(() -> sendConfig("AuthorizeRemoteTxRequests", "false"));
         }
-        // The charger's own entries come last so they win over a site-wide setting of the same key.
         for (String pair : concat(config.extraConfig, extraConfig)) {
             int equals = pair.indexOf('=');
             if (equals > 0) {
@@ -1049,7 +1049,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 result.completeExceptionally(ex);
                 return;
             }
-            // A charger that turns the value down (not the setting) is offered a shorter list.
+            // ChangeConfiguration Rejected means the value, NotSupported the key; only the former is retried
+            // with a shorter list.
             if (commands().isAccepted(confirmation)) {
                 acceptedMeasurands.put(key, value);
             } else if (commands().isValueRejected(confirmation)) {
@@ -1075,6 +1076,9 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private void recordActivity() {
+        if (session == null) {
+            return;
+        }
         if (getThing().getStatus() != ThingStatus.ONLINE) {
             updateStatus(ThingStatus.ONLINE);
         }
@@ -1083,8 +1087,10 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private void rearmLiveness() {
-        cancel(livenessTask);
-        livenessTask = scheduler.schedule(this::onLivenessTimeout, livenessThresholdSeconds(), TimeUnit.SECONDS);
+        synchronized (stateLock) {
+            cancel(livenessTask);
+            livenessTask = scheduler.schedule(this::onLivenessTimeout, livenessThresholdSeconds(), TimeUnit.SECONDS);
+        }
     }
 
     private long livenessThresholdSeconds() {
@@ -1094,9 +1100,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     static long livenessThreshold(int heartbeatOverride, OptionalInt reportedHeartbeat, int serverDefault) {
-        // Size from the longer of the interval negotiated in BootNotification (override, else server default) and the
-        // one the charger reports it uses, so a charger keeping (or reporting a stale) interval is never reaped while
-        // still beating. Only when neither is known fall back to 300.
+        // A charger may beat at its own reported interval rather than the negotiated one; size from the
+        // longer.
         int negotiated = heartbeatOverride > 0 ? heartbeatOverride : serverDefault;
         int effective = Math.max(negotiated, reportedHeartbeat.orElse(0));
         if (effective <= 0) {

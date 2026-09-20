@@ -146,8 +146,7 @@ class Ocpp201InboundHandlerTest {
 
     @Test
     void anEventReplayedAfterAnOutageIsNotCountedTwice() {
-        // A charger numbers a transaction's events from zero and re-sends any it could not deliver
-        // while offline; counting one twice would double it in the usage log.
+        // 2.0.1 stations re-send events undelivered while offline; seqNo must dedupe them.
         handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
         handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Updated, "abc", 1));
         handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Updated, "abc", 1));

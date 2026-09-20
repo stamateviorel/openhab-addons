@@ -155,15 +155,14 @@ class ChargeTimeTransportTest {
 
     @Test
     void aChargerOfferingNoSubprotocolIsStillAccepted() throws Exception {
-        // The multi-protocol feature repository rejects a null version, so the session factory has
-        // to fall back to 1.6 for these; without that the connection is dropped.
+        // The multi-protocol feature repository rejects a null version; the session factory must fall back to
+        // 1.6.
         assertNegotiated("", "", OcppVersion.V1_6);
     }
 
     @Test
     void aShortPasswordBasicAuthChargerIsAcceptedOnOcpp201Too() throws Exception {
-        // 2.0.1 is length-checked against its own limits (16-40) rather than the 1.6 pair, so a
-        // charger set to security profile 1 is refused with a 401 unless both are relaxed.
+        // 2.0.1 checks the password against its own 16-40 window, not the 1.6 pair; both must be relaxed.
         CountDownLatch opened = new CountDownLatch(1);
         ChargeTimeTransport transport = new ChargeTimeTransport(listener(opened::countDown), 0, 30, "", "", "");
         int port = findFreePort();
@@ -201,8 +200,8 @@ class ChargeTimeTransportTest {
 
     @Test
     void aConfiguredPasswordOutsideTheLibrarysWindowIsStillUsable() throws Exception {
-        // 25 characters is past the library's 1.6 maximum of 20; the binding, not the library,
-        // decides whether a password is right.
+        // 25 chars exceeds the library's 1.6 maximum of 20; the binding, not the library, judges the
+        // password.
         String password = "a-very-long-site-password";
         assertEquals(true, connectsWith(password, password, "ocpp1.6"),
                 "the charge point should be accepted with the configured password");

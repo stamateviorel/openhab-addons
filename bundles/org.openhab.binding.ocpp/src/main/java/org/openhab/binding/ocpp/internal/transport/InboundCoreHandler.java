@@ -81,7 +81,6 @@ public class InboundCoreHandler implements ServerCoreEventHandler {
                 RegistrationStatus.Accepted);
     }
 
-    /** Deliver an inbound message to the listener without letting a throw there starve the OCPP confirmation. */
     private void deliver(String what, UUID session, Runnable delivery) {
         try {
             delivery.run();

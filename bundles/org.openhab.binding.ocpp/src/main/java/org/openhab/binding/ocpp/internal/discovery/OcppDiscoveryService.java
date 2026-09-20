@@ -84,11 +84,6 @@ public class OcppDiscoveryService extends AbstractThingHandlerDiscoveryService<O
                 .withRepresentationProperty(PROPERTY_UNIQUE_ID).withLabel("OCPP Connector " + connectorId).build());
     }
 
-    /** A card was presented that no user owns yet — offer it to the inbox to create a user from. */
-    /**
-     * Offers a token nobody owns as a new user. {@code where} names the charger and, when known, the
-     * connector it was presented at, so the inbox entry says where it came from and when.
-     */
     public void tokenDiscovered(String idToken, TokenType type, String where) {
         ThingUID bridgeUID = thingHandler.getThing().getUID();
         boolean vehicle = type == TokenType.VEHICLE;

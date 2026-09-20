@@ -52,11 +52,7 @@ public class TrackingSessionFactory extends MultiProtocolSessionFactory {
         return new TrackingSession(super.createSession(communicator), requestSessions);
     }
 
-    /**
-     * A charger that negotiated no subprotocol reports a null version, which the multi-protocol
-     * feature repository rejects outright. Treat it as 1.6, which is what it got before the server
-     * spoke more than one protocol.
-     */
+    /** MultiProtocolFeatureRepository rejects a null (no-subprotocol) version; it is treated as 1.6. */
     @Override
     @NonNullByDefault({})
     public ISession createSession(Communicator communicator, ProtocolVersion protocolVersion) {

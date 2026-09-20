@@ -66,7 +66,7 @@ import eu.chargetime.ocpp.model.core.StopTransactionRequest;
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-@SuppressWarnings({ "null", "unchecked" })
+@SuppressWarnings("null")
 class OcppServerBridgeHandlerTest {
 
     private static final ThingUID SERVER_UID = new ThingUID(THING_TYPE_SERVER, "server");
@@ -261,8 +261,8 @@ class OcppServerBridgeHandlerTest {
 
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
-        handler.onTransactionEvent(session,
-                Ocpp16Events.toStarted(new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77));
+        handler.onTransactionEvent(session, Ocpp16Events
+                .toStarted(new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now(java.time.ZoneOffset.UTC)), 77));
 
         assertEquals(Integer.valueOf(77), handler.openTransactionFor("charx", 2),
                 "the transaction must be recoverable even though no handler existed at accept time");
@@ -276,12 +276,12 @@ class OcppServerBridgeHandlerTest {
 
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
-        handler.onTransactionEvent(session,
-                Ocpp16Events.toStarted(new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now()), 77));
+        handler.onTransactionEvent(session, Ocpp16Events
+                .toStarted(new StartTransactionRequest(2, "tag", 0, ZonedDateTime.now(java.time.ZoneOffset.UTC)), 77));
         assertEquals(Integer.valueOf(77), handler.openTransactionFor("charx", 2));
 
-        handler.onTransactionEvent(session,
-                Ocpp16Events.toEnded(new StopTransactionRequest(0, ZonedDateTime.now(), 77), 77));
+        handler.onTransactionEvent(session, Ocpp16Events
+                .toEnded(new StopTransactionRequest(0, ZonedDateTime.now(java.time.ZoneOffset.UTC), 77), 77));
 
         org.junit.jupiter.api.Assertions.assertNull(handler.openTransactionFor("charx", 2),
                 "a stop before the handler exists must clear the persisted transaction");
@@ -305,9 +305,9 @@ class OcppServerBridgeHandlerTest {
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
 
-        handler.onTransactionEvent(session,
-                Ocpp16Events.toStarted(new StartTransactionRequest(2, "KNOWN", 0, ZonedDateTime.now()), 77));
-        StopTransactionRequest stop = new StopTransactionRequest(0, ZonedDateTime.now(), 77);
+        handler.onTransactionEvent(session, Ocpp16Events.toStarted(
+                new StartTransactionRequest(2, "KNOWN", 0, ZonedDateTime.now(java.time.ZoneOffset.UTC)), 77));
+        StopTransactionRequest stop = new StopTransactionRequest(0, ZonedDateTime.now(java.time.ZoneOffset.UTC), 77);
         stop.setIdTag("STRANGER");
         handler.onTransactionEvent(session, Ocpp16Events.toEnded(stop, 77));
         verify(configuration, never()).update(any());
@@ -345,8 +345,8 @@ class OcppServerBridgeHandlerTest {
 
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "", null, OcppVersion.V1_6);
-        handler.onTransactionEvent(session,
-                Ocpp16Events.toStarted(new StartTransactionRequest(1, "tag", 0, ZonedDateTime.now()), 55));
+        handler.onTransactionEvent(session, Ocpp16Events
+                .toStarted(new StartTransactionRequest(1, "tag", 0, ZonedDateTime.now(java.time.ZoneOffset.UTC)), 55));
 
         org.junit.jupiter.api.Assertions.assertNull(handler.openTransactionFor("", 1),
                 "a session with no charge point id must be ignored, mapping nothing");

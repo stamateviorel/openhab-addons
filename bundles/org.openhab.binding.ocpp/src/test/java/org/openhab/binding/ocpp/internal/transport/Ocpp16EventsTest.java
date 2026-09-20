@@ -67,8 +67,8 @@ class Ocpp16EventsTest {
 
     @Test
     void meterValuesKeepTheirBlocksAndTimestamps() {
-        // Aggregation of per-phase samples is only valid within a block, and the connector reports the
-        // newest block's timestamp, so the grouping the charger sent has to survive translation.
+        // Per-phase aggregation is only valid within one MeterValue block, so the charger's grouping must
+        // survive translation.
         ZonedDateTime older = ZonedDateTime.now(ZoneOffset.UTC).minusMinutes(1);
         ZonedDateTime newer = ZonedDateTime.now(ZoneOffset.UTC);
         SampledValue first = new SampledValue("100");

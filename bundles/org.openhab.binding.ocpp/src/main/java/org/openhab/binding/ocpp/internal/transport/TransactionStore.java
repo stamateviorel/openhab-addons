@@ -143,20 +143,27 @@ public class TransactionStore {
                 && location.connectorId() == connectorId;
     }
 
+    private static @Nullable Integer parseInt(String value) {
+        try {
+            return Integer.valueOf(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     private static @Nullable Location parse(@Nullable String value) {
         if (value == null) {
             return null;
         }
-        // chargePointId, connectorId, the charger's own name for the transaction (empty when it has
-        // none) and the meter register at the start; the last two are absent in older entries.
+        // remoteId (may be empty) and meterStart are absent in entries written by older versions.
         String[] fields = value.split(String.valueOf(SEPARATOR), 4);
         if (fields.length < 2) {
             return null;
         }
         try {
             String remoteId = fields.length > 2 && !fields[2].isEmpty() ? fields[2] : null;
-            Integer meterStart = fields.length > 3 ? Integer.valueOf(fields[3]) : null;
-            return new Location(fields[0], Integer.parseInt(fields[1]), remoteId, meterStart);
+            return new Location(fields[0], Integer.parseInt(fields[1]), remoteId,
+                    fields.length > 3 ? parseInt(fields[3]) : null);
         } catch (NumberFormatException e) {
             return null;
         }

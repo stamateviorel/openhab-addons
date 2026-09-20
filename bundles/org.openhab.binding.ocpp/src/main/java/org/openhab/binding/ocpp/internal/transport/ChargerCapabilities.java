@@ -58,17 +58,14 @@ public final class ChargerCapabilities {
         this.readOnlyKeys = readOnlyKeys;
     }
 
-    /** The capabilities of a charger that has not been successfully queried. */
     public static ChargerCapabilities unknown() {
         return new ChargerCapabilities(Map.of());
     }
 
-    /** Build from already-flattened keys, as the 2.0.1 device model reports them. */
     public static ChargerCapabilities fromKeys(Map<String, String> keys) {
         return new ChargerCapabilities(Map.copyOf(keys));
     }
 
-    /** Build from a {@code GetConfiguration} response. */
     public static ChargerCapabilities from(@Nullable GetConfigurationConfirmation confirmation) {
         if (confirmation == null) {
             return unknown();
@@ -96,7 +93,6 @@ public final class ChargerCapabilities {
         return new ChargerCapabilities(Collections.unmodifiableMap(map), Set.copyOf(readOnly));
     }
 
-    /** Whether the charger said this setting can be written, as far as it reported one. */
     public boolean isWritable(String key) {
         return raw.containsKey(key) && !readOnlyKeys.contains(key);
     }

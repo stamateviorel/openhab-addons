@@ -129,9 +129,8 @@ class OcppConnectorHandlerTest {
 
     @Test
     void availableClearsChargingEvenIfATransactionWasNeverStopped() {
-        handler.onTransactionStarted(Ocpp16Events.toStarted(
-                new eu.chargetime.ocpp.model.core.StartTransactionRequest(1, "tag", 0, java.time.ZonedDateTime.now()),
-                7));
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 0, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));
 
         handler.onStatusNotification(status(ChargePointStatus.Available));
 
@@ -162,7 +161,7 @@ class OcppConnectorHandlerTest {
     @Test
     void sessionEnergyCountsLiveFromTheMeterRegisterWhileATransactionRuns() {
         handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
-                "tag", 1000, java.time.ZonedDateTime.now()), 7));
+                "tag", 1000, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));
 
         handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "1.5"));
 
@@ -172,11 +171,10 @@ class OcppConnectorHandlerTest {
 
     @Test
     void sessionEnergyIsPublishedAtStopAsMeterStopMinusMeterStart() {
-        handler.onTransactionStarted(Ocpp16Events.toStarted(
-                new eu.chargetime.ocpp.model.core.StartTransactionRequest(1, "tag", 100, java.time.ZonedDateTime.now()),
-                7));
-        handler.onTransactionEnded(Ocpp16Events.toEnded(
-                new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600, java.time.ZonedDateTime.now(), 7), 7));
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 100, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));
+        handler.onTransactionEnded(Ocpp16Events.toEnded(new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600,
+                java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC), 7), 7));
 
         assertChannel(CHANNEL_SESSION_ENERGY,
                 new org.openhab.core.library.types.QuantityType<>(1500, org.openhab.core.library.unit.Units.WATT_HOUR));
@@ -184,16 +182,14 @@ class OcppConnectorHandlerTest {
 
     @Test
     void theLastSessionTotalIsPublishedOnceAndSurvivesTheNextSessionsMeterValues() {
-        handler.onTransactionStarted(Ocpp16Events.toStarted(
-                new eu.chargetime.ocpp.model.core.StartTransactionRequest(1, "tag", 100, java.time.ZonedDateTime.now()),
-                7));
-        handler.onTransactionEnded(Ocpp16Events.toEnded(
-                new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600, java.time.ZonedDateTime.now(), 7), 7));
         handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
-                "tag", 1600, java.time.ZonedDateTime.now()), 8));
+                "tag", 100, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));
+        handler.onTransactionEnded(Ocpp16Events.toEnded(new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600,
+                java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC), 7), 7));
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 1600, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 8));
         handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "1.9"));
 
-        // A running session moves session-energy; the finished total must not move with it.
         verify(callback, times(1)).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_LAST_SESSION_ENERGY)),
                 eq(new org.openhab.core.library.types.QuantityType<>(1500,
                         org.openhab.core.library.unit.Units.WATT_HOUR)));
@@ -350,7 +346,6 @@ class OcppConnectorHandlerTest {
         handler.initialize();
         command(CHANNEL_CHARGING, OnOffType.ON);
 
-        // The initial attempt plus one retry after the delay, since nothing started in between.
         verify(chargePoint, timeout(10000).times(2))
                 .send(argThat(r -> r instanceof eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest));
     }
@@ -387,9 +382,9 @@ class OcppConnectorHandlerTest {
         sample.setUnit(unit);
         eu.chargetime.ocpp.model.core.MeterValuesRequest request = new eu.chargetime.ocpp.model.core.MeterValuesRequest(
                 1);
-        request.setMeterValue(
-                new eu.chargetime.ocpp.model.core.MeterValue[] { new eu.chargetime.ocpp.model.core.MeterValue(
-                        java.time.ZonedDateTime.now(), new eu.chargetime.ocpp.model.core.SampledValue[] { sample }) });
+        request.setMeterValue(new eu.chargetime.ocpp.model.core.MeterValue[] {
+                new eu.chargetime.ocpp.model.core.MeterValue(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC),
+                        new eu.chargetime.ocpp.model.core.SampledValue[] { sample }) });
         return Ocpp16Events.toMeterSample(request);
     }
 
@@ -444,10 +439,7 @@ class OcppConnectorHandlerTest {
                 org.mockito.ArgumentMatchers.any());
     }
 
-    /**
-     * Uses the ONLINE bridge-status path rather than initialize(), so set-up transmits nothing and every
-     * captured request comes from the command under test.
-     */
+    /** Attaches via the ONLINE bridge-status path, not initialize(), so set-up sends nothing. */
     private OcppChargePointHandler attachReadyChargePoint() {
         return attachReadyChargePoint(ClearChargingProfileStatus.Accepted);
     }

@@ -33,9 +33,6 @@ import eu.chargetime.ocpp.v201.model.types.VariableAttribute;
  * Collects an OCPP 2.0.1 device-model report and states it in the flat keys the binding's
  * {@link ChargerCapabilities} is built from.
  *
- * <p>
- * 2.0.1 replaced the flat GetConfiguration key list with a component tree whose values arrive
- * across one or more NotifyReport messages. Only the handful of variables the binding acts on are
  * translated; the rest of the report is kept verbatim as {@code Component.Variable} so it is still
  * visible for diagnostics.
  *
@@ -88,8 +85,7 @@ public class DeviceModelReport {
     }
 
     private void translate(String component, String variable, String value) {
-        // A controller states both Available and Enabled. Available is the honest answer about
-        // support; where a charger omits it, Enabled is the only thing left to go on.
+        // A 2.0.1 controller may report Enabled without Available.
         boolean available = Boolean.parseBoolean(value);
         switch (component + "." + variable) {
             case SMART_CHARGING_CTRLR + ".Available" -> {
@@ -112,8 +108,8 @@ public class DeviceModelReport {
                     profile("LocalAuthListManagement", available);
                 }
             }
-            // Alfen names these Phases3to1 and RateUnit rather than the longer spec names, and both
-            // spellings have been seen in the field.
+            // Phases3to1 is the 2.0.1 count-switch flag; ACPhaseSwitchingSupported is phase selection, seen
+            // used for the same on Alfen.
             case SMART_CHARGING_CTRLR + ".Phases3to1", SMART_CHARGING_CTRLR + ".ACPhaseSwitchingSupported" ->
                 values.put("ConnectorSwitch3to1PhaseSupported", value);
             case SMART_CHARGING_CTRLR + ".RateUnit", SMART_CHARGING_CTRLR + ".ChargingScheduleChargingRateUnit" ->
@@ -144,10 +140,7 @@ public class DeviceModelReport {
         return units.isEmpty() ? value : units.toString();
     }
 
-    /**
-     * The reported value, preferring what the charger is actually using over what it could be set
-     * to. A variable with no Actual attribute is not something the binding can act on.
-     */
+    /** The Actual attribute value when present, else the first attribute value. */
     private static @Nullable String actualValue(VariableAttribute @Nullable [] attributes) {
         if (attributes == null) {
             return null;
@@ -166,12 +159,10 @@ public class DeviceModelReport {
         return fallback;
     }
 
-    /** The report so far, in the flat form {@link ChargerCapabilities} consumes. */
     public Map<String, String> asConfigurationKeys() {
         Map<String, String> keys = new LinkedHashMap<>(values);
         if (sawController) {
-            // Stated even when empty: a charger that says a controller is unavailable has answered
-            // the question, and leaving the key out would read as "not known" instead.
+            // Empty means "none supported"; absent means "unknown" to ChargerCapabilities.
             keys.put("SupportedFeatureProfiles", String.join(",", featureProfiles));
         }
         // 2.0.1 has no connector count; the highest EVSE id the report names stands in, since callers count 1..n.

@@ -21,16 +21,11 @@ import org.eclipse.jdt.annotation.Nullable;
 /**
  * A metering report for one connector, protocol-neutral.
  *
- * <p>
- * Readings stay grouped in the blocks the charger sent them in: aggregation of per-phase samples is
- * only meaningful within a block, and each block carries its own timestamp.
- *
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
 public record MeterSample(int connectorId, List<Block> blocks) {
 
-    /** One timestamped group of readings. */
     public record Block(@Nullable ZonedDateTime timestamp, List<Reading> readings) {
     }
 

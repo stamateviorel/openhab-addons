@@ -25,7 +25,7 @@ import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileRequest;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileRequest;
 
 /**
- * Builds a SetChargingProfile request that caps a connector to a fixed current.
+ * Builds the OCPP 1.6 SetChargingProfile / ClearChargingProfile requests for a connector cap.
  *
  * @author Stamate Viorel - Initial contribution
  */
@@ -45,7 +45,6 @@ public final class ChargingProfileBuilder {
         return limit(connectorId, ChargingRateUnitType.A, amps, null, forceTxDefault, transactionId);
     }
 
-    /** Build a SetChargingProfile capping the connector at {@code value} in {@code unit}. */
     public static SetChargingProfileRequest limit(int connectorId, ChargingRateUnitType unit, double value,
             @Nullable Integer numberPhases, boolean forceTxDefault, @Nullable Integer transactionId) {
         boolean useTxProfile = transactionId != null && !forceTxDefault;
@@ -65,7 +64,6 @@ public final class ChargingProfileBuilder {
         return new SetChargingProfileRequest(connectorId, profile);
     }
 
-    /** Removes this binding's cap from a connector, by connector and stack level. */
     public static ClearChargingProfileRequest clearLimit(int connectorId) {
         ClearChargingProfileRequest request = new ClearChargingProfileRequest();
         request.setConnectorId(connectorId);

@@ -15,12 +15,10 @@ package org.openhab.binding.ocpp.internal.transport.event;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * What kind of thing a charger was presented with, as far as it says.
+ * OCPP 1.6 carries only the token value (always {@link #UNKNOWN}); 2.0.1 also names its kind.
  *
- * <p>
  * OCPP 1.6 carries only the value, so a token from a 1.6 charger is {@link #UNKNOWN} whatever it
- * really was. 2.0.1 names the kind, which is what tells an AutoCharge vehicle apart from a card.
- *
+ * 
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
@@ -32,6 +30,5 @@ public enum TokenType {
     VEHICLE,
     /** A key code, a local id, or a token the CSMS itself supplied. */
     OTHER,
-    /** The protocol did not say. */
     UNKNOWN
 }

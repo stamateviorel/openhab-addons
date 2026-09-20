@@ -14,6 +14,7 @@ package org.openhab.binding.ocpp.internal.handler;
 
 import static org.openhab.binding.ocpp.internal.OcppBindingConstants.*;
 
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -74,6 +75,8 @@ public class OcppCpmsUserHandler extends BaseThingHandler {
     public void bridgeStatusChanged(ThingStatusInfo bridgeStatusInfo) {
         if (bridgeStatusInfo.getStatus() == ThingStatus.ONLINE) {
             initialize();
+        } else {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_OFFLINE);
         }
     }
 
@@ -107,7 +110,7 @@ public class OcppCpmsUserHandler extends BaseThingHandler {
         if (service == null) {
             return;
         }
-        ZonedDateTime now = ZonedDateTime.now();
+        ZonedDateTime now = ZonedDateTime.now(ZoneId.systemDefault());
         long nowMs = now.toInstant().toEpochMilli();
         long monthStart = now.toLocalDate().withDayOfMonth(1).atStartOfDay(now.getZone()).toInstant().toEpochMilli();
         long yearStart = now.toLocalDate().withDayOfYear(1).atStartOfDay(now.getZone()).toInstant().toEpochMilli();

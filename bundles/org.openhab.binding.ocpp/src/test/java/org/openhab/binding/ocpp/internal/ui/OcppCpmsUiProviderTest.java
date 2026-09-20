@@ -81,7 +81,6 @@ class OcppCpmsUiProviderTest {
             assertEquals(Boolean.TRUE, overview.getConfig().get("sidebar"));
             assertEquals(Boolean.FALSE, pages.get("ocpp_user_ocpp_cpms_user_main_ann").getConfig().get("sidebar"));
 
-            // The monthly chart stacks one bar series per person over the last twelve months.
             List<UIComponent> series = find(overview, "oh-data-series");
             UIComponent ann = series.stream().filter(c -> "Ann".equals(c.getConfig().get("name"))).findFirst()
                     .orElseThrow();
@@ -91,7 +90,6 @@ class OcppCpmsUiProviderTest {
             assertEquals(12.5, data.get(11).get(1));
             assertTrue(data.get(11).get(0) instanceof String);
 
-            // Each person in the list opens their own page; a charger is named by its Thing.
             List<UIComponent> items = find(overview, "oh-list-item");
             assertTrue(items.stream()
                     .anyMatch(i -> "page:ocpp_user_ocpp_cpms_user_main_ann".equals(i.getConfig().get("actionPage"))));

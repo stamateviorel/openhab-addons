@@ -34,16 +34,21 @@ import eu.chargetime.ocpp.model.core.IdTagInfo;
 import eu.chargetime.ocpp.model.core.RemoteStartStopStatus;
 import eu.chargetime.ocpp.model.core.RemoteStartTransactionConfirmation;
 import eu.chargetime.ocpp.model.core.RemoteStartTransactionRequest;
+import eu.chargetime.ocpp.model.core.RemoteStopTransactionConfirmation;
 import eu.chargetime.ocpp.model.core.RemoteStopTransactionRequest;
 import eu.chargetime.ocpp.model.core.ResetConfirmation;
 import eu.chargetime.ocpp.model.core.ResetRequest;
 import eu.chargetime.ocpp.model.core.ResetStatus;
 import eu.chargetime.ocpp.model.core.ResetType;
+import eu.chargetime.ocpp.model.core.UnlockConnectorConfirmation;
 import eu.chargetime.ocpp.model.core.UnlockConnectorRequest;
+import eu.chargetime.ocpp.model.core.UnlockStatus;
 import eu.chargetime.ocpp.model.localauthlist.AuthorizationData;
 import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionConfirmation;
 import eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest;
+import eu.chargetime.ocpp.model.localauthlist.SendLocalListConfirmation;
 import eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest;
+import eu.chargetime.ocpp.model.localauthlist.UpdateStatus;
 import eu.chargetime.ocpp.model.localauthlist.UpdateType;
 import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageConfirmation;
 import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequest;
@@ -151,13 +156,12 @@ public class Ocpp16Commands implements OcppCommands {
 
     @Override
     public @Nullable Request customMessage(String vendorId, @Nullable String messageId, @Nullable Object data) {
-        // Deliberately 1.6-less: the custom-message channel is offered for 2.0.1 only.
         return null;
     }
 
     @Override
     public @Nullable Request displayMessage(String text) {
-        // 1.6 has no display message; the charge point's own firmware owns the screen.
+        // 1.6 has no SetDisplayMessage.
         return null;
     }
 
@@ -192,6 +196,15 @@ public class Ocpp16Commands implements OcppCommands {
         }
         if (confirmation instanceof RemoteStartTransactionConfirmation start) {
             return start.getStatus() == RemoteStartStopStatus.Accepted;
+        }
+        if (confirmation instanceof RemoteStopTransactionConfirmation stop) {
+            return stop.getStatus() == RemoteStartStopStatus.Accepted;
+        }
+        if (confirmation instanceof UnlockConnectorConfirmation unlock) {
+            return unlock.getStatus() == UnlockStatus.Unlocked;
+        }
+        if (confirmation instanceof SendLocalListConfirmation list) {
+            return list.getStatus() == UpdateStatus.Accepted;
         }
         return confirmation != null;
     }

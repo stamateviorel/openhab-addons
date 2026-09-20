@@ -18,6 +18,7 @@ import java.time.ZonedDateTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -62,10 +63,7 @@ import org.openhab.core.types.UnDefType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
-import eu.chargetime.ocpp.model.core.ChangeConfigurationRequest;
 import eu.chargetime.ocpp.model.core.ChargingRateUnitType;
-import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 
 /**
  * Handles one connector (outlet) of a charger: status, metering and transaction channels plus the
@@ -126,6 +124,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
             Map.entry(CHANNEL_TEMPERATURE, new DynamicChannel("temperature", "Number:Temperature", "Temperature")));
 
     private final Logger logger = LoggerFactory.getLogger(OcppConnectorHandler.class);
+    private final MeterValueMapper meterValues = new MeterValueMapper();
 
     private volatile int connectorId = 1;
     private volatile boolean forceTxDefaultProfile;
@@ -207,7 +206,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
         }
     }
 
-    /** The item feeding session energy when the charger has no OCPP meter, or empty. */
     public String getExternalEnergyItem() {
         return externalEnergyItem;
     }
@@ -309,8 +307,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 Double limit = toAmps(command);
                 if (limit != null) {
                     currentLimitAmps = limit;
-                    // A charge-limit clears any explicit power-limit, so the last command wins rather than a
-                    // once-set power-limit shadowing every later amps command.
+                    // charge-limit and power-limit are mutually exclusive; the last one commanded wins.
                     powerLimitWatts = 0;
                     if (!paused) {
                         applyLimit();
@@ -452,8 +449,10 @@ public class OcppConnectorHandler extends BaseThingHandler {
         double watts = powerLimitWatts;
         OcppChargePointHandler cp = chargePoint;
         ChargerCapabilities caps = cp != null ? cp.getCapabilities() : ChargerCapabilities.unknown();
-        boolean allowsPower = caps.allowsPowerUnit().orElse(false);
-        boolean allowsCurrent = caps.allowsCurrentUnit().orElse(true);
+        Optional<Boolean> powerUnit = caps.allowsPowerUnit();
+        Optional<Boolean> currentUnit = caps.allowsCurrentUnit();
+        boolean allowsPower = powerUnit.isEmpty() || powerUnit.get();
+        boolean allowsCurrent = currentUnit.isEmpty() || currentUnit.get();
         Integer numberPhases = numberPhasesRequested > 0 ? numberPhasesRequested : null;
         int conversionPhases = numberPhasesRequested > 0 ? numberPhasesRequested : phases;
         if (numberPhases != null && Boolean.FALSE.equals(caps.phaseSwitchSupported().orElse(null))
@@ -492,7 +491,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     private void sendProfile(ProfileClaim claim) {
-        // 0 A is a pause; to resume with no cap, clear the profile.
         if (!claim.paused() && claim.wireValue() <= 0.0) {
             clearProfile(claim);
         } else {
@@ -567,7 +565,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
         attemptRemoteStart(remoteStartRetries, chosen != null ? chosen : remoteStartTag);
     }
 
-    /** Publishes the token the next remote start would present. */
     private void publishStartTag() {
         String pending = pendingStartTag;
         updateState(CHANNEL_ID_TAG, new StringType(pending != null ? pending : remoteStartTag));
@@ -584,7 +581,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
             if (ex == null || remaining <= 0 || transactionId != null || !isReadyToSend()) {
                 return;
             }
-            logger.info("RemoteStart on connector {} did not answer; retrying ({} attempt(s) left)", connectorId,
+            logger.debug("RemoteStart on connector {} did not answer; retrying ({} attempt(s) left)", connectorId,
                     remaining);
             remoteStartRetryTask = scheduler.schedule(() -> {
                 if (transactionId == null && isReadyToSend()) {
@@ -634,13 +631,17 @@ public class OcppConnectorHandler extends BaseThingHandler {
             return;
         }
         int rounded = (int) Math.round(amps);
-        dispatch(new ChangeConfigurationRequest(hardwareMaxCurrentKey, Integer.toString(rounded)),
-                "ChangeConfiguration[hardwareMax]").whenComplete((confirmation, ex) -> {
-                    if (ex == null && confirmation instanceof ChangeConfigurationConfirmation change
-                            && change.getStatus() == ConfigurationStatus.Accepted) {
-                        updateState(CHANNEL_HARDWARE_MAX_CURRENT, new QuantityType<>(rounded, Units.AMPERE));
-                    }
-                });
+        eu.chargetime.ocpp.model.Request request = commands().setConfiguration(hardwareMaxCurrentKey,
+                Integer.toString(rounded));
+        if (request == null) {
+            logger.debug("Connector {} cannot write {} on this protocol version", connectorId, hardwareMaxCurrentKey);
+            return;
+        }
+        dispatch(request, "ChangeConfiguration[hardwareMax]").whenComplete((confirmation, ex) -> {
+            if (ex == null && commands().isAccepted(confirmation)) {
+                updateState(CHANNEL_HARDWARE_MAX_CURRENT, new QuantityType<>(rounded, Units.AMPERE));
+            }
+        });
     }
 
     private void pollMeterValues() {
@@ -700,7 +701,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
             if (ex != null) {
                 Throwable unwrapped = ex.getCause();
                 Throwable cause = ex instanceof CompletionException && unwrapped != null ? unwrapped : ex;
-                logger.warn("{} on connector {} failed: {}", name, connectorId, cause.toString());
+                if (cause instanceof IllegalStateException || "TriggerMessage[MeterValues]".equals(name)) {
+                    logger.debug("{} on connector {} failed: {}", name, connectorId, cause.toString());
+                } else {
+                    logger.warn("{} on connector {} failed: {}", name, connectorId, cause.toString());
+                }
             } else {
                 logger.debug("{} on connector {} -> {}", name, connectorId, confirmation);
             }
@@ -751,7 +756,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (status != null) {
             updateState(CHANNEL_STATUS, new StringType(status.label()));
             updateState(CHANNEL_CABLE_CONNECTED, OnOffType.from(CABLE_PRESENT.contains(status)));
-            // Faulted is a fault, not an availability/charging state; leave those channels.
             if (status == ConnectorStatus.UNAVAILABLE) {
                 updateState(CHANNEL_AVAILABILITY, OnOffType.OFF);
             } else if (status != ConnectorStatus.FAULTED) {
@@ -765,6 +769,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 Integer stale = transactionId;
                 if (stale != null) {
                     transactionId = null;
+                    remoteTransactionId = null;
+                    meterStart = null;
                     updateState(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
                     OcppChargePointHandler cp = chargePoint;
                     if (cp != null) {
@@ -778,7 +784,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     public void onMeterValues(MeterSample sample) {
-        Map<String, State> states = MeterValueMapper.toStates(sample);
+        Map<String, State> states = meterValues.toStates(sample);
         ensureDynamicChannels(states.keySet());
         states.forEach(this::updateState);
         publishSessionEnergy(states.get(CHANNEL_ENERGY_ACTIVE_IMPORT));
@@ -823,7 +829,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
     public void onTransactionStarted(TransactionEvent event) {
         cancel(remoteStartRetryTask);
         remoteStartRetryTask = null;
-        // Any start, remote or by card, is the one the chosen token was meant for.
         pendingStartTag = null;
         int transactionId = event.transactionId();
         this.transactionId = transactionId;
@@ -847,7 +852,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
     public void onTransactionUpdated(TransactionEvent event) {
         String remoteId = event.remoteId();
         if (remoteId != null) {
-            // Whatever this handler believed before, the charger has just said which transaction runs here.
             Integer known = transactionId;
             if (known == null || known != event.transactionId()) {
                 transactionId = event.transactionId();
@@ -861,7 +865,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
         }
     }
 
-    /** The session's energy so far, from the meter register against where it stood at the start. */
     private void publishSessionEnergy(@Nullable State register) {
         Integer start = meterStart;
         if (start == null || !(register instanceof QuantityType<?> reading)) {
@@ -885,8 +888,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 updateState(CHANNEL_LAST_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
             }
         }
-        // The totals settle before the transaction is cleared, so a rule watching for the end reads the
-        // finished session and not the last reading taken during it.
+        // Energy totals must land before transaction-id clears, or a rule triggered by the end reads the mid-
+        // session value.
         this.transactionId = null;
         this.remoteTransactionId = null;
         updateState(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
@@ -898,7 +901,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     private void armStuckWatchdog(ConnectorStatus status) {
-        // Opt-in: auto-unlocking a normal Preparing/Finishing is a physical side effect.
         if (!stuckStateRecovery) {
             return;
         }

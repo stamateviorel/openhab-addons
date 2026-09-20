@@ -79,8 +79,7 @@ class OcppBindingConfigTest {
 
     @Test
     void addToWhitelistAppendsToThePersistedListNotTheStaleField() throws Exception {
-        // The in-memory field is empty (null props); the new tag must still be appended to the persisted [KNOWN],
-        // so two cards learned before the async modified callback lands do not overwrite each other.
+        // Two cards learned before the async modified() callback lands must both survive in [KNOWN].
         ConfigurationAdmin configAdmin = mock(ConfigurationAdmin.class);
         Configuration configuration = mock(Configuration.class);
         when(configAdmin.getConfiguration(eq("binding.ocpp"), any())).thenReturn(configuration);

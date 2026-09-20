@@ -127,7 +127,7 @@ public class Ocpp201Commands implements OcppCommands {
 
     @Override
     public Request reset() {
-        // OnIdle leaves a charge in progress alone, which is what a 1.6 soft reset did in practice.
+        // OnIdle waits for a running transaction to end before rebooting.
         return new ResetRequest(ResetEnum.OnIdle);
     }
 
@@ -148,8 +148,7 @@ public class Ocpp201Commands implements OcppCommands {
     @Override
     public Request setChargingProfile(int connectorId, double value, boolean inWatts, int numberPhases,
             boolean txDefault, @Nullable Integer transactionId, @Nullable String remoteId) {
-        // 2.0.1 requires a TxProfile to name its transaction; without the charger's id the binding's is sent
-        // and rejected, leaving the limit visibly unapplied rather than a TxDefaultProfile outliving the session.
+        // 2.0.1 rejects a TxProfile that does not carry the station's own transactionId.
         boolean useTxProfile = transactionId != null && !txDefault;
         ChargingSchedulePeriod period = new ChargingSchedulePeriod(0, value);
         if (numberPhases > 0) {
@@ -181,10 +180,7 @@ public class Ocpp201Commands implements OcppCommands {
         return new GetBaseReportRequest(reportIds.incrementAndGet(), ReportBaseEnum.FullInventory);
     }
 
-    /**
-     * The 1.6 settings the binding pushes, named in the 2.0.1 device model. An extraConfig entry can
-     * address anything else by giving its key as {@code Component.Variable}.
-     */
+    /** 1.6 configuration keys and their 2.0.1 Component.Variable names. */
     private static final Map<String, String> VARIABLES = Map.of("MeterValueSampleInterval",
             "SampledDataCtrlr.TxUpdatedInterval", "MeterValuesSampledData", "SampledDataCtrlr.TxUpdatedMeasurands",
             "MeterValuesAlignedData", "AlignedDataCtrlr.Measurands", "ClockAlignedDataInterval",
@@ -253,8 +249,11 @@ public class Ocpp201Commands implements OcppCommands {
                 if (text.length() > 0) {
                     text.append(", ");
                 }
-                text.append(result.getComponent().getName()).append('.').append(result.getVariable().getName())
-                        .append('=').append(result.getAttributeStatus());
+                Component component = result.getComponent();
+                Variable variable = result.getVariable();
+                text.append(component == null ? "?" : component.getName()).append('.')
+                        .append(variable == null ? "?" : variable.getName()).append('=')
+                        .append(result.getAttributeStatus());
                 if (result.getAttributeStatusInfo() != null) {
                     text.append(" (").append(result.getAttributeStatusInfo().getReasonCode()).append(')');
                 }
@@ -323,7 +322,6 @@ public class Ocpp201Commands implements OcppCommands {
         return false;
     }
 
-    /** A vehicle identifies itself by MAC address; anything else is presented as an RFID card. */
     private static IdToken idTokenOf(String idToken, TokenType type) {
         return new IdToken(idToken, type == TokenType.VEHICLE ? IdTokenEnum.MacAddress : IdTokenEnum.ISO14443);
     }

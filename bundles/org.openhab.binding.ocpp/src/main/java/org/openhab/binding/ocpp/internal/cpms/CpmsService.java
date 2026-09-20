@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -59,7 +60,6 @@ public class CpmsService {
         this.clock = clock;
     }
 
-    /** Registered by the CPMS user Things, which are the source of truth for people and their cards. */
     public void registerUser(CpmsUser user) {
         userRegistry.put(user.id(), user);
     }
@@ -72,7 +72,6 @@ public class CpmsService {
         return new ArrayList<>(userRegistry.values());
     }
 
-    /** What kind of token this is, as far as the enrolled users say. */
     public TokenType tokenTypeOf(String token) {
         for (CpmsUser user : users()) {
             if (user.vehicles().contains(token)) {
@@ -111,8 +110,8 @@ public class CpmsService {
         }
         double cap = user.monthlyCapKwh();
         if (cap > 0 && energyKwh(user.id(), monthStartEpoch(), Long.MAX_VALUE) >= cap) {
-            logger.info("User {} reached the monthly cap of {} kWh; card {} rejected until next month", user.name(),
-                    cap, idTag);
+            logger.debug("User {} reached the monthly cap of {} kWh; authorization rejected until next month",
+                    user.name(), cap);
             return false;
         }
         return true;
@@ -155,15 +154,12 @@ public class CpmsService {
         }
         String idTag = open.idTag();
         if (idTag == null) {
-            // Nobody ever presented a token, so there is no one to log the session under.
             logger.debug("Session {} ended without a token; not recorded", transactionId);
             storage.remove(key);
             return;
         }
         List<CpmsTransaction> log = readLog();
         if (log == null) {
-            // Never overwrite an unreadable log — that would wipe every past month's history at once. Keep the
-            // open key so the session is not also lost from the open store; it can be recovered once the log is fixed.
             logger.error("CPMS transaction log is unreadable; session {} not recorded to preserve past usage",
                     transactionId);
             return;
@@ -183,10 +179,7 @@ public class CpmsService {
         return log == null ? new ArrayList<>() : new ArrayList<>(log);
     }
 
-    /**
-     * The live log, parsed from storage once and cached in memory so authorize does not re-parse the JSON on
-     * every tap. Returns {@code null} only when the stored JSON is corrupt (never cached, never clobbered).
-     */
+    /** {@code null} only when the stored JSON is corrupt; a corrupt log is never cached. */
     private @Nullable List<CpmsTransaction> readLog() {
         List<CpmsTransaction> cached = cache;
         if (cached != null) {
@@ -206,7 +199,6 @@ public class CpmsService {
         }
     }
 
-    /** The most recent sessions first, up to {@code limit}. */
     public synchronized List<CpmsTransaction> recentTransactions(int limit) {
         List<CpmsTransaction> all = transactions();
         List<CpmsTransaction> recent = new ArrayList<>();
@@ -216,7 +208,6 @@ public class CpmsService {
         return recent;
     }
 
-    /** kWh charged to a user's cards for sessions that ended within {@code [fromEpoch, toEpoch)}. */
     public synchronized double energyKwh(String userId, long fromEpoch, long toEpoch) {
         double wh = 0;
         for (CpmsTransaction tx : transactions()) {
@@ -227,7 +218,6 @@ public class CpmsService {
         return wh / 1000.0;
     }
 
-    /** Per-user kWh for the month and the year, given the two window starts and now. */
     public synchronized List<Usage> usage(long monthStart, long yearStart, long now) {
         Map<String, double[]> totals = new HashMap<>();
         for (CpmsTransaction tx : transactions()) {
@@ -235,7 +225,7 @@ public class CpmsService {
             if (userId == null || tx.stopEpoch() >= now || tx.stopEpoch() < yearStart) {
                 continue;
             }
-            double[] bucket = totals.computeIfAbsent(userId, k -> new double[2]);
+            double[] bucket = Objects.requireNonNull(totals.computeIfAbsent(userId, k -> new double[2]));
             bucket[1] += tx.energyWh();
             if (tx.stopEpoch() >= monthStart) {
                 bucket[0] += tx.energyWh();

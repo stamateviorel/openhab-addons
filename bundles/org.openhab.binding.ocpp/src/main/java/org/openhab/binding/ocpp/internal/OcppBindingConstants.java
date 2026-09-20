@@ -60,7 +60,7 @@ public class OcppBindingConstants {
     public static final String CHANNEL_POWER_OFFERED = "power-offered";
     public static final String CHANNEL_ENERGY_ACTIVE_IMPORT = "energy-active-import";
 
-    // Additional metering channels — full OCPP measurand set
+    // Connector channels — remaining OCPP measurands
     public static final String CHANNEL_CURRENT_IMPORT = "current-import";
     public static final String CHANNEL_CURRENT_EXPORT = "current-export";
     public static final String CHANNEL_VOLTAGE = "voltage";

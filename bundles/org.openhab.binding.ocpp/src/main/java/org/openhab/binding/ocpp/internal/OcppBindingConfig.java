@@ -33,10 +33,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Binding-wide card settings, edited under Settings → Add-on Settings → OCPP Binding. Backed by
- * Configuration Admin under PID {@code binding.ocpp}, so authorization lives with the binding rather than
- * on each server Thing. {@link #addToWhitelist} writes back through the same PID, which the running binding
- * re-reads without reinitializing any Thing — a learned card takes effect without dropping charger sessions.
+ * Binding-wide card settings from Configuration Admin PID {@code binding.ocpp}; a write-back through the same
+ * PID is re-read by the modified callback without reinitializing anything.
  *
  * @author Stamate Viorel - Initial contribution
  */
@@ -87,11 +85,7 @@ public class OcppBindingConfig {
         return whitelist;
     }
 
-    /**
-     * Persists a tag into the whitelist via Configuration Admin; the modified callback re-reads it.
-     * Synchronized and built from the persisted list, not the in-memory field, so two cards learned before
-     * the async callback lands do not overwrite each other.
-     */
+    /** Reads the persisted list, not the field: two cards learned before the modified callback would clash. */
     public synchronized void addToWhitelist(String idTag) {
         try {
             Configuration configuration = configAdmin.getConfiguration(PID, null);
@@ -107,9 +101,10 @@ public class OcppBindingConfig {
             updated.add(idTag);
             props.put(KEY_WHITELIST, updated);
             configuration.update(props);
-            logger.info("Auto-learned card {} into the whitelist", idTag);
+            logger.info("Auto-learned a card into the whitelist");
+            logger.debug("Learned card {}", idTag);
         } catch (IOException e) {
-            logger.warn("Could not persist learned card {}: {}", idTag, e.getMessage());
+            logger.warn("Could not persist a learned card: {}", e.getMessage());
         }
     }
 

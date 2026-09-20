@@ -31,7 +31,6 @@ public final class Measurands {
     private Measurands() {
     }
 
-    /** Return {@code list} with its final comma-separated entry removed, or empty. */
     public static String dropLast(@Nullable String list) {
         if (list == null) {
             return "";

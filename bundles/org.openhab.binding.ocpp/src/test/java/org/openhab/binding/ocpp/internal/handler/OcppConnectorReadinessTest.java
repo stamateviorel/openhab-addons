@@ -156,7 +156,6 @@ class OcppConnectorReadinessTest {
 
     @Test
     void aPowerOnlyChargerGetsTheAmpsLimitConvertedToWatts() {
-        // Power-only charger: 16 A converts with the defaults (230 V, 1 phase) to 3680 W.
         ready.set(true);
         when(parent.getCapabilities()).thenReturn(capsWithRateUnit("Power"));
         List<Request> sent = captureAcceptedSends();
@@ -269,6 +268,7 @@ class OcppConnectorReadinessTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void anAcceptedOlderRequestPublishesWhenTheNewerOneIsRejected() {
         ready.set(true);
         CompletableFuture<eu.chargetime.ocpp.model.Confirmation> first = new CompletableFuture<>();
@@ -287,6 +287,7 @@ class OcppConnectorReadinessTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void aLateStaleConfirmationCannotOverwriteANewerResult() {
         ready.set(true);
         CompletableFuture<eu.chargetime.ocpp.model.Confirmation> first = new CompletableFuture<>();
@@ -329,7 +330,6 @@ class OcppConnectorReadinessTest {
 
     @Test
     void pausingSendsZeroAmpsAndUnpausingRestoresTheLimit() {
-        // PAUSE keeps the transaction and sends 0 A; the last limit is kept in stored fields and restored on unpause.
         ready.set(true);
         List<Request> sent = new java.util.ArrayList<>();
         when(parent.send(any())).thenAnswer(inv -> {

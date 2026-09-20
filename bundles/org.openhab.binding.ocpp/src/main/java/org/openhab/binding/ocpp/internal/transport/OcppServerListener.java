@@ -27,10 +27,6 @@ import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 /**
  * Callbacks raised by the {@link OcppTransport} for inbound OCPP traffic, keyed by session id.
  *
- * <p>
- * The events are protocol-neutral: each wire protocol translates its own messages into them, so
- * everything above this interface is shared by every OCPP version the binding speaks.
- *
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
@@ -49,10 +45,7 @@ public interface OcppServerListener {
 
     void onHeartbeat(UUID session);
 
-    /**
-     * Capabilities a charger reported out of band. 1.6 answers GetConfiguration directly, but 2.0.1
-     * sends its device model as a separate stream of NotifyReport messages.
-     */
+    /** 2.0.1 reports capabilities asynchronously via NotifyReport, not in a confirmation. */
     void onCapabilities(UUID session, java.util.Map<String, String> configurationKeys);
 
     void onTransactionEvent(UUID session, TransactionEvent event);
@@ -65,10 +58,7 @@ public interface OcppServerListener {
 
     int nextTransactionId();
 
-    /**
-     * The id already given to the transaction a charger names {@code remoteId}, if any. It lets a
-     * transaction that began before the binding restarted keep its id and its connector.
-     */
+    /** The persisted id of a transaction that began before a restart, if any. */
     @Nullable
     Integer knownTransactionId(UUID session, String remoteId);
 

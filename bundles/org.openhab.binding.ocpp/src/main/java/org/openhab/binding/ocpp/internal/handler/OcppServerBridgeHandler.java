@@ -72,6 +72,7 @@ import com.google.gson.Gson;
 public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppServerListener {
 
     private final Logger logger = LoggerFactory.getLogger(OcppServerBridgeHandler.class);
+    private final Set<String> missingItemsWarned = ConcurrentHashMap.newKeySet();
 
     private static final long POWER_SAMPLE_SECONDS = 30;
 
@@ -216,6 +217,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
         powerTallies.clear();
         sessionChargePoints.clear();
+        sessionVersions.clear();
         chargePoints.clear();
     }
 
@@ -335,11 +337,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         enrollToken(session, idToken, type, null);
     }
 
-    /**
-     * Learn or offer an unknown token. Called on Authorize and on a transaction start, since a charger may skip
-     * Authorize. A token is a card, a vehicle recognised by AutoCharge, or an identifier the charger presents on its
-     * own; they are all managed the same way, and the kind only decides how the offer is labelled.
-     */
+    /** A charger may start a transaction without an Authorize (local list, AutoCharge), so this runs on both. */
     private void enrollToken(UUID session, @Nullable String idToken, TokenType type, @Nullable Integer connectorId) {
         if (idToken == null) {
             return;
@@ -394,7 +392,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         String chargePointId = sessionChargePoints.get(session);
         Integer connectorId = event.connectorId();
         if (chargePointId != null && connectorId != null) {
-            // Persist at accept time so a later stop routes even before a Thing exists.
             rememberTransaction(transactionId, chargePointId, connectorId, event.remoteId(), event.meterWh());
         }
         CpmsService service = cpms;
@@ -434,7 +431,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
         CpmsService service = cpms;
         boolean adopted = service != null && service.onTransactionAuthorized(event.transactionId(), idToken);
-        // On 1.6 every stop carries a tag, possibly one the binding refused at the start.
+        // A 1.6 StopTransaction.req idTag may be one the binding refused at the start.
         if (event.kind() != TransactionEvent.Kind.ENDED || adopted) {
             enrollToken(session, idToken, event.tokenType(), event.connectorId());
         }
@@ -471,13 +468,12 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
     }
 
-    /** A vehicle token is sent as such; without users to say, a token is treated as a card. */
+    /** {@code UNKNOWN} without a CPMS; only a CPMS user can mark a token as a vehicle. */
     public TokenType tokenTypeOf(String token) {
         CpmsService service = cpms;
         return service == null ? TokenType.UNKNOWN : service.tokenTypeOf(token);
     }
 
-    /** The charger's label if it has a Thing, else its id, plus the connector when one is known. */
     private String whereOf(UUID session, @Nullable Integer connectorId) {
         String chargePointId = sessionChargePoints.get(session);
         OcppChargePointHandler handler = chargePointId == null ? null : chargePoints.get(chargePointId);
@@ -513,7 +509,9 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         try {
             return itemRegistry.getItem(itemName).getState();
         } catch (ItemNotFoundException e) {
-            logger.warn("External energy item {} not found; falling back to the OCPP meter", itemName);
+            if (missingItemsWarned.add(itemName)) {
+                logger.warn("External energy item {} not found; falling back to the OCPP meter", itemName);
+            }
             return null;
         }
     }
@@ -523,10 +521,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         return state == null ? null : energyReadingWh(state, meter.kilo());
     }
 
-    /**
-     * A cumulative energy reading as Wh: a Quantity converted from its own unit, or a plain number read per
-     * {@code kilo}.
-     */
     static @Nullable Integer energyReadingWh(State state, boolean kilo) {
         if (state instanceof QuantityType<?> quantity) {
             QuantityType<?> wh = quantity.toUnit(Units.WATT_HOUR);
@@ -538,10 +532,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         return null;
     }
 
-    /**
-     * An instantaneous power reading as W: a Quantity converted from its own unit, or a plain number read per
-     * {@code kilo}.
-     */
     static @Nullable Double powerReadingW(State state, boolean kilo) {
         if (state instanceof QuantityType<?> quantity) {
             QuantityType<?> watts = quantity.toUnit(Units.WATT);
@@ -559,7 +549,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         persistTally(transactionId, tally);
     }
 
-    /** Integrate one interval of power into every open tally — the running estimate of a power-metered session's Wh. */
     private void samplePowerTallies() {
         long now = System.currentTimeMillis();
         for (Map.Entry<Integer, PowerTally> entry : powerTallies.entrySet()) {
@@ -580,7 +569,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         return (int) Math.round(tally.finish(System.currentTimeMillis(), this));
     }
 
-    /** Persist a running tally so a power-integrated session survives an openHAB restart mid-charge. */
     private void persistTally(int transactionId, PowerTally tally) {
         Storage<String> store = powerStore;
         if (store != null) {
@@ -600,7 +588,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
                 continue;
             }
             try {
-                // Restart from the persisted Wh, but reset the clock to now: no power flowed while openHAB was down.
                 PersistedTally p = gson.fromJson(json, PersistedTally.class);
                 if (p != null) {
                     powerTallies.put(Integer.valueOf(key), new PowerTally(p.itemName(), p.kilo(), now, p.wh()));
@@ -681,7 +668,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
     }
 
-    /** The meter register at the start of a transaction, for the connector that resumes it. */
     public @Nullable Integer meterStartOf(int transactionId, String chargePointId) {
         TransactionStore store = transactionStore;
         TransactionStore.Location location = store == null ? null : store.locate(transactionId);
@@ -717,7 +703,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         return location != null && chargePointId.equals(location.chargePointId()) ? location.connectorId() : null;
     }
 
-    /** The name the charger gave a transaction, for the connector that resumes it after a restart. */
     public @Nullable String remoteIdOf(int transactionId, String chargePointId) {
         TransactionStore store = transactionStore;
         TransactionStore.Location location = store == null ? null : store.locate(transactionId);

@@ -65,8 +65,7 @@ class DeviceModelReportTest {
 
     @Test
     void aControllerReportedUnavailableIsAnAnswer() {
-        // Distinct from a charger that never mentioned it: the key is present but does not list the
-        // profile, so the binding reads "not supported" rather than "not known".
+        // Key present but profile not listed reads "not supported", distinct from "not known".
         DeviceModelReport report = new DeviceModelReport();
         report.add(notifyReport(false, data("SmartChargingCtrlr", "Available", "false", null)));
 

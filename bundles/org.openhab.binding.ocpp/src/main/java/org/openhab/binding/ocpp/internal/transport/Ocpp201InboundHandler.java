@@ -95,15 +95,13 @@ public class Ocpp201InboundHandler
 
     private final Logger logger = LoggerFactory.getLogger(Ocpp201InboundHandler.class);
     private final OcppServerListener listener;
-    // 2.0.1 names transactions with a string the charger picks; the binding logs usage under a
-    // number, so each one is given an id on its first event and it is held until the transaction ends.
+    // 2.0.1 transaction ids are station-chosen strings; the binding's numeric ids are mapped here.
     private final Map<String, Integer> transactionIds = new ConcurrentHashMap<>();
-    // A charger need not repeat the EVSE on every event of a transaction; this keeps the one it started on.
+    // A TransactionEvent need not repeat the EVSE after Started.
     private final Map<String, Integer> transactionConnectors = new ConcurrentHashMap<>();
     private final Map<String, DeviceModelReport> reports = new ConcurrentHashMap<>();
     // Transaction state is kept per charger, not per socket, so a reconnect does not lose it.
     private final Map<UUID, String> sessionIdentity = new ConcurrentHashMap<>();
-    // The last event seen per transaction, so a replayed or duplicated one is not counted twice.
     private final Map<String, Integer> lastSeqNo = new ConcurrentHashMap<>();
 
     public Ocpp201InboundHandler(OcppServerListener listener) {
@@ -114,6 +112,8 @@ public class Ocpp201InboundHandler
     @NonNullByDefault({})
     public BootNotificationResponse handleBootNotificationRequest(UUID sessionIndex, BootNotificationRequest request) {
         logger.debug("BootNotification (2.0.1) from session {}: reason={}", sessionIndex, request.getReason());
+        // A reboot ends every transaction the charger had open.
+        forgetTransactions(sessionIndex);
         deliver("BootNotification", sessionIndex,
                 () -> listener.onBootNotification(sessionIndex, Ocpp201Events.toBootInfo(request)));
         return new BootNotificationResponse(ZonedDateTime.now(ZoneOffset.UTC), listener.heartbeatFor(sessionIndex),
@@ -148,8 +148,6 @@ public class Ocpp201InboundHandler
     @Override
     @NonNullByDefault({})
     public DataTransferResponse handleDataTransferRequest(UUID sessionIndex, DataTransferRequest request) {
-        // Vendor-specific traffic the binding has no meaning for; answered so the charger is not
-        // left waiting, and logged so it can be seen.
         logger.debug("DataTransfer from session {} vendor {} message {}: {}", sessionIndex, request.getVendorId(),
                 request.getMessageId(), request.getData());
         return new DataTransferResponse(DataTransferStatusEnum.UnknownVendorId);
@@ -159,7 +157,7 @@ public class Ocpp201InboundHandler
     @NonNullByDefault({})
     public SecurityEventNotificationResponse handleSecurityEventNotificationRequest(UUID sessionIndex,
             SecurityEventNotificationRequest request) {
-        logger.info("Security event from session {}: {} at {} ({})", sessionIndex, request.getType(),
+        logger.debug("Security event from session {}: {} at {} ({})", sessionIndex, request.getType(),
                 request.getTimestamp(), request.getTechInfo());
         return new SecurityEventNotificationResponse();
     }
@@ -167,7 +165,6 @@ public class Ocpp201InboundHandler
     @Override
     @NonNullByDefault({})
     public SignCertificateResponse handleSignCertificateRequest(UUID sessionIndex, SignCertificateRequest request) {
-        // Signing a charger's certificate needs a CA this binding does not have.
         logger.debug("SignCertificate from session {} refused — no certificate authority", sessionIndex);
         return new SignCertificateResponse(GenericStatusEnum.Rejected);
     }
@@ -185,7 +182,7 @@ public class Ocpp201InboundHandler
     @NonNullByDefault({})
     public LogStatusNotificationResponse handleLogStatusNotificationRequest(UUID sessionIndex,
             LogStatusNotificationRequest request) {
-        logger.info("Log upload on session {}: {}", sessionIndex, request.getStatus());
+        logger.debug("Log upload on session {}: {}", sessionIndex, request.getStatus());
         return new LogStatusNotificationResponse();
     }
 
@@ -206,7 +203,6 @@ public class Ocpp201InboundHandler
         return new NotifyMonitoringReportResponse();
     }
 
-    /** Drops half-received reports and per-transaction state when a session goes away. */
     /** Ties a session to its charger id; without one the socket id stands in. */
     public void bindSession(UUID session, @Nullable String chargePointId) {
         if (chargePointId != null) {
@@ -221,6 +217,13 @@ public class Ocpp201InboundHandler
         sessionIdentity.remove(session);
     }
 
+    private void forgetTransactions(UUID session) {
+        String prefix = identity(session) + "/";
+        transactionIds.keySet().removeIf(key -> key.startsWith(prefix));
+        transactionConnectors.keySet().removeIf(key -> key.startsWith(prefix));
+        lastSeqNo.keySet().removeIf(key -> key.startsWith(prefix));
+    }
+
     private String identity(UUID session) {
         String bound = sessionIdentity.get(session);
         return bound != null ? bound : session.toString();
@@ -232,7 +235,7 @@ public class Ocpp201InboundHandler
             StatusNotificationRequest request) {
         logger.debug("StatusNotification (2.0.1) from session {} evse {}: {}", sessionIndex, request.getEvseId(),
                 request.getConnectorStatus());
-        // A bare Occupied says only that a vehicle is present.
+        // Occupied maps to PREPARING and would regress the state the open transaction already reported.
         if (request.getConnectorStatus() == ConnectorStatusEnum.Occupied
                 && hasOpenTransaction(sessionIndex, request.getEvseId())) {
             return new StatusNotificationResponse();
@@ -295,8 +298,7 @@ public class Ocpp201InboundHandler
             case Updated -> TransactionEvent.Kind.UPDATED;
         };
 
-        // A plug-first session starts with no token and presents one in a later update, so whichever
-        // event carries a token is the one that is answered; without one there is nothing to refuse.
+        // A plug-first transaction starts without a token and presents it in a later Updated event.
         boolean authorized = idToken == null || listener.isTagAuthorized(idToken);
         // Refused before the replay guard records it, so a retransmitted refused start is refused again.
         if (!authorized && kind == TransactionEvent.Kind.STARTED) {
@@ -318,13 +320,14 @@ public class Ocpp201InboundHandler
         ConnectorStatus chargingState = info == null ? null : Ocpp201Events.toConnectorStatus(info.getChargingState());
         Integer meterWh = meterWhOf(request);
         String reason = info == null || info.getStoppedReason() == null ? null : info.getStoppedReason().name();
-        TransactionEvent event = new TransactionEvent(kind, connectorId, transactionId, remoteId, idToken,
-                Ocpp201Events.toTokenType(typeOf(request.getIdToken())), meterWh, request.getTimestamp(), reason,
-                chargingState);
+        // A token refused on a later event must not become the session's owner downstream.
+        TransactionEvent event = new TransactionEvent(kind, connectorId, transactionId, remoteId,
+                authorized ? idToken : null, Ocpp201Events.toTokenType(typeOf(request.getIdToken())), meterWh,
+                request.getTimestamp(), reason, chargingState);
         deliver("TransactionEvent", sessionIndex, () -> listener.onTransactionEvent(sessionIndex, event));
         if (connectorId != null) {
-            // A transaction event carries what 1.6 sent as separate MeterValues and
-            // StatusNotification messages, on every kind and not just an update.
+            // A 2.0.1 TransactionEvent carries meter values and charging state on every kind, not only
+            // Updated.
             MeterSample sample = Ocpp201Events.toMeterSample(connectorId, request.getMeterValue());
             if (!sample.blocks().isEmpty()) {
                 deliver("TransactionEvent[MeterValues]", sessionIndex,
@@ -350,11 +353,7 @@ public class Ocpp201InboundHandler
         return response;
     }
 
-    /**
-     * A charger numbers the events of a transaction from zero and replays any it could not deliver
-     * while offline, so the same one can arrive twice. Anything not newer than what has already been
-     * accounted for is dropped rather than counted again.
-     */
+    /** 2.0.1 seqNo restarts at 0 per transaction and events queued offline are replayed. */
     private boolean isReplay(UUID session, String remoteId, @Nullable Integer seqNo) {
         if (seqNo == null) {
             return false;
@@ -373,7 +372,6 @@ public class Ocpp201InboundHandler
             return listener.nextTransactionId();
         }
         return Objects.requireNonNull(transactionIds.computeIfAbsent(key(session, remoteId), ignored -> {
-            // A transaction that began before a restart already has an id on record.
             Integer known = listener.knownTransactionId(session, remoteId);
             return known != null ? known : listener.nextTransactionId();
         }));
@@ -383,7 +381,10 @@ public class Ocpp201InboundHandler
             int transactionId) {
         if (evse != null) {
             if (remoteId != null) {
-                transactionConnectors.put(key(session, remoteId), evse.getId());
+                Integer evseId = evse.getId();
+                if (evseId != null) {
+                    transactionConnectors.put(key(session, remoteId), evseId);
+                }
             }
             return evse.getId();
         }
@@ -396,12 +397,9 @@ public class Ocpp201InboundHandler
         return identity(session) + "/" + remoteId;
     }
 
-    /** The energy register, which is what the usage log and the session-energy channel are built on. */
     private static @Nullable Integer meterWhOf(TransactionEventRequest request) {
         MeterSample sample = Ocpp201Events.toMeterSample(0, request.getMeterValue());
-        // An end event carries the transaction's first reading as well as its last, and nothing obliges a
-        // charger to list them in order, so the register that counts is the one from the latest block by
-        // its own timestamp.
+        // An Ended event lists the first and last readings in no guaranteed order.
         List<MeterSample.Block> blocks = new ArrayList<>(sample.blocks());
         blocks.sort(
                 Comparator.comparing(MeterSample.Block::timestamp, Comparator.nullsFirst(Comparator.naturalOrder())));

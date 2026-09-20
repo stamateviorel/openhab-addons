@@ -35,8 +35,7 @@ class OcppLivenessThresholdTest {
 
     @Test
     void aStaleReportedHeartbeatDoesNotShrinkBelowTheNegotiatedInterval() {
-        // Charger reports a small/stale 10s but was negotiated the 300s server default: size from 300, not 10, so a
-        // healthy charger beating every 300s is not reaped.
+        // A stale reported 10 s must not shrink the window below the negotiated 300 s.
         assertEquals(660, OcppChargePointHandler.livenessThreshold(0, OptionalInt.of(10), 300));
     }
 
@@ -69,7 +68,6 @@ class OcppLivenessThresholdTest {
 
     @Test
     void everythingUnsetStillYieldsASaneWindow() {
-        // Nothing set and server default 0 falls back to a 300 s heartbeat, so 2*300+60.
         assertEquals(660, OcppChargePointHandler.livenessThreshold(0, OptionalInt.empty(), 0));
     }
 }

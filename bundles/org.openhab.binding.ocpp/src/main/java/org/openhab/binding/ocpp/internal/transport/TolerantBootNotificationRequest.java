@@ -17,11 +17,15 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import eu.chargetime.ocpp.model.core.BootNotificationRequest;
 
 /**
- * A {@link BootNotificationRequest} that accepts an over-length CiString20 model/vendor field.
+ * A {@link BootNotificationRequest} with the library's field validation disabled; chargers exceed CiString20 on
+ * vendor/model.
  *
+ * A {@link BootNotificationRequest} that accepts an over-length CiString20 model/vendor field.
+ * 
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
+@SuppressWarnings("deprecation")
 public class TolerantBootNotificationRequest extends BootNotificationRequest {
 
     @Override

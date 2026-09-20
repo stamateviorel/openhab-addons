@@ -45,7 +45,6 @@ class CpmsServiceTest {
 
     @Test
     void authorizationDefersToTheWhitelistWhenNoUsersAreDefined() {
-        // null tells the binding to fall back to its own whitelist.
         assertNull(cpms.authorize("ANY"));
     }
 
@@ -279,7 +278,6 @@ class CpmsServiceTest {
 
     @Test
     void aVehicleAuthorizesJustAsACardDoes() {
-        // AutoCharge and plug-and-charge tokens are managed the same way as cards.
         cpms.registerUser(new CpmsUser("u1", "Stijn", true, 0, List.of("CARD1"), List.of("001122334455")));
 
         assertEquals(Boolean.TRUE, cpms.authorize("CARD1"));

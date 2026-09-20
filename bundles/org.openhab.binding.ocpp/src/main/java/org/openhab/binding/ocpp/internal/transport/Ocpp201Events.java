@@ -57,11 +57,7 @@ public final class Ocpp201Events {
                 station.getSerialNumber());
     }
 
-    /**
-     * 2.0.1 addresses an EVSE and, optionally, a connector within it. The binding models one
-     * connector per EVSE, as every dual-socket charger seen so far reports EVSE 1 and 2, so the EVSE
-     * id is what maps onto the connector Thing.
-     */
+    /** The EVSE id is the connector id; the connector within an EVSE is ignored. */
     public static StatusInfo toStatusInfo(StatusNotificationRequest request) {
         Integer evseId = request.getEvseId();
         // A plain StatusNotification carries no charging detail, unlike the state on a transaction event.
@@ -108,8 +104,7 @@ public final class Ocpp201Events {
             case Reserved -> ConnectorStatus.RESERVED;
             case Unavailable -> ConnectorStatus.UNAVAILABLE;
             case Faulted -> ConnectorStatus.FAULTED;
-            // Occupied says a vehicle is present but not what it is doing; the transaction event's
-            // charging state refines it moments later.
+            // 2.0.1 Occupied carries no charging detail; TransactionEvent.chargingState refines it.
             case Occupied -> ConnectorStatus.PREPARING;
         };
     }
@@ -139,10 +134,7 @@ public final class Ocpp201Events {
         };
     }
 
-    /**
-     * The measurand and phase enums serialise to the OCPP names the channel mapping keys off, which
-     * are not the Java constant names ({@code CurrentImport} vs {@code Current.Import}).
-     */
+    /** The Gson {@code @SerializedName} wire name (Current.Import), not the constant name (CurrentImport). */
     private static @Nullable String wireName(@Nullable Enum<?> value) {
         if (value == null) {
             return null;
