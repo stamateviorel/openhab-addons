@@ -27,6 +27,10 @@
 				<type>ocpp:last-session-energy</type>
 			</add-channel>
 		</instruction-set>
+		<instruction-set targetVersion="3">
+			<!-- hardware-max-current is now created only where hardwareMaxCurrentKey is set. -->
+			<remove-channel id="hardware-max-current"/>
+		</instruction-set>
 	</thing-type>
 
 </update:update-descriptions>

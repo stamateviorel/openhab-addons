@@ -17,6 +17,8 @@ import java.util.ArrayList;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.storage.Storage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Persists transaction state so it survives an openHAB restart.
@@ -28,37 +30,33 @@ public class TransactionStore {
 
     public record Location(String chargePointId, int connectorId, @Nullable String remoteId,
             @Nullable Integer meterStart) {
-        public Location(String chargePointId, int connectorId) {
-            this(chargePointId, connectorId, null, null);
-        }
-
-        public Location(String chargePointId, int connectorId, @Nullable String remoteId) {
-            this(chargePointId, connectorId, remoteId, null);
-        }
     }
 
     private static final String SEQUENCE_KEY = "sequence";
     private static final String TX_PREFIX = "tx:";
     private static final char SEPARATOR = '\t';
 
+    private final Logger logger = LoggerFactory.getLogger(TransactionStore.class);
     private final Storage<String> storage;
     // Guarded by this: increment and persistent write must be one atomic step.
     private int sequence;
 
     public TransactionStore(Storage<String> storage) {
         this.storage = storage;
-        this.sequence = readSequence(storage);
+        this.sequence = readSequence();
     }
 
-    private static int readSequence(Storage<String> storage) {
+    private int readSequence() {
         String stored = storage.get(SEQUENCE_KEY);
-        if (stored != null) {
-            try {
-                return Integer.parseInt(stored);
-            } catch (NumberFormatException e) {
-            }
+        if (stored == null) {
+            return 0;
         }
-        return 0;
+        Integer parsed = parseInt(stored);
+        if (parsed == null) {
+            logger.warn("Persisted transaction sequence '{}' is not a number; transaction ids restart at 0", stored);
+            return 0;
+        }
+        return parsed;
     }
 
     public synchronized int nextTransactionId() {
@@ -67,17 +65,7 @@ public class TransactionStore {
         return id;
     }
 
-    public synchronized void begin(int transactionId, String chargePointId, int connectorId) {
-        begin(transactionId, chargePointId, connectorId, null);
-    }
-
-    /** {@code remoteId} is the name the charger itself gives the transaction, where it has one. */
-    public synchronized void begin(int transactionId, String chargePointId, int connectorId,
-            @Nullable String remoteId) {
-        begin(transactionId, chargePointId, connectorId, remoteId, null);
-    }
-
-    /** {@code meterStart} is the energy register at the start, so a session can be sized after a restart. */
+    /** {@code remoteId} is the charger's own name for the transaction, {@code meterStart} its starting register. */
     public synchronized void begin(int transactionId, String chargePointId, int connectorId, @Nullable String remoteId,
             @Nullable Integer meterStart) {
         clear(chargePointId, connectorId);
@@ -100,9 +88,9 @@ public class TransactionStore {
             Location location = parse(storage.get(key));
             if (location != null && chargePointId.equals(location.chargePointId())
                     && remoteId.equals(location.remoteId())) {
-                try {
-                    return Integer.parseInt(key.substring(TX_PREFIX.length()));
-                } catch (NumberFormatException e) {
+                Integer transactionId = transactionIdOf(key);
+                if (transactionId != null) {
+                    return transactionId;
                 }
             }
         }
@@ -120,9 +108,9 @@ public class TransactionStore {
     public synchronized @Nullable Integer openTransaction(String chargePointId, int connectorId) {
         for (String key : storage.getKeys()) {
             if (key.startsWith(TX_PREFIX) && matches(storage.get(key), chargePointId, connectorId)) {
-                try {
-                    return Integer.parseInt(key.substring(TX_PREFIX.length()));
-                } catch (NumberFormatException e) {
+                Integer transactionId = transactionIdOf(key);
+                if (transactionId != null) {
+                    return transactionId;
                 }
             }
         }
@@ -137,7 +125,17 @@ public class TransactionStore {
         }
     }
 
-    private static boolean matches(@Nullable String value, String chargePointId, int connectorId) {
+    private @Nullable Integer transactionIdOf(String key) {
+        String id = key.substring(TX_PREFIX.length());
+        Integer parsed = parseInt(id);
+        if (parsed == null) {
+            logger.warn("Persisted transaction key '{}' has no numeric id; the entry stays hidden until it is cleared",
+                    key);
+        }
+        return parsed;
+    }
+
+    private boolean matches(@Nullable String value, String chargePointId, int connectorId) {
         Location location = parse(value);
         return location != null && location.chargePointId().equals(chargePointId)
                 && location.connectorId() == connectorId;
@@ -151,7 +149,7 @@ public class TransactionStore {
         }
     }
 
-    private static @Nullable Location parse(@Nullable String value) {
+    private @Nullable Location parse(@Nullable String value) {
         if (value == null) {
             return null;
         }
@@ -160,12 +158,17 @@ public class TransactionStore {
         if (fields.length < 2) {
             return null;
         }
-        try {
-            String remoteId = fields.length > 2 && !fields[2].isEmpty() ? fields[2] : null;
-            return new Location(fields[0], Integer.parseInt(fields[1]), remoteId,
-                    fields.length > 3 ? parseInt(fields[3]) : null);
-        } catch (NumberFormatException e) {
+        Integer connectorId = parseInt(fields[1]);
+        if (connectorId == null) {
+            logger.warn("Persisted transaction entry '{}' has no numeric connector; it is treated as absent", value);
             return null;
         }
+        String remoteId = fields.length > 2 && !fields[2].isEmpty() ? fields[2] : null;
+        Integer meterStart = fields.length > 3 ? parseInt(fields[3]) : null;
+        if (fields.length > 3 && meterStart == null) {
+            logger.warn("Persisted transaction entry '{}' has no numeric meter start; the session is sized from the "
+                    + "charger's own reading instead", value);
+        }
+        return new Location(fields[0], connectorId, remoteId, meterStart);
     }
 }

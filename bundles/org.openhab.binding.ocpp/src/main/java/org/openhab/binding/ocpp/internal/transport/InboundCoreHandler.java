@@ -77,8 +77,11 @@ public class InboundCoreHandler implements ServerCoreEventHandler {
                 request.getChargePointVendor(), request.getChargePointModel(), request.getFirmwareVersion());
         deliver("BootNotification", sessionIndex,
                 () -> listener.onBootNotification(sessionIndex, Ocpp16Events.toBootInfo(request)));
-        return new BootNotificationConfirmation(ZonedDateTime.now(ZoneOffset.UTC), listener.heartbeatFor(sessionIndex),
-                RegistrationStatus.Accepted);
+        BootNotificationConfirmation confirmation = new BootNotificationConfirmation(ZonedDateTime.now(ZoneOffset.UTC),
+                listener.heartbeatFor(sessionIndex), RegistrationStatus.Accepted);
+        // The library calls this after the confirmation has been passed to the transport.
+        confirmation.setCompletedHandler(() -> listener.onBootConfirmationSent(sessionIndex));
+        return confirmation;
     }
 
     private void deliver(String what, UUID session, Runnable delivery) {
@@ -117,15 +120,15 @@ public class InboundCoreHandler implements ServerCoreEventHandler {
     @NonNullByDefault({})
     public StartTransactionConfirmation handleStartTransactionRequest(UUID sessionIndex,
             StartTransactionRequest request) {
-        boolean authorized = listener.isTagAuthorized(request.getIdTag());
         int transactionId = listener.nextTransactionId();
+        boolean accepted = transactionId > 0 && listener.isTagAuthorized(request.getIdTag());
         logger.debug("StartTransaction from session {} connector {} idTag {} -> txId {} ({})", sessionIndex,
-                request.getConnectorId(), request.getIdTag(), transactionId, authorized ? "accepted" : "invalid");
-        if (authorized) {
+                request.getConnectorId(), request.getIdTag(), transactionId, accepted ? "accepted" : "invalid");
+        if (accepted) {
             deliver("StartTransaction", sessionIndex,
                     () -> listener.onTransactionEvent(sessionIndex, Ocpp16Events.toStarted(request, transactionId)));
         }
-        AuthorizationStatus status = authorized ? AuthorizationStatus.Accepted : AuthorizationStatus.Invalid;
+        AuthorizationStatus status = accepted ? AuthorizationStatus.Accepted : AuthorizationStatus.Invalid;
         return new StartTransactionConfirmation(new IdTagInfo(status), transactionId);
     }
 

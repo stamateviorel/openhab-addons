@@ -87,23 +87,23 @@ class TransactionStoreTest {
     void anOpenTransactionCanBeLocatedAndRecovered() {
         MemoryStorage storage = new MemoryStorage();
         TransactionStore store = new TransactionStore(storage);
-        store.begin(7, "charx", 2);
+        store.begin(7, "charx", 2, null, null);
 
-        assertEquals(new Location("charx", 2), store.locate(7));
+        assertEquals(new Location("charx", 2, null, null), store.locate(7));
         assertEquals(Integer.valueOf(7), store.openTransaction("charx", 2));
         assertNull(store.openTransaction("charx", 1));
 
-        assertEquals(new Location("charx", 2), new TransactionStore(storage).locate(7));
+        assertEquals(new Location("charx", 2, null, null), new TransactionStore(storage).locate(7));
     }
 
     @Test
     void aTransactionIsFoundByTheNameTheChargerGaveIt() {
         MemoryStorage storage = new MemoryStorage();
         TransactionStore store = new TransactionStore(storage);
-        store.begin(9, "charx", 2, "10848555779671014738");
+        store.begin(9, "charx", 2, "10848555779671014738", null);
 
         assertEquals(Integer.valueOf(9), store.byRemoteId("charx", "10848555779671014738"));
-        assertEquals(new Location("charx", 2, "10848555779671014738"), store.locate(9));
+        assertEquals(new Location("charx", 2, "10848555779671014738", null), store.locate(9));
         assertNull(store.byRemoteId("other", "10848555779671014738"));
         assertEquals(Integer.valueOf(9), new TransactionStore(storage).byRemoteId("charx", "10848555779671014738"));
     }
@@ -124,7 +124,7 @@ class TransactionStoreTest {
     void endForgetsTheTransaction() {
         MemoryStorage storage = new MemoryStorage();
         TransactionStore store = new TransactionStore(storage);
-        store.begin(7, "charx", 2);
+        store.begin(7, "charx", 2, null, null);
         store.end(7);
 
         assertNull(store.locate(7));
@@ -175,8 +175,8 @@ class TransactionStoreTest {
     void aNewTransactionOnAConnectorDropsAStaleOne() {
         MemoryStorage storage = new MemoryStorage();
         TransactionStore store = new TransactionStore(storage);
-        store.begin(7, "charx", 2);
-        store.begin(9, "charx", 2);
+        store.begin(7, "charx", 2, null, null);
+        store.begin(9, "charx", 2, null, null);
 
         assertNull(store.locate(7), "the stale transaction must not linger");
         assertEquals(Integer.valueOf(9), store.openTransaction("charx", 2));

@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -175,6 +176,22 @@ class OcppServerBridgeHandlerTest {
         assertEquals(Double.valueOf(7000.0), OcppServerBridgeHandler.powerReadingW(new DecimalType(7000), false));
         assertNull(OcppServerBridgeHandler.powerReadingW(UnDefType.UNDEF, false));
         assertNull(OcppServerBridgeHandler.powerReadingW(new QuantityType<>("7 kWh"), true));
+    }
+
+    @Test
+    void theLocalAuthListVersionOnlyMovesWhenTheListContentDoes() {
+        handler.initialize();
+
+        assertEquals(1, handler.localAuthListVersion("charx", List.of("A", "B")));
+        assertEquals(1, handler.localAuthListVersion("charx", List.of("B", "A")));
+        assertEquals(2, handler.localAuthListVersion("charx", List.of("A", "C")));
+        assertEquals(1, handler.localAuthListVersion("wallbox", List.of("A", "C")));
+
+        TestableBridgeHandler afterRestart = new TestableBridgeHandler(thing, storageService, transport);
+        afterRestart.setCallback(callback);
+        afterRestart.initialize();
+        assertEquals(2, afterRestart.localAuthListVersion("charx", List.of("A", "C")));
+        assertEquals(3, afterRestart.localAuthListVersion("charx", List.of("A", "B")));
     }
 
     @Test

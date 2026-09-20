@@ -78,6 +78,17 @@ class InboundCoreHandlerTest {
     }
 
     @Test
+    void theBootConfirmationReportsItsOwnDeliveryRatherThanLeavingReadinessToATimer() {
+        BootNotificationConfirmation confirmation = handler.handleBootNotificationRequest(session,
+                new BootNotificationRequest("vendor", "model"));
+
+        verify(listener, never()).onBootConfirmationSent(any());
+        assertNotNull(confirmation.getCompletedHandler());
+        confirmation.getCompletedHandler().onConfirmationCompleted();
+        verify(listener).onBootConfirmationSent(session);
+    }
+
+    @Test
     void anUnknownTagIsRejectedWhenAWhitelistIsConfigured() {
         when(listener.isTagAuthorized("stranger")).thenReturn(false);
 
@@ -113,6 +124,18 @@ class InboundCoreHandlerTest {
 
         assertEquals(first + 1, second, "each transaction must get its own id");
         verify(listener, org.mockito.Mockito.times(2)).onTransactionEvent(eq(session), any());
+    }
+
+    @Test
+    void aStartTransactionIsRefusedWhenNoTransactionIdCanBeHandedOut() {
+        when(listener.nextTransactionId()).thenReturn(0);
+        StartTransactionRequest request = new StartTransactionRequest(1, "known", 0,
+                java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC));
+
+        StartTransactionConfirmation confirmation = handler.handleStartTransactionRequest(session, request);
+
+        assertEquals(AuthorizationStatus.Invalid, confirmation.getIdTagInfo().getStatus());
+        verify(listener, never()).onTransactionEvent(any(), any());
     }
 
     @Test

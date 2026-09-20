@@ -101,7 +101,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private static final long LIVENESS_FLOOR_SECONDS = 180;
     private static final long STATUS_FALLBACK_SECONDS = 25;
     private static final int MAX_BOOT_CONFIG_ATTEMPTS = 3;
-    private static final long BOOT_READY_GRACE_MILLIS = 1000;
+    private static final long BOOT_READY_BACKSTOP_MILLIS = 1000;
     private static final int PENDING_SEND_LIMIT = 32;
     private static final long PENDING_SEND_TIMEOUT_SECONDS = 30;
     private static final int OUTBOUND_LIMIT = 64;
@@ -519,7 +519,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
 
     private void becomeReady(UUID expectedSession) {
         synchronized (stateLock) {
-            if (!expectedSession.equals(session)) {
+            if (!expectedSession.equals(session) || operational) {
                 return;
             }
             operational = true;
@@ -654,8 +654,14 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             return;
         }
         cancel(readyTask);
-        readyTask = scheduler.schedule(() -> becomeReady(bootSession), BOOT_READY_GRACE_MILLIS, TimeUnit.MILLISECONDS);
+        readyTask = scheduler.schedule(() -> becomeReady(bootSession), BOOT_READY_BACKSTOP_MILLIS,
+                TimeUnit.MILLISECONDS);
         scheduleBootConfig(bootSession);
+    }
+
+    /** The charger can be addressed once its BootNotification answer has left the transport. */
+    public void onBootConfirmationSent(UUID bootSession) {
+        becomeReady(bootSession);
     }
 
     public void onStatusNotification(StatusInfo status) {
@@ -982,7 +988,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     }
 
     private CompletableFuture<Confirmation> provisionLocalAuthList(List<String> tags) {
-        int version = localAuthListVersion(tags);
+        OcppServerBridgeHandler server = serverHandler();
+        int version = server == null ? 1 : server.localAuthListVersion(chargePointId, tags);
         OcppCommands commands = commands();
         return send(commands.readLocalListVersion()).thenCompose(current -> {
             if (Integer.valueOf(version).equals(commands.localListVersionOf(current))) {
@@ -1001,10 +1008,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     public TokenType tokenTypeOf(String token) {
         OcppServerBridgeHandler server = serverHandler();
         return server == null ? TokenType.UNKNOWN : server.tokenTypeOf(token);
-    }
-
-    private static int localAuthListVersion(List<String> tags) {
-        return tags.stream().sorted().toList().hashCode() & Integer.MAX_VALUE;
     }
 
     private static List<String> parseTagList(String csv) {

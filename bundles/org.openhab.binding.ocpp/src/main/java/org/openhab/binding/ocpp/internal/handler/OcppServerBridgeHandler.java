@@ -24,7 +24,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -75,6 +74,8 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private final Set<String> missingItemsWarned = ConcurrentHashMap.newKeySet();
 
     private static final long POWER_SAMPLE_SECONDS = 30;
+    private static final String AUTH_LIST_VERSION_PREFIX = "authListVersion:";
+    private static final String AUTH_LIST_CONTENT_PREFIX = "authList:";
 
     private final Map<UUID, String> sessionChargePoints = new ConcurrentHashMap<>();
     private final Map<UUID, OcppVersion> sessionVersions = new ConcurrentHashMap<>();
@@ -85,6 +86,8 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private volatile @Nullable Storage<String> powerStore;
 
     private final Object lifecycleLock = new Object();
+    // Dedicated lock: the base class synchronizes on the handler monitor.
+    private final Object authListLock = new Object();
     private volatile boolean disposed;
     private long lifecycleGeneration;
     private volatile @Nullable Future<?> startupTask;
@@ -93,8 +96,8 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private final OcppBindingConfig bindingConfig;
     private final ItemRegistry itemRegistry;
     private volatile @Nullable TransactionStore transactionStore;
+    private volatile @Nullable Storage<String> bridgeStore;
     private volatile @Nullable CpmsService cpms;
-    private final AtomicInteger fallbackSequence = new AtomicInteger();
 
     private volatile @Nullable OcppTransport transport;
     private volatile @Nullable OcppDiscoveryService discoveryService;
@@ -136,7 +139,9 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             return;
         }
         disposed = false;
-        transactionStore = new TransactionStore(storageService.getStorage(getThing().getUID().getAsString()));
+        Storage<String> storage = storageService.getStorage(getThing().getUID().getAsString());
+        bridgeStore = storage;
+        transactionStore = new TransactionStore(storage);
         cpms = new CpmsService(storageService.getStorage(getThing().getUID().getAsString() + ":cpms"));
         powerStore = storageService.getStorage(getThing().getUID().getAsString() + ":power");
         reloadPowerTallies();
@@ -320,6 +325,14 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         OcppChargePointHandler handler = resolve(session);
         if (handler != null) {
             handler.onBootNotification(boot);
+        }
+    }
+
+    @Override
+    public void onBootConfirmationSent(UUID session) {
+        OcppChargePointHandler handler = resolve(session);
+        if (handler != null) {
+            handler.onBootConfirmationSent(session);
         }
     }
 
@@ -648,16 +661,37 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     @Override
     public int nextTransactionId() {
         TransactionStore store = transactionStore;
-        return store != null ? store.nextTransactionId() : fallbackSequence.incrementAndGet();
+        return store != null ? store.nextTransactionId() : 0;
     }
 
-    public void rememberTransaction(int transactionId, String chargePointId, int connectorId) {
-        rememberTransaction(transactionId, chargePointId, connectorId, null);
-    }
-
-    public void rememberTransaction(int transactionId, String chargePointId, int connectorId,
-            @Nullable String remoteId) {
-        rememberTransaction(transactionId, chargePointId, connectorId, remoteId, null);
+    /** The SendLocalList version for {@code tags}: OCPP requires it to rise whenever the list content does. */
+    public int localAuthListVersion(String chargePointId, List<String> tags) {
+        Storage<String> store = bridgeStore;
+        if (store == null) {
+            return 1;
+        }
+        String content = String.join(",", tags.stream().sorted().toList());
+        String versionKey = AUTH_LIST_VERSION_PREFIX + chargePointId;
+        String contentKey = AUTH_LIST_CONTENT_PREFIX + chargePointId;
+        synchronized (authListLock) {
+            String stored = store.get(versionKey);
+            int version = 0;
+            if (stored != null) {
+                try {
+                    version = Integer.parseInt(stored);
+                } catch (NumberFormatException e) {
+                    logger.warn("Persisted local authorization list version '{}' for {} is not a number; numbering "
+                            + "restarts at 1", stored, chargePointId);
+                }
+            }
+            if (version > 0 && content.equals(store.get(contentKey))) {
+                return version;
+            }
+            version++;
+            store.put(versionKey, Integer.toString(version));
+            store.put(contentKey, content);
+            return version;
+        }
     }
 
     public void rememberTransaction(int transactionId, String chargePointId, int connectorId, @Nullable String remoteId,

@@ -39,6 +39,9 @@ public interface OcppServerListener {
 
     void onBootNotification(UUID session, BootInfo boot);
 
+    /** Raised once the BootNotification confirmation has been handed to the transport. */
+    void onBootConfirmationSent(UUID session);
+
     void onStatusNotification(UUID session, StatusInfo status);
 
     void onMeterValues(UUID session, MeterSample sample);
@@ -56,6 +59,7 @@ public interface OcppServerListener {
 
     int heartbeatFor(UUID session);
 
+    /** A fresh transaction id, or 0 when none can be handed out and the transaction must be refused. */
     int nextTransactionId();
 
     /** The persisted id of a transaction that began before a restart, if any. */

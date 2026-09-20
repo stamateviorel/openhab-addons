@@ -96,7 +96,7 @@ class OcppTransactionRecoveryTest {
 
         verify(connector).onTransactionStarted(any());
         verify(server, org.mockito.Mockito.never()).rememberTransaction(org.mockito.ArgumentMatchers.anyInt(), any(),
-                org.mockito.ArgumentMatchers.anyInt());
+                org.mockito.ArgumentMatchers.anyInt(), any(), any());
     }
 
     @Test

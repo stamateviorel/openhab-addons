@@ -313,6 +313,13 @@ public class Ocpp201InboundHandler
             return new TransactionEventResponse();
         }
         int transactionId = idFor(sessionIndex, remoteId);
+        if (transactionId <= 0) {
+            logger.warn("TransactionEvent {} from session {} tx {} refused: no transaction id available", kind,
+                    sessionIndex, remoteId);
+            TransactionEventResponse refused = new TransactionEventResponse();
+            refused.setIdTokenInfo(new IdTokenInfo(AuthorizationStatusEnum.Invalid));
+            return refused;
+        }
         logger.debug("TransactionEvent {} from session {} tx {} -> id {} ({})", kind, sessionIndex, remoteId,
                 transactionId, authorized ? "accepted" : "invalid");
 
@@ -371,10 +378,18 @@ public class Ocpp201InboundHandler
         if (remoteId == null) {
             return listener.nextTransactionId();
         }
-        return Objects.requireNonNull(transactionIds.computeIfAbsent(key(session, remoteId), ignored -> {
-            Integer known = listener.knownTransactionId(session, remoteId);
-            return known != null ? known : listener.nextTransactionId();
-        }));
+        String key = key(session, remoteId);
+        Integer cached = transactionIds.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        Integer known = listener.knownTransactionId(session, remoteId);
+        int id = known != null ? known : listener.nextTransactionId();
+        if (id <= 0) {
+            return id;
+        }
+        Integer raced = transactionIds.putIfAbsent(key, id);
+        return raced != null ? raced : id;
     }
 
     private @Nullable Integer connectorOf(UUID session, @Nullable EVSE evse, @Nullable String remoteId,
