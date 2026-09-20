@@ -12,7 +12,6 @@
  */
 package org.openhab.binding.ocpp.internal.transport;
 
-import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,15 +24,15 @@ import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
 import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 
-import com.google.gson.annotations.SerializedName;
-
 import eu.chargetime.ocpp.v201.model.messages.BootNotificationRequest;
 import eu.chargetime.ocpp.v201.model.messages.StatusNotificationRequest;
 import eu.chargetime.ocpp.v201.model.types.ChargingStateEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingStation;
 import eu.chargetime.ocpp.v201.model.types.ConnectorStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.IdTokenEnum;
+import eu.chargetime.ocpp.v201.model.types.MeasurandEnum;
 import eu.chargetime.ocpp.v201.model.types.MeterValue;
+import eu.chargetime.ocpp.v201.model.types.PhaseEnum;
 import eu.chargetime.ocpp.v201.model.types.SampledValue;
 import eu.chargetime.ocpp.v201.model.types.UnitOfMeasure;
 
@@ -134,17 +133,56 @@ public final class Ocpp201Events {
         };
     }
 
-    /** The Gson {@code @SerializedName} wire name (Current.Import), not the constant name (CurrentImport). */
-    private static @Nullable String wireName(@Nullable Enum<?> value) {
-        if (value == null) {
+    /** OCPP 2.0.1 wire spelling (Current.Import), which differs from the library constant name (CurrentImport). */
+    public static @Nullable String wireName(@Nullable MeasurandEnum measurand) {
+        if (measurand == null) {
             return null;
         }
-        try {
-            Field field = value.getDeclaringClass().getField(value.name());
-            SerializedName serialized = field.getAnnotation(SerializedName.class);
-            return serialized == null ? value.name() : serialized.value();
-        } catch (NoSuchFieldException e) {
-            return value.name();
+        return switch (measurand) {
+            case CurrentExport -> "Current.Export";
+            case CurrentImport -> "Current.Import";
+            case CurrentOffered -> "Current.Offered";
+            case EnergyActiveExportRegister -> "Energy.Active.Export.Register";
+            case EnergyActiveImportRegister -> "Energy.Active.Import.Register";
+            case EnergyReactiveExportRegister -> "Energy.Reactive.Export.Register";
+            case EnergyReactiveImportRegister -> "Energy.Reactive.Import.Register";
+            case EnergyActiveExportInterval -> "Energy.Active.Export.Interval";
+            case EnergyActiveImportInterval -> "Energy.Active.Import.Interval";
+            case EnergyActiveNet -> "Energy.Active.Net";
+            case EnergyReactiveExportInterval -> "Energy.Reactive.Export.Interval";
+            case EnergyReactiveImportInterval -> "Energy.Reactive.Import.Interval";
+            case EnergyReactiveNet -> "Energy.Reactive.Net";
+            case EnergyApparentNet -> "Energy.Apparent.Net";
+            case EnergyApparentImport -> "Energy.Apparent.Import";
+            case EnergyApparentExport -> "Energy.Apparent.Export";
+            case Frequency -> "Frequency";
+            case PowerActiveExport -> "Power.Active.Export";
+            case PowerActiveImport -> "Power.Active.Import";
+            case PowerFactor -> "Power.Factor";
+            case PowerOffered -> "Power.Offered";
+            case PowerReactiveExport -> "Power.Reactive.Export";
+            case PowerReactiveImport -> "Power.Reactive.Import";
+            case SoC -> "SoC";
+            case Voltage -> "Voltage";
+        };
+    }
+
+    /** OCPP 2.0.1 wire spelling (L1-N), which differs from the library constant name (L1_N). */
+    public static @Nullable String wireName(@Nullable PhaseEnum phase) {
+        if (phase == null) {
+            return null;
         }
+        return switch (phase) {
+            case L1 -> "L1";
+            case L2 -> "L2";
+            case L3 -> "L3";
+            case N -> "N";
+            case L1_N -> "L1-N";
+            case L2_N -> "L2-N";
+            case L3_N -> "L3-N";
+            case L1_L2 -> "L1-L2";
+            case L2_L3 -> "L2-L3";
+            case L3_L1 -> "L3-L1";
+        };
     }
 }
