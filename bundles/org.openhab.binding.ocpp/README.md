@@ -8,31 +8,23 @@ Chargers open a WebSocket connection to openHAB and are modelled as a three-tier
 
 It reports connection state, connector status and metering, and controls charging: current limit, pause, remote start/stop, availability, unlock and reset.
 
-## Protocol versions
+## Protocol Versions
 
-A charger picks the version at the WebSocket handshake, by asking for the `ocpp1.6` or `ocpp2.0.1`
-subprotocol, and keeps it for the life of the connection. Nothing has to be configured for this: the
-same endpoint answers both, and one charger can be on 1.6 while the next is on 2.0.1. A charger that
-asks for no subprotocol at all is treated as 1.6. The Things, channels and users are the same either
-way, so a charger can be moved between versions without touching the openHAB side.
+A charger picks the version at the WebSocket handshake, by asking for the `ocpp1.6` or `ocpp2.0.1` subprotocol, and keeps it for the life of the connection.
+Nothing has to be configured for this: the same endpoint answers both, and one charger can be on 1.6 while the next is on 2.0.1.
+A charger that asks for no subprotocol at all is treated as 1.6.
+The Things, channels and users are the same either way, so a charger can be moved between versions without touching the openHAB side.
 
 A few differences are worth knowing about, because they show up in what the channels report:
 
-- 2.0.1 has five connector statuses where 1.6 had nine, and moved the rest into the transaction it
-  belongs to. The `charge-point-status` channel still reports the 1.6 names; `Occupied` reads as
-  `Preparing` until the charger says what the vehicle is doing.
-- 2.0.1 lets the charger name a transaction with text rather than a number. The `transaction-id`
-  channel keeps reporting the number the binding logs usage under, and the charger's own id is used
-  when a stop has to be sent.
-- Capabilities come from the 2.0.1 device model rather than a flat key list, so they arrive a moment
-  after the charger connects rather than in a single answer.
-- A 2.0.1 charger can open a transaction on plug-in and take the card afterwards. The session is
-  logged under the first token it presents, and the `id-tag` channel follows. A later token is taken
-  only while the session still has none, so a stop by a different card does not re-attribute it.
-- A session survives an openHAB restart on either version: the transaction keeps its id and its
-  connector, and a stop sent afterwards still names the transaction the way the charger knows it.
+- 2.0.1 has five connector statuses where 1.6 had nine, and moved the rest into the transaction it belongs to. The `charge-point-status` channel still reports the 1.6 names; `Occupied` reads as `Preparing` until the charger says what the vehicle is doing.
+- 2.0.1 lets the charger name a transaction with text rather than a number. The `transaction-id` channel keeps reporting the number the binding logs usage under, and the charger's own id is used when a stop has to be sent.
+- Capabilities come from the 2.0.1 device model rather than a flat key list, so they arrive a moment after the charger connects rather than in a single answer.
+- A 2.0.1 charger can open a transaction on plug-in and take the card afterwards. The session is logged under the first token it presents, and the `id-tag` channel follows. A later token is taken only while the session still has none, so a stop by a different card does not re-attribute it.
+- A session survives an openHAB restart on either version: the transaction keeps its id and its connector, and a stop sent afterwards still names the transaction the way the charger knows it.
 
-The `extraConfig` entries on the `server` are named with 1.6 keys. On a 2.0.1 charger the ones the
+The `extraConfig` entries on the `server` are named with 1.6 keys.
+On a 2.0.1 charger the ones the
 binding knows are mapped onto their device-model variables; anything else has to be written as
 `Component.Variable`, and a bare key that cannot be mapped is skipped with a note in the log.
 
@@ -48,6 +40,7 @@ binding knows are mapped onto their device-model variables; anything else has to
 Discovery is passive — chargers announce themselves.
 When a charger connects with a charge point id that has no `chargepoint` thing, it appears in the inbox under its `server` bridge.
 When a known charge point reports a connector for the first time, that `connector` appears in the inbox under its `chargepoint` bridge.
+On a multi-connector charger the binding also asks any connector that has not reported yet to announce itself, so all connectors show up without waiting for each to change state.
 There is no active scan; point your charger at `ws://<openhab-host>:<port>/<chargePointId>` and it will show up.
 
 You do not need to know the charge point id in advance: connect the charger and it appears in the inbox under its real id, ready to accept.
@@ -79,7 +72,8 @@ These settings are pushed to a charger as ChangeConfiguration requests after it 
 A request a charger leaves unanswered fails after `requestTimeoutSeconds`; the OCPP library itself would wait on it forever.
 Measurands a charger rejects are dropped one at a time until it accepts them, and the accepted set is remembered per configuration key.
 The binding also runs a heartbeat-derived liveness watchdog and self-heals when a charger reconnects under a new session.
-Card authorization is configured binding-wide, not per server — see [Add-on Settings](#add-on-settings) below. For the charger's own offline authorization cache, see the `chargepoint` `local-auth-list` channel below.
+Card authorization is configured binding-wide, not per server — see [Add-on Settings](#add-on-settings) below.
+For the charger's own offline authorization cache, see the `chargepoint` `local-auth-list` channel below.
 
 ### Add-on Settings
 
@@ -123,16 +117,24 @@ Card authorization is edited under Settings → Add-on Settings → OCPP Binding
 Most connectors need no configuration beyond `connectorId`.
 The rest cover specific charger behaviors.
 Entries are sent when a charger boots, and again when one reconnects without booting — which is what happens after openHAB restarts — so a changed entry reaches a charger that stayed on without waiting for its next reboot.
-The charge point's own `extraConfig` is for a setting that belongs to one charger rather than the site — a vendor key, or something you want to change on a single unit. Its entries are sent after the server's, so a key set in both is left at the charger's value. A charger reports which of its settings are writable, and the ones it calls read-only are logged as such when the binding reads its configuration.
+The charge point's own `extraConfig` is for a setting that belongs to one charger rather than the site — a vendor key, or something you want to change on a single unit.
+Its entries are sent after the server's, so a key set in both is left at the charger's value.
+A charger reports which of its settings are writable, and the ones it calls read-only are logged as such when the binding reads its configuration.
 
 `forceTxDefaultProfile` is for chargers that reject a `TxProfile` when no transaction is active — a Phoenix CHARX does: the charge limit is then sent as a `TxDefaultProfile`, which such chargers accept and apply through their own load management.
 `profileMinIntervalMs` coalesces rapid limit changes into at most one `SetChargingProfile` per interval, which keeps a solar-tracking rule that adjusts the limit every few seconds from flooding the charger.
 `refreshInterval` actively polls a connector for `MeterValues` for chargers that do not push them on their own; a poll is skipped while the previous one is still outstanding, so a charger that stops answering cannot build a backlog.
 `hardwareMaxCurrentKey` binds the `hardware-max-current` channel to a vendor `ChangeConfiguration` key, since the hardware ceiling is not a standard OCPP setting.
 `stuckStateRecovery` is left off because auto-unlocking a connector is a physical side effect, and `Preparing` and `Finishing` are normal states a charger can dwell in.
-`remoteStartRetries` is for a charger that intermittently ignores the first `RemoteStartTransaction`: the binding re-sends it up to that many times, a few seconds apart, and stops as soon as a transaction starts, so it never double-starts. Off (0) by default, so a charger that answers first time is unaffected.
-`externalEnergyItem` is for a charger with no internal meter (a Phoenix CHARX, say): point it at a Number item fed by a separate meter, such as a Modbus energy clamp, and the binding uses that item for the session's energy instead of the charger's own meter. Without it, a meter-less charger logs sessions with zero energy.
-`externalMeterType` says what that item carries, so either kind of meter works. A **cumulative** counter (`energy-kwh` or `energy-wh`) is read at the start and stop of each session and differenced. An **instantaneous power** reading (`power-kw` or `power-w`) is sampled through the session and integrated into energy — for a clamp that reports live power rather than a running total. A `Number:Energy` or `Number:Power` item is converted from whatever unit it carries; a plain `Number` is taken in the unit named by the type. Integration samples every 30 s, which is well within tolerance for the roughly steady power of a charging car. A cumulative counter is the more robust choice where you have one: it also survives an openHAB restart mid-session, whereas an in-progress power integration is lost across a restart and that session logs no energy.
+`remoteStartRetries` is for a charger that intermittently ignores the first `RemoteStartTransaction`: the binding re-sends it up to that many times, a few seconds apart, and stops as soon as a transaction starts, so it never double-starts.
+Off (0) by default, so a charger that answers first time is unaffected.
+`externalEnergyItem` is for a charger with no internal meter (a Phoenix CHARX, say): point it at a Number item fed by a separate meter, such as a Modbus energy clamp, and the binding uses that item for the session's energy instead of the charger's own meter.
+Without it, a meter-less charger logs sessions with zero energy.
+`externalMeterType` says what that item carries, so either kind of meter works.
+A **cumulative** counter (`energy-kwh` or `energy-wh`) is read at the start and stop of each session and differenced.
+An **instantaneous power** reading (`power-kw` or `power-w`) is sampled through the session and integrated into energy — for a clamp that reports live power rather than a running total.
+A `Number:Energy` or `Number:Power` item is converted from whatever unit it carries; a plain `Number` is taken in the unit named by the type.
+Integration samples every 30 s, which is well within tolerance for the roughly steady power of a charging car.A power integration is persisted every 30 s and resumes after a restart from the last saved reading, so only the energy between that sample and the restart is not counted.
 
 ## Channels
 
@@ -149,20 +151,27 @@ The charge point's own `extraConfig` is for a setting that belongs to one charge
 
 Vendor, model, firmware version and serial number are published as thing properties from the charger's BootNotification.
 
-`display-message` writes a line to the charger's own screen and clears it again when set to an empty string. The binding keeps one message of its own, so setting new text replaces the last rather than stacking another on top, and a charger that will not take the message says so instead of failing quietly.
+`display-message` writes a line to the charger's own screen and clears it again when set to an empty string.
+The binding keeps one message of its own, so setting new text replaces the last rather than stacking another on top, and a charger that will not take the message says so instead of failing quietly.
 
-`custom-message` carries a vendor-specific OCPP 2.0.1 `DataTransfer`, for a setting or command a charger only exposes its own way. Send it a JSON object naming the vendor, and optionally a message id and a payload:
+`custom-message` carries a vendor-specific OCPP 2.0.1 `DataTransfer`, for a setting or command a charger only exposes its own way.
+Send it a JSON object naming the vendor, and optionally a message id and a payload:
 
 ```json
 {"vendorId": "Alfen", "messageId": "SetSetting", "data": "{\"key\": 1}"}
 ```
 
-The charger's answer is published back on the same channel as `{"status":"Accepted","data":…}`, so a rule can read what came of it. `UnknownVendorId` or `UnknownMessageId` means the charger did not recognise what was sent, which is its answer rather than a failure. The channel is offered for 2.0.1 only; on a 1.6 charger a command to it is logged and dropped. Vendor messages are not portable between charger makes, so anything sent here is specific to the hardware in front of you.
+The charger's answer is published back on the same channel as `{"status":"Accepted","data":…}`, so a rule can read what came of it.
+`UnknownVendorId` or `UnknownMessageId` means the charger did not recognise what was sent, which is its answer rather than a failure.
+The channel is offered for 2.0.1 only; on a 1.6 charger a command to it is logged and dropped.
+Vendor messages are not portable between charger makes, so anything sent here is specific to the hardware in front of you.
 
 Inbound vendor messages are answered with `UnknownVendorId` and logged rather than acted on, and a charger's security events, log-upload progress, monitoring reports and customer-information answers are logged as they arrive.
 
 The local authorization list lets a cached RFID card start a charge while openHAB or the network is offline, on a charger that supports `LocalAuthListManagement`.
-The list lives on the `local-auth-list` channel as a comma-separated set of idTags: set it (from a rule or the UI) and the binding pushes it to the charger with `SendLocalList`, versioned by content so it is not rewritten on every boot. It is persisted on the charge point thing, so it survives an openHAB restart. A charger that does not advertise the profile is left untouched.
+The list lives on the `local-auth-list` channel as a comma-separated set of idTags: set it (from a rule or the UI) and the binding pushes it to the charger with `SendLocalList`, versioned by content so it is not rewritten on every boot.
+It is persisted on the charge point thing, so it survives an openHAB restart.
+A charger that does not advertise the profile is left untouched.
 
 ### `connector`
 
@@ -191,14 +200,16 @@ Beyond the channels above, the connector also exposes the full OCPP 1.6 SampledV
 
 For chargers that reject a TxProfile outside a transaction (e.g. Phoenix CHARX), set `forceTxDefaultProfile` on the connector so the charge limit is sent as a TxDefaultProfile.
 
-## Controlling a charge
+## Controlling a Charge
 
 The connector's writable channels map to OCPP commands, and each updates only once the charger confirms the command — a rejected request leaves the channel showing the real state rather than the requested one.
 
 `charging` starts and stops a transaction: sending it `ON` issues a `RemoteStartTransaction`, `OFF` a `RemoteStopTransaction`.
 The transaction is started with the idTag from the connector's `remoteStartTag` (default `openhab`), which has to be authorized: by this binding through the Authorized Tag IDs list in [Add-on Settings](#add-on-settings) (empty accepts any tag), and by the charger itself if it enforces its own whitelist.
 So if `ON` does nothing, set `remoteStartTag` to a tag your charger accepts, or allow that tag on the charger.
-To start as someone else — a particular card, or a vehicle's own AutoCharge identity — send that token as a command to the connector's `id-tag` channel first; the next `ON` presents it, typed as a vehicle where a user lists it under `vehicles`. It is spent by a start the charger accepts — a start the charger rejects keeps it, so it does not have to be set again — and any session beginning clears it. The following session goes back to the connector's configured `remoteStartTag` rather than silently running as the last token used, and the channel shows the token the next start would present.
+To start as someone else — a particular card, or a vehicle's own AutoCharge identity — send that token as a command to the connector's `id-tag` channel first; the next `ON` presents it, typed as a vehicle where a user lists it under `vehicles`.
+It is spent by a start the charger accepts — a start the charger rejects keeps it, so it does not have to be set again — and any session beginning clears it.
+The following session goes back to the connector's configured `remoteStartTag` rather than silently running as the last token used, and the channel shows the token the next start would present.
 Most chargers also only start once a vehicle is plugged in, so a `RemoteStart` on an idle connector is often ignored.
 Because `charging` follows the charger's reported status, it also reads `ON` on its own whenever a transaction is running, however it was started.
 
@@ -208,27 +219,40 @@ To keep stop working, start the charge from openHAB (`charging` `ON`), which mak
 
 `charge-limit` caps the charging current: the value is sent as a `SetChargingProfile` and the channel reflects the applied limit once accepted.
 Some chargers only accept a charge limit expressed in watts (their OCPP `ChargingScheduleAllowedChargingRateUnit` is `Power`, not `Current`); the binding learns this from the charger and converts `charge-limit` amps to watts with `nominalVoltage` and `phases`, so the same amps channel still works.
-Alternatively set `power-limit` (watts) directly — it is sent as-is, with no conversion, on any charger that accepts a power limit, and takes over from `charge-limit` while it is set. Commanding `charge-limit` again clears the power-limit and returns to amps, so the most recent command always wins.
-`number-phases` requests charging on a given number of phases (1, 2 or 3) by setting `numberPhases` in the charging profile — for switching a car to single-phase when solar surplus is low, for instance; 0 clears the request so the charger keeps its own default (OCPP assumes 3). It only takes effect on a charger that supports phase switching (its `ConnectorSwitch3to1PhaseSupported` is true), and when set it also drives the amps→watts conversion above.
+Alternatively set `power-limit` (watts) directly — it is sent as-is, with no conversion, on any charger that accepts a power limit, and takes over from `charge-limit` while it is set.
+Commanding `charge-limit` again clears the power-limit and returns to amps, so the most recent command always wins.
+`number-phases` requests charging on a given number of phases (1, 2 or 3) by setting `numberPhases` in the charging profile — for switching a car to single-phase when solar surplus is low, for instance; 0 clears the request so the charger keeps its own default (OCPP assumes 3).
+It only takes effect on a charger that supports phase switching (its `ConnectorSwitch3to1PhaseSupported` is true), and when set it also drives the amps→watts conversion above.
 `pause` suspends charging with a 0 A profile without ending the transaction; switching it off resumes — at your `charge-limit` if one is set, otherwise by removing the cap so the charger returns to its own maximum — distinct from `charging`, which ends the session.
 A pause is a 0 A limit, so a resume must lift the cap rather than send another 0 A, which a charger reads as "stay suspended".
 `availability` takes the connector Operative or Inoperative, `unlock` releases the cable lock, and the `chargepoint`-level `reset` performs a soft reset of the whole charger.
 
-## Users and usage
+## Users and Usage
 
-A private site with several chargers often wants to know who charged and how much. Add a `cpms-user` thing per person and the binding tracks their energy and can gate authorization on their cards — all optional; without any users, authorization falls back to the [Add-on Settings](#add-on-settings) whitelist and no usage is tracked.
+A private site with several chargers often wants to know who charged and how much.
+Add a `cpms-user` thing per person and the binding tracks their energy and can gate authorization on their cards — all optional; without any users, authorization falls back to the [Add-on Settings](#add-on-settings) whitelist and no usage is tracked.
 
 A `cpms-user` carries the person's `cards` (their RFID idTags), their `vehicles`, an `enabled` switch (off blocks that person from starting a charge), and an optional `monthlyCapKwh`.
 
-`vehicles` holds the tokens a car or a charger presents on its own instead of a card: the MAC address a charger sends when AutoCharge recognises the vehicle, or the identifier it sends when it is set to start on plug-in. They are managed exactly like cards — either kind authorizes a charge, and both count towards the same person's usage — so a site can mix cards and AutoCharge without keeping two lists of people. Which kind a charger presented is visible on 2.0.1, where the protocol names it; a 1.6 charger sends only the value, so a vehicle there is indistinguishable from a card and can simply go in whichever list you find clearer.
+`vehicles` holds the tokens a car or a charger presents on its own instead of a card: the MAC address a charger sends when AutoCharge recognises the vehicle, or the identifier it sends when it is set to start on plug-in.
+They are managed exactly like cards — either kind authorizes a charge, and both count towards the same person's usage — so a site can mix cards and AutoCharge without keeping two lists of people.
+Which kind a charger presented is visible on 2.0.1, where the protocol names it; a 1.6 charger sends only the value, so a vehicle there is indistinguishable from a card and can simply go in whichever list you find clearer.
 
-Note that once any user exists, a plug-in or AutoCharge token is refused like any other unknown token until it belongs to someone. Turn on Discover New Cards, let the vehicle or charger present it once, and it appears in the inbox — labelled as a vehicle where the charger said so. The cap gates the start of a session: once that person's logged charging this month reaches it, their cards stop authorizing until the next month rolls over. A session already under way is not cut off, so one long session can carry a little past the cap. Its `month-energy` and `year-energy` channels report the kWh that person has drawn since the start of the month and year, summed across every charger from the transactions the binding logs.
+Note that once any user exists, a plug-in or AutoCharge token is refused like any other unknown token until it belongs to someone.
+Turn on Discover New Cards, let the vehicle or charger present it once, and it appears in the inbox — labelled as a vehicle where the charger said so.
+The cap gates the start of a session: once that person's logged charging this month reaches it, their cards stop authorizing until the next month rolls over.
+A session already under way is not cut off, so one long session can carry a little past the cap.
+Its `month-energy` and `year-energy` channels report the kWh that person has drawn since the start of the month and year, summed across every charger from the transactions the binding logs.
 
 The session log is append-only and never trimmed, so month and year totals stay computable for as far back as the binding has run; if the stored log is ever found unreadable, a new session is dropped rather than allowed to overwrite the history.
 
-To add someone without typing card ids, turn on Discover New Cards in Add-on Settings, have them tap their card, and it appears in the inbox as a new user pre-filled with that card, labelled with the charger, the connector where one is known, and the time it was seen — accept it and give it their name. Turn Discover off again once everyone is enrolled. You can also add a `cpms-user` by hand and type the cards in.
+To add someone without typing card ids, turn on Discover New Cards in Add-on Settings, have them tap their card, and it appears in the inbox as a new user pre-filled with that card, labelled with the charger, the connector where one is known, and the time it was seen — accept it and give it their name.
+Turn Discover off again once everyone is enrolled.
+You can also add a `cpms-user` by hand and type the cards in.
 
-Once at least one user exists, the binding serves an **OCPP Charging** dashboard in the sidebar (no setup, no items to wire): the month's and year's totals, a stacked chart of the last twelve months per person, the split per charger, the people with their month, year and cap, and the recent sessions. Tapping a person opens their own page with the same figures, chart and session history for them alone. The pages appear only while users exist — for a site with no users they stay hidden.
+Once at least one user exists, the binding serves an **OCPP Charging** dashboard in the sidebar (no setup, no items to wire): the month's and year's totals, a stacked chart of the last twelve months per person, the split per charger, the people with their month, year and cap, and the recent sessions.
+Tapping a person opens their own page with the same figures, chart and session history for them alone.
+The pages appear only while users exist — for a site with no users they stay hidden.
 
 ## Full Example
 
@@ -304,30 +328,35 @@ end
 
 ## Troubleshooting
 
-### A charge point stays UNKNOWN, or nothing appears in the inbox
+### A Charge Point Stays UNKNOWN, or Nothing Appears in the Inbox
 
 The charge point id is the path of the WebSocket URL the charger dials, so the charger must connect to `ws://<host>:<port>/<chargePointId>`.
 A charger pointed at the bare root (`ws://<host>:<port>/`, nothing after the slash) sends no id and is ignored, logging `connected without a charge point id in its URL path`.
 Put the id in the charger's backend URL — many chargers keep the URL and the id in separate fields, but it still has to end up as the URL path after the leading slash — and make the `chargepoint` thing's `chargePointId` match it exactly.
 If you are unsure what the charger actually sends, enable `log:set DEBUG org.openhab.binding.ocpp` and read it off the `Charger connected: id=...` line.
 
-### A connector sits at SuspendedEVSE and will not charge
+### A Connector Sits at SuspendedEVSE and Will Not Charge
 
 `SuspendedEVSE` means the charge point itself is withholding energy — a charging-profile limit or an authorization result — unlike `SuspendedEV`, which is the vehicle not drawing (battery full, or charging scheduled in the car).
 Check the connector is not left paused and that `charge-limit` is not 0: sending `pause` OFF resumes charging — at your `charge-limit` if one is set, otherwise by clearing the cap so the charger returns to its own maximum.
-Some chargers also suspend when a `charge-limit` is set _before_ a transaction starts — with no transaction it goes out as a `TxDefaultProfile`, which such a charger accepts but then drops to `SuspendedEVSE` a few seconds in. On those, start the charge first and set the limit once it is `Charging`: send `charging` ON (or plug in), wait for `Charging`, then set `charge-limit`. Adjusting it mid-charge afterwards works normally.
+Some chargers also suspend when a `charge-limit` is set _before_ a transaction starts — with no transaction it goes out as a `TxDefaultProfile`, which such a charger accepts but then drops to `SuspendedEVSE` a few seconds in.
+On those, start the charge first and set the limit once it is `Charging`: send `charging` ON (or plug in), wait for `Charging`, then set `charge-limit`.
+Adjusting it mid-charge afterwards works normally.
 
-### A charger never connects and the log shows nothing after start-up
+### A Charger Never Connects and the Log Shows Nothing After Start-Up
 
 If the server starts (`OCPP JSON server listening`) but no `Charger connected` line ever follows, the charger is not completing the WebSocket handshake, so nothing reaches the binding.
 First rule out the network: from a device on the charger's own network segment (not just any machine), check the openHAB host and port are reachable — `nc -zv <openhab-host> 8887` — and use the host's IP rather than a `.lan` name to rule out DNS.
-A charger that always sends an HTTP Basic-auth header — some send their id with a very short or empty password on every connection, a V2C Trydan being one — is accepted when no `authPassword` is configured, so that is no longer a cause of a silent no-connect (older builds did reject such a charger during the handshake, before the binding saw it).
+A charger that always sends an HTTP Basic-auth header — some send their id with a very short or empty password on every connection, a V2C Trydan being one — is accepted when no `authPassword` is configured, so that is no longer a cause of a silent no-connect.
 
-### Power readings lag behind the charger
+### Power Readings Lag Behind the Charger
 
-The `power-active-import` and per-phase metering channels only update when the charger sends a `MeterValues` sample, so between samples they look stale (the energy register keeps climbing because it is a running total). To sample more often, lower the `server`'s `meterValueSampleInterval` — the binding pushes it to the charger (10–15 s is plenty). For a charger that will not honour that, set the `connector`'s `refreshInterval` to poll it for a fresh `MeterValues` on a fixed cadence via TriggerMessage. Do not push either below a few seconds on an older charger.
+The `power-active-import` and per-phase metering channels only update when the charger sends a `MeterValues` sample, so between samples they look stale (the energy register keeps climbing because it is a running total).
+To sample more often, lower the `server`'s `meterValueSampleInterval` — the binding pushes it to the charger (10–15 s is plenty).
+For a charger that will not honour that, set the `connector`'s `refreshInterval` to poll it for a fresh `MeterValues` on a fixed cadence via TriggerMessage.
+Do not push either below a few seconds on an older charger.
 
-## Charger-specific notes
+## Charger-Specific Notes
 
 Every charger dials `ws://<openhab-host>:<port>/<chargePointId>`; the only real differences are how each vendor's UI presents the URL and the id, and a few per-charger quirks.
 
@@ -344,5 +373,8 @@ Every charger dials `ws://<openhab-host>:<port>/<chargePointId>`; the only real 
 Without `authPassword` the endpoint runs OCPP security profile 0: a plain-text WebSocket that accepts every connection, appropriate only on a trusted LAN.
 Anyone who can reach the port can connect under any charge point id, so restrict exposure by binding a specific interface (`host`) or with firewall rules.
 Setting `authPassword` enables HTTP Basic authentication (security profile 1): a charger must present the password with its charge point id as the username, and other connections are rejected before a session opens.
-The OCPP profile-1 rule is 16–20 visible ASCII characters for 1.6 and 16–40 for 2.0.1. A configured `authPassword` is bounded to 16–40, the union of the two, so a textual `.things` file cannot set one no charger could match; what a charger _presents_ is not length-checked at all when no `authPassword` is set, and is compared exactly when one is. The library would otherwise refuse a handshake on length alone, before the binding saw it, which silently locked out chargers that always send a header with a short or empty password.
-Setting `tlsKeystorePath` (a PKCS12 keystore holding the server's certificate and key) serves the endpoint over `wss://` — OCPP security profile 2 together with `authPassword`, or an encrypted profile 0 without. Client-certificate authentication (profile 3) is not supported.
+The OCPP profile-1 rule is 16–20 visible ASCII characters for 1.6 and 16–40 for 2.0.1.
+A configured `authPassword` is bounded to 16–40, the union of the two, so a textual `.things` file cannot set one no charger could match; what a charger _presents_ is not length-checked at all when no `authPassword` is set, and is compared exactly when one is.
+The library would otherwise refuse a handshake on length alone, before the binding saw it, which silently locked out chargers that always send a header with a short or empty password.
+Setting `tlsKeystorePath` (a PKCS12 keystore holding the server's certificate and key) serves the endpoint over `wss://` — OCPP security profile 2 together with `authPassword`, or an encrypted profile 0 without.
+Client-certificate authentication (profile 3) is not supported.
