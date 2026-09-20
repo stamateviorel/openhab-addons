@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
@@ -108,7 +109,11 @@ class OcppBootConfigTest {
 
     private void acceptEverything() {
         when(transport.send(any(), any())).thenAnswer(invocation -> {
-            record(invocation.getArgument(1));
+            Request request = invocation.getArgument(1);
+            record(request);
+            if (request instanceof GetConfigurationRequest) {
+                return CompletableFuture.completedFuture(configurationAnswer(Map.of()));
+            }
             return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
         });
     }
@@ -411,13 +416,59 @@ class OcppBootConfigTest {
                 eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "16")));
     }
 
-    private void reportConfiguration(Map<String, String> keys) {
+    @Test
+    void aChargerThatNeverAnswersTheReadGetsItsConfigurationSentAgain() {
+        // An unreadable configuration is not a confirmation that the charger still holds its settings.
+        serverConfig.extraConfig = List.of("DynamicCircuitCurrent=16");
+        reportConfiguration(Map.of("DynamicCircuitCurrent", "16", "AuthorizeRemoteTxRequests", "false"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "16")));
+
+        readGoesUnanswered();
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+
+        verify(transport, timeout(3000).times(2)).send(any(),
+                eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "16")));
+    }
+
+    @Test
+    void anUnreadableConfigurationIsStillSentAgainAfterSeveralBoots() {
+        // The give-up counter is for a burst the charger refuses, not for one it never got the chance to refuse.
+        serverConfig.extraConfig = List.of("DynamicCircuitCurrent=16");
+        readGoesUnanswered();
+
+        for (int boot = 0; boot < 5; boot++) {
+            handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        }
+
+        verify(transport, timeout(5000).times(5)).send(any(),
+                eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "16")));
+    }
+
+    /** The charger stays silent on GetConfiguration but answers everything else. */
+    private void readGoesUnanswered() {
+        when(transport.send(any(), any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(1);
+            record(request);
+            if (request instanceof GetConfigurationRequest) {
+                return CompletableFuture.failedFuture(new TimeoutException("no response"));
+            }
+            return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
+        });
+    }
+
+    private static GetConfigurationConfirmation configurationAnswer(Map<String, String> keys) {
         GetConfigurationConfirmation answer = new GetConfigurationConfirmation();
         answer.setConfigurationKey(keys.entrySet().stream().map(entry -> {
             KeyValueType value = new KeyValueType(entry.getKey(), false);
             value.setValue(entry.getValue());
             return value;
         }).toArray(KeyValueType[]::new));
+        return answer;
+    }
+
+    private void reportConfiguration(Map<String, String> keys) {
+        GetConfigurationConfirmation answer = configurationAnswer(keys);
         when(transport.send(any(), any())).thenAnswer(invocation -> {
             Request request = invocation.getArgument(1);
             record(request);
