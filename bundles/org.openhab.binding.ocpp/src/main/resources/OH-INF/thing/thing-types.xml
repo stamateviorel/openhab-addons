@@ -116,6 +116,7 @@
 
 		<label>OCPP Charge Point</label>
 		<description>A single charger identified by its OCPP charge point id.</description>
+		<semantic-equipment-tag>EVSE</semantic-equipment-tag>
 
 		<channels>
 			<channel id="connected" typeId="connected"/>
@@ -125,10 +126,6 @@
 			<channel id="custom-message" typeId="custom-message"/>
 			<channel id="display-message" typeId="display-message"/>
 		</channels>
-
-		<properties>
-			<property name="thingTypeVersion">2</property>
-		</properties>
 
 		<representation-property>chargePointId</representation-property>
 
@@ -179,6 +176,7 @@
 
 		<label>OCPP Connector</label>
 		<description>A single connector (outlet) of a charger.</description>
+		<semantic-equipment-tag>EVSE</semantic-equipment-tag>
 
 		<channels>
 			<channel id="charge-point-status" typeId="charge-point-status"/>
@@ -236,10 +234,6 @@
 				<label>Transaction Stop Time</label>
 			</channel>
 		</channels>
-
-		<properties>
-			<property name="thingTypeVersion">2</property>
-		</properties>
 
 		<representation-property>uniqueId</representation-property>
 
@@ -393,6 +387,10 @@
 		<label>Display Message</label>
 		<description>Text to show on the charger's own screen. An empty string clears it again. OCPP 2.0.1
 			only.</description>
+		<tags>
+			<tag>Control</tag>
+			<tag>Info</tag>
+		</tags>
 		<state pattern="%s"/>
 	</channel-type>
 
@@ -469,7 +467,7 @@
 			<tag>Setpoint</tag>
 			<tag>Current</tag>
 		</tags>
-		<state min="0" step="1" pattern="%.0f A"/>
+		<state min="0" step="1" pattern="%.0f %unit%"/>
 		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
@@ -484,7 +482,7 @@
 			<tag>Setpoint</tag>
 			<tag>Power</tag>
 		</tags>
-		<state min="0" step="100" pattern="%.0f W"/>
+		<state min="0" step="100" pattern="%.0f %unit%"/>
 		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
@@ -495,6 +493,9 @@
 			uses its
 			default. Only a charger that supports phase switching acts on it.</description>
 		<category>Energy</category>
+		<tags>
+			<tag>Setpoint</tag>
+		</tags>
 		<state pattern="%d">
 			<options>
 				<option value="0">Charger default</option>
@@ -531,6 +532,9 @@
 		<item-type>Switch</item-type>
 		<label>Unlock Connector</label>
 		<description>Momentary — unlock the connector (UnlockConnector).</description>
+		<tags>
+			<tag>Switch</tag>
+		</tags>
 		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
@@ -538,6 +542,9 @@
 		<item-type>Switch</item-type>
 		<label>Reset</label>
 		<description>Momentary — soft reset the charge point (Reset).</description>
+		<tags>
+			<tag>Switch</tag>
+		</tags>
 		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
@@ -551,6 +558,10 @@
 			on Auto-learn Cards or Discover New Cards in Add-on Settings to capture a card's id without typing it. Applied only
 			to a charger that supports
 			LocalAuthListManagement.</description>
+		<tags>
+			<tag>Control</tag>
+		</tags>
+		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
 	<channel-type id="hardware-max-current">
@@ -562,7 +573,7 @@
 			<tag>Setpoint</tag>
 			<tag>Current</tag>
 		</tags>
-		<state min="0" step="1" pattern="%.0f A"/>
+		<state min="0" step="1" pattern="%.0f %unit%"/>
 		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
@@ -575,7 +586,7 @@
 			<tag>Measurement</tag>
 			<tag>Current</tag>
 		</tags>
-		<state readOnly="true" pattern="%.2f A"/>
+		<state readOnly="true" pattern="%.2f %unit%"/>
 	</channel-type>
 
 	<channel-type id="voltage-phase">
@@ -587,7 +598,7 @@
 			<tag>Measurement</tag>
 			<tag>Voltage</tag>
 		</tags>
-		<state readOnly="true" pattern="%.1f V"/>
+		<state readOnly="true" pattern="%.1f %unit%"/>
 	</channel-type>
 
 	<channel-type id="current-offered">
@@ -599,7 +610,7 @@
 			<tag>Measurement</tag>
 			<tag>Current</tag>
 		</tags>
-		<state readOnly="true" pattern="%.0f A"/>
+		<state readOnly="true" pattern="%.0f %unit%"/>
 	</channel-type>
 
 	<channel-type id="power-active-import">
@@ -611,7 +622,7 @@
 			<tag>Measurement</tag>
 			<tag>Power</tag>
 		</tags>
-		<state readOnly="true" pattern="%.0f W"/>
+		<state readOnly="true" pattern="%.0f %unit%"/>
 	</channel-type>
 
 	<channel-type id="power-offered">
@@ -623,7 +634,7 @@
 			<tag>Measurement</tag>
 			<tag>Power</tag>
 		</tags>
-		<state readOnly="true" pattern="%.0f W"/>
+		<state readOnly="true" pattern="%.0f %unit%"/>
 	</channel-type>
 
 	<channel-type id="energy-active-import">
@@ -635,7 +646,7 @@
 			<tag>Measurement</tag>
 			<tag>Energy</tag>
 		</tags>
-		<state readOnly="true" pattern="%.2f kWh"/>
+		<state readOnly="true" pattern="%.2f %unit%"/>
 	</channel-type>
 
 	<channel-type id="session-energy">
@@ -648,7 +659,7 @@
 			<tag>Measurement</tag>
 			<tag>Energy</tag>
 		</tags>
-		<state readOnly="true" pattern="%.2f kWh"/>
+		<state readOnly="true" pattern="%.2f %unit%"/>
 	</channel-type>
 
 	<channel-type id="last-session-energy">
@@ -662,7 +673,7 @@
 			<tag>Measurement</tag>
 			<tag>Energy</tag>
 		</tags>
-		<state readOnly="true" pattern="%.2f kWh"/>
+		<state readOnly="true" pattern="%.2f %unit%"/>
 	</channel-type>
 
 	<!-- Reusable metering channel types (full OCPP measurand set) -->
@@ -674,7 +685,7 @@
 			<tag>Measurement</tag>
 			<tag>Current</tag>
 		</tags>
-		<state readOnly="true" pattern="%.2f A"/>
+		<state readOnly="true" pattern="%.2f %unit%"/>
 	</channel-type>
 
 	<channel-type id="voltage-measure">
@@ -685,7 +696,7 @@
 			<tag>Measurement</tag>
 			<tag>Voltage</tag>
 		</tags>
-		<state readOnly="true" pattern="%.1f V"/>
+		<state readOnly="true" pattern="%.1f %unit%"/>
 	</channel-type>
 
 	<channel-type id="power-active">
@@ -696,18 +707,18 @@
 			<tag>Measurement</tag>
 			<tag>Power</tag>
 		</tags>
-		<state readOnly="true" pattern="%.0f W"/>
+		<state readOnly="true" pattern="%.0f %unit%"/>
 	</channel-type>
 
 	<channel-type id="power-reactive">
-		<item-type>Number:Power</item-type>
+		<item-type unitHint="var">Number:Power</item-type>
 		<label>Reactive Power</label>
 		<category>Energy</category>
 		<tags>
 			<tag>Measurement</tag>
 			<tag>Power</tag>
 		</tags>
-		<state readOnly="true" pattern="%.0f var"/>
+		<state readOnly="true" pattern="%.0f %unit%"/>
 	</channel-type>
 
 	<channel-type id="power-factor">
@@ -727,7 +738,7 @@
 			<tag>Measurement</tag>
 			<tag>Energy</tag>
 		</tags>
-		<state readOnly="true" pattern="%.2f kWh"/>
+		<state readOnly="true" pattern="%.2f %unit%"/>
 	</channel-type>
 
 	<channel-type id="frequency">
@@ -737,23 +748,26 @@
 			<tag>Measurement</tag>
 			<tag>Frequency</tag>
 		</tags>
-		<state readOnly="true" pattern="%.2f Hz"/>
+		<state readOnly="true" pattern="%.2f %unit%"/>
 	</channel-type>
 
 	<channel-type id="soc">
-		<item-type>Number:Dimensionless</item-type>
+		<item-type unitHint="%">Number:Dimensionless</item-type>
 		<label>State of Charge</label>
 		<category>Battery</category>
 		<tags>
-			<tag>Status</tag>
-			<tag>Energy</tag>
+			<tag>Measurement</tag>
+			<tag>StateOfCharge</tag>
 		</tags>
-		<state readOnly="true" pattern="%.0f %%"/>
+		<state readOnly="true" pattern="%.0f %unit%"/>
 	</channel-type>
 
 	<channel-type id="rpm">
 		<item-type>Number</item-type>
 		<label>RPM</label>
+		<tags>
+			<tag>Measurement</tag>
+		</tags>
 		<state readOnly="true" pattern="%.0f"/>
 	</channel-type>
 
@@ -765,18 +779,27 @@
 			<tag>Measurement</tag>
 			<tag>Temperature</tag>
 		</tags>
-		<state readOnly="true" pattern="%.1f °C"/>
+		<state readOnly="true" pattern="%.1f %unit%"/>
 	</channel-type>
 
 	<channel-type id="id-tag">
 		<item-type>String</item-type>
 		<label>Id Tag</label>
 		<description>The token of the active transaction. A command sets the token the next remote start is sent with.</description>
+		<tags>
+			<tag>Status</tag>
+			<tag>Info</tag>
+		</tags>
+		<autoUpdatePolicy>veto</autoUpdatePolicy>
 	</channel-type>
 
 	<channel-type id="transaction-id">
 		<item-type>Number</item-type>
 		<label>Transaction Id</label>
+		<tags>
+			<tag>Status</tag>
+			<tag>Info</tag>
+		</tags>
 		<state readOnly="true" pattern="%.0f"/>
 	</channel-type>
 

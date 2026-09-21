@@ -89,6 +89,8 @@ public class OcppDiscoveryService extends AbstractThingHandlerDiscoveryService<O
         boolean vehicle = type == TokenType.VEHICLE;
         String kind = vehicle ? "vehicle" : "card";
         String when = ZonedDateTime.now(ZoneId.systemDefault()).format(SEEN_AT);
+        // A user holds any number of tokens, so none of its config parameters can represent the thing; the
+        // token goes in the UID instead, which is what keeps a re-tapped card from being offered twice.
         ThingUID thingUID = new ThingUID(THING_TYPE_CPMS_USER, bridgeUID, kind + "-" + sanitize(idToken));
         thingDiscovered(DiscoveryResultBuilder.create(thingUID).withBridge(bridgeUID)
                 .withProperty(vehicle ? "vehicles" : "cards", List.of(idToken)).withProperty(PROPERTY_SEEN_ON, where)
