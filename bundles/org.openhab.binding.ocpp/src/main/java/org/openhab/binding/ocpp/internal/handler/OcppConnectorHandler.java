@@ -23,6 +23,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -155,6 +156,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     // Dedicated lock: the base class synchronizes on the handler monitor.
     private final Object lock = new Object();
+    private final Map<String, State> published = new ConcurrentHashMap<>();
     private static final OcppCommands FALLBACK_COMMANDS = new Ocpp16Commands();
 
     private double pendingLimitAmps;
@@ -226,9 +228,9 @@ public class OcppConnectorHandler extends BaseThingHandler {
             Integer start = parent.recoverMeterStart(open);
             if (start != null) {
                 meterStart = start;
-                updateState(CHANNEL_METER_START, new QuantityType<>(start, Units.WATT_HOUR));
+                publish(CHANNEL_METER_START, new QuantityType<>(start, Units.WATT_HOUR));
             }
-            updateState(CHANNEL_TRANSACTION_ID, new DecimalType(open));
+            publish(CHANNEL_TRANSACTION_ID, new DecimalType(open));
             logger.debug("Recovered open transaction {} on connector {} after restart", open, connectorId);
         }
     }
@@ -303,6 +305,12 @@ public class OcppConnectorHandler extends BaseThingHandler {
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
         if (command instanceof RefreshType) {
+            // Answered from what the channel last reported: core refreshes every linked channel at once, so
+            // asking the charger would cost one TriggerMessage per channel.
+            State last = published.get(channelUID.getId());
+            if (last != null) {
+                updateState(channelUID.getId(), last);
+            }
             return;
         }
         switch (channelUID.getId()) {
@@ -364,7 +372,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
             case CHANNEL_UNLOCK:
                 if (command == OnOffType.ON) {
                     dispatchIfReady(commands().unlock(connectorId), "UnlockConnector");
-                    updateState(CHANNEL_UNLOCK, OnOffType.OFF);
+                    publish(CHANNEL_UNLOCK, OnOffType.OFF);
                 }
                 break;
             case CHANNEL_HARDWARE_MAX_CURRENT:
@@ -503,11 +511,10 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     private void setProfile(ProfileClaim claim) {
         OcppCommands commands = commands();
-        Integer phases = claim.numberPhases();
-        dispatch(
-                commands.setChargingProfile(connectorId, claim.wireValue(), claim.wireUnit() == ChargingRateUnitType.W,
-                        phases == null ? 0 : phases, forceTxDefaultProfile, transactionId, remoteTransactionId),
-                "SetChargingProfile").whenComplete((confirmation, ex) -> {
+        Integer requestedPhases = claim.numberPhases();
+        dispatch(commands.setChargingProfile(connectorId, claim.wireValue(), claim.wireUnit() == ChargingRateUnitType.W,
+                requestedPhases == null ? 0 : requestedPhases, forceTxDefaultProfile, transactionId,
+                remoteTransactionId), "SetChargingProfile").whenComplete((confirmation, ex) -> {
                     if (ex == null && commands.isAccepted(confirmation)) {
                         if (claimPublication(claim)) {
                             publishAcceptedLimit(claim);
@@ -524,15 +531,15 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     private void publishAcceptedLimit(ProfileClaim claim) {
         if (claim.powerSourced()) {
-            updateState(CHANNEL_POWER_LIMIT, new QuantityType<>(claim.limitWatts(), Units.WATT));
+            publish(CHANNEL_POWER_LIMIT, new QuantityType<>(claim.limitWatts(), Units.WATT));
         } else {
-            updateState(CHANNEL_CHARGE_LIMIT, new QuantityType<>(claim.limitAmps(), Units.AMPERE));
+            publish(CHANNEL_CHARGE_LIMIT, new QuantityType<>(claim.limitAmps(), Units.AMPERE));
         }
         Integer phaseCount = claim.numberPhases();
         if (phaseCount != null) {
-            updateState(CHANNEL_NUMBER_PHASES, new DecimalType(phaseCount));
+            publish(CHANNEL_NUMBER_PHASES, new DecimalType(phaseCount));
         }
-        updateState(CHANNEL_PAUSE, OnOffType.from(claim.paused()));
+        publish(CHANNEL_PAUSE, OnOffType.from(claim.paused()));
     }
 
     private void clearProfile(ProfileClaim claim) {
@@ -541,9 +548,9 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 .whenComplete((confirmation, ex) -> {
                     if (ex == null && commands.isAccepted(confirmation)) {
                         if (claimPublication(claim)) {
-                            updateState(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
-                            updateState(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
-                            updateState(CHANNEL_PAUSE, OnOffType.OFF);
+                            publish(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
+                            publish(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
+                            publish(CHANNEL_PAUSE, OnOffType.OFF);
                         } else {
                             logger.debug("Stale ClearChargingProfile confirmation on connector {} ignored",
                                     connectorId);
@@ -570,7 +577,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     private void publishStartTag() {
         String pending = pendingStartTag;
-        updateState(CHANNEL_ID_TAG, new StringType(pending != null ? pending : remoteStartTag));
+        publish(CHANNEL_ID_TAG, new StringType(pending != null ? pending : remoteStartTag));
     }
 
     private void attemptRemoteStart(int remaining, String tag) {
@@ -614,7 +621,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         dispatch(commands.changeAvailability(connectorId, operative), "ChangeAvailability")
                 .whenComplete((confirmation, ex) -> {
                     if (ex == null && commands.isAccepted(confirmation)) {
-                        updateState(CHANNEL_AVAILABILITY, OnOffType.from(operative));
+                        publish(CHANNEL_AVAILABILITY, OnOffType.from(operative));
                     }
                 });
     }
@@ -642,7 +649,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         }
         dispatch(request, "ChangeConfiguration[hardwareMax]").whenComplete((confirmation, ex) -> {
             if (ex == null && commands().isAccepted(confirmation)) {
-                updateState(CHANNEL_HARDWARE_MAX_CURRENT, new QuantityType<>(rounded, Units.AMPERE));
+                publish(CHANNEL_HARDWARE_MAX_CURRENT, new QuantityType<>(rounded, Units.AMPERE));
             }
         });
     }
@@ -757,29 +764,18 @@ public class OcppConnectorHandler extends BaseThingHandler {
             return;
         }
         if (status != null) {
-            updateState(CHANNEL_STATUS, new StringType(status.label()));
-            updateState(CHANNEL_CABLE_CONNECTED, OnOffType.from(CABLE_PRESENT.contains(status)));
+            publish(CHANNEL_STATUS, new StringType(status.label()));
+            publish(CHANNEL_CABLE_CONNECTED, OnOffType.from(CABLE_PRESENT.contains(status)));
             if (status == ConnectorStatus.UNAVAILABLE) {
-                updateState(CHANNEL_AVAILABILITY, OnOffType.OFF);
+                publish(CHANNEL_AVAILABILITY, OnOffType.OFF);
             } else if (status != ConnectorStatus.FAULTED) {
-                updateState(CHANNEL_AVAILABILITY, OnOffType.ON);
+                publish(CHANNEL_AVAILABILITY, OnOffType.ON);
             }
             if (status != ConnectorStatus.FAULTED) {
-                updateState(CHANNEL_CHARGING, OnOffType.from(CHARGING_ACTIVE.contains(status)));
+                publish(CHANNEL_CHARGING, OnOffType.from(CHARGING_ACTIVE.contains(status)));
             }
             if (status == ConnectorStatus.AVAILABLE) {
-                // Available means no active transaction; clear any stale one.
-                Integer stale = transactionId;
-                if (stale != null) {
-                    transactionId = null;
-                    remoteTransactionId = null;
-                    meterStart = null;
-                    updateState(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
-                    OcppChargePointHandler cp = chargePoint;
-                    if (cp != null) {
-                        cp.transactionCompleted(stale);
-                    }
-                }
+                forgetOpenTransaction();
             }
             armStuckWatchdog(status);
         }
@@ -789,7 +785,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
     public void onMeterValues(MeterSample sample) {
         Map<String, State> states = meterValues.toStates(sample);
         ensureDynamicChannels(states.keySet());
-        states.forEach(this::updateState);
+        states.forEach(this::publish);
         publishSessionEnergy(states.get(CHANNEL_ENERGY_ACTIVE_IMPORT));
         List<MeterSample.Block> blocks = sample.blocks();
         ZonedDateTime timestamp = null;
@@ -797,12 +793,17 @@ public class OcppConnectorHandler extends BaseThingHandler {
             timestamp = blocks.get(i).timestamp();
         }
         if (timestamp != null) {
-            updateState(CHANNEL_TIMESTAMP, new DateTimeType(timestamp));
+            publish(CHANNEL_TIMESTAMP, new DateTimeType(timestamp));
         }
         if (getThing().getStatus() != ThingStatus.ONLINE) {
             updateStatus(ThingStatus.ONLINE);
         }
         logger.trace("Connector {} applied {} metering states", connectorId, states.size());
+    }
+
+    private void publish(String channelId, State state) {
+        published.put(channelId, state);
+        updateState(channelId, state);
     }
 
     private void ensureDynamicChannels(Set<String> reportedChannelIds) {
@@ -840,19 +841,19 @@ public class OcppConnectorHandler extends BaseThingHandler {
         int transactionId = event.transactionId();
         this.transactionId = transactionId;
         this.remoteTransactionId = event.remoteId();
-        updateState(CHANNEL_TRANSACTION_ID, new DecimalType(transactionId));
+        publish(CHANNEL_TRANSACTION_ID, new DecimalType(transactionId));
         String idTag = event.idToken();
         if (idTag != null) {
-            updateState(CHANNEL_ID_TAG, new StringType(idTag));
+            publish(CHANNEL_ID_TAG, new StringType(idTag));
         }
         Integer meterStart = event.meterWh();
         if (meterStart != null) {
             this.meterStart = meterStart;
-            updateState(CHANNEL_METER_START, new QuantityType<>(meterStart, Units.WATT_HOUR));
+            publish(CHANNEL_METER_START, new QuantityType<>(meterStart, Units.WATT_HOUR));
         }
         ZonedDateTime timestamp = event.timestamp();
         if (timestamp != null) {
-            updateState(CHANNEL_TIMESTAMP_START, new DateTimeType(timestamp));
+            publish(CHANNEL_TIMESTAMP_START, new DateTimeType(timestamp));
         }
     }
 
@@ -862,13 +863,13 @@ public class OcppConnectorHandler extends BaseThingHandler {
             Integer known = transactionId;
             if (known == null || known != event.transactionId()) {
                 transactionId = event.transactionId();
-                updateState(CHANNEL_TRANSACTION_ID, new DecimalType(event.transactionId()));
+                publish(CHANNEL_TRANSACTION_ID, new DecimalType(event.transactionId()));
             }
             remoteTransactionId = remoteId;
         }
         String idTag = event.idToken();
         if (idTag != null) {
-            updateState(CHANNEL_ID_TAG, new StringType(idTag));
+            publish(CHANNEL_ID_TAG, new StringType(idTag));
         }
     }
 
@@ -879,31 +880,46 @@ public class OcppConnectorHandler extends BaseThingHandler {
         }
         QuantityType<?> wh = reading.toUnit(Units.WATT_HOUR);
         if (wh != null) {
-            updateState(CHANNEL_SESSION_ENERGY,
-                    new QuantityType<>(Math.max(0, wh.intValue() - start), Units.WATT_HOUR));
+            publish(CHANNEL_SESSION_ENERGY, new QuantityType<>(Math.max(0, wh.intValue() - start), Units.WATT_HOUR));
         }
     }
 
     public void onTransactionEnded(TransactionEvent event) {
         Integer meterStop = event.meterWh();
         if (meterStop != null) {
-            updateState(CHANNEL_METER_STOP, new QuantityType<>(meterStop, Units.WATT_HOUR));
+            publish(CHANNEL_METER_STOP, new QuantityType<>(meterStop, Units.WATT_HOUR));
             Integer start = meterStart;
             if (start != null) {
                 int total = meterStop - start;
-                updateState(CHANNEL_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
-                updateState(CHANNEL_LAST_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
+                publish(CHANNEL_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
+                publish(CHANNEL_LAST_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
             }
         }
         // Energy totals must land before transaction-id clears, or a rule triggered by the end reads the mid-
         // session value.
-        this.transactionId = null;
-        this.remoteTransactionId = null;
-        updateState(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
+        transactionId = null;
+        remoteTransactionId = null;
         meterStart = null;
+        publish(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
         ZonedDateTime timestamp = event.timestamp();
         if (timestamp != null) {
-            updateState(CHANNEL_TIMESTAMP_STOP, new DateTimeType(timestamp));
+            publish(CHANNEL_TIMESTAMP_STOP, new DateTimeType(timestamp));
+        }
+    }
+
+    /** Available means no transaction is running, so one still open here never had its StopTransaction. */
+    private void forgetOpenTransaction() {
+        Integer stale = transactionId;
+        if (stale == null) {
+            return;
+        }
+        transactionId = null;
+        remoteTransactionId = null;
+        meterStart = null;
+        publish(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
+        OcppChargePointHandler cp = chargePoint;
+        if (cp != null) {
+            cp.transactionCompleted(stale);
         }
     }
 

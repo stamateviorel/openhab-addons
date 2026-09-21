@@ -26,6 +26,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
+import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
 import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.config.core.Configuration;
@@ -34,7 +35,10 @@ import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingUID;
 import org.openhab.core.thing.binding.ThingHandlerCallback;
 
+import eu.chargetime.ocpp.model.core.ChargePointErrorCode;
+import eu.chargetime.ocpp.model.core.ChargePointStatus;
 import eu.chargetime.ocpp.model.core.StartTransactionRequest;
+import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
 import eu.chargetime.ocpp.model.core.StopTransactionRequest;
 
 /**
@@ -73,6 +77,11 @@ class OcppTransactionRecoveryTest {
         handler = new OcppChargePointHandler(cpThing);
         handler.setCallback(callback);
         handler.initialize();
+    }
+
+    private static StatusInfo available() {
+        return Ocpp16Events.toStatusInfo(
+                new StatusNotificationRequest(1, ChargePointErrorCode.NoError, ChargePointStatus.Available));
     }
 
     private static TransactionEvent started(int connectorId, int transactionId) {
@@ -155,14 +164,24 @@ class OcppTransactionRecoveryTest {
     void anAvailableStatusWithoutAStopClearsThePersistedTransaction() {
         // Available means no active transaction, so a lost StopTransaction must not leave a persisted one.
         when(server.openTransactionFor("charger", 1)).thenReturn(55);
+        when(server.meterStartOf(55, "charger")).thenReturn(1000);
         OcppConnectorHandler connector = realConnector(1);
 
-        connector.onStatusNotification(
-                Ocpp16Events.toStatusInfo(new eu.chargetime.ocpp.model.core.StatusNotificationRequest(1,
-                        eu.chargetime.ocpp.model.core.ChargePointErrorCode.NoError,
-                        eu.chargetime.ocpp.model.core.ChargePointStatus.Available)));
+        connector.onStatusNotification(available());
 
-        verify(server).forgetTransaction(55);
+        verify(server).releaseTransaction(55);
+    }
+
+    @Test
+    void aStopArrivingAfterAvailableIsStillLogged() {
+        // Chargers report Available before the stop, so the usage entry has to outlive the connector going idle.
+        when(server.openTransactionFor("charger", 1)).thenReturn(55);
+        when(server.meterStartOf(55, "charger")).thenReturn(1000);
+        OcppConnectorHandler connector = realConnector(1);
+
+        connector.onStatusNotification(available());
+
+        verify(server, org.mockito.Mockito.never()).forgetTransaction(55);
     }
 
     private OcppConnectorHandler realConnector(int connectorId) {

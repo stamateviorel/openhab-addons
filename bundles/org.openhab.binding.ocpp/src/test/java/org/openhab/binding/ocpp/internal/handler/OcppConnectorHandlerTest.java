@@ -17,7 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -51,6 +53,7 @@ import org.openhab.core.thing.ThingStatusInfo;
 import org.openhab.core.thing.ThingUID;
 import org.openhab.core.thing.binding.ThingHandlerCallback;
 import org.openhab.core.types.Command;
+import org.openhab.core.types.RefreshType;
 import org.openhab.core.types.UnDefType;
 
 import eu.chargetime.ocpp.model.Request;
@@ -544,5 +547,124 @@ class OcppConnectorHandlerTest {
         assertTrue(unpause instanceof SetChargingProfileRequest,
                 "un-pausing with a set limit must restore it, not clear the cap");
         assertEquals(16.0, sentLimit(unpause), "un-pausing must restore the previous 16 A limit");
+    }
+
+    @Test
+    void aRefreshAnswersWithTheLimitAndPauseTheChargerAccepted() {
+        attachReadyChargePoint();
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(16));
+        command(CHANNEL_PAUSE, OnOffType.ON);
+        clearInvocations(callback);
+
+        command(CHANNEL_CHARGE_LIMIT, RefreshType.REFRESH);
+        command(CHANNEL_PAUSE, RefreshType.REFRESH);
+
+        assertChannel(CHANNEL_CHARGE_LIMIT,
+                new org.openhab.core.library.types.QuantityType<>(16.0, org.openhab.core.library.unit.Units.AMPERE));
+        assertChannel(CHANNEL_PAUSE, OnOffType.ON);
+    }
+
+    @Test
+    void aRefreshDoesNotAnswerWithALimitTheChargerNeverTook() {
+        // No charge point: the limit is only remembered for later, so the channel never reported it.
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(16));
+
+        command(CHANNEL_CHARGE_LIMIT, RefreshType.REFRESH);
+
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_CHARGE_LIMIT)), any());
+    }
+
+    @Test
+    void aRefreshAnswersIdTagWithTheTokenTheSessionRunsOn() {
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "CARD-9", 0, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));
+        clearInvocations(callback);
+
+        command(CHANNEL_ID_TAG, RefreshType.REFRESH);
+
+        assertChannel(CHANNEL_ID_TAG, new StringType("CARD-9"));
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_ID_TAG)),
+                eq(new StringType("openhab")));
+    }
+
+    @Test
+    void aRefreshAnswersIdTagWithTheTokenTheNextStartWillPresent() {
+        command(CHANNEL_ID_TAG, new StringType("CARD-2"));
+        clearInvocations(callback);
+
+        command(CHANNEL_ID_TAG, RefreshType.REFRESH);
+
+        assertChannel(CHANNEL_ID_TAG, new StringType("CARD-2"));
+    }
+
+    @Test
+    void aRefreshAnswersWithTheLastMeterReading() {
+        handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "1.6"));
+        clearInvocations(callback);
+
+        command(CHANNEL_ENERGY_ACTIVE_IMPORT, RefreshType.REFRESH);
+
+        assertChannel(CHANNEL_ENERGY_ACTIVE_IMPORT, new org.openhab.core.library.types.QuantityType<>(1.6,
+                org.openhab.core.library.unit.Units.KILOWATT_HOUR));
+    }
+
+    @Test
+    void aRefreshAnswersWithTheRunningTransaction() {
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 100, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));
+
+        command(CHANNEL_TRANSACTION_ID, RefreshType.REFRESH);
+        command(CHANNEL_METER_START, RefreshType.REFRESH);
+
+        verify(callback, times(2)).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_TRANSACTION_ID)),
+                eq(new DecimalType(7)));
+        verify(callback, times(2)).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_METER_START)), eq(
+                new org.openhab.core.library.types.QuantityType<>(100, org.openhab.core.library.unit.Units.WATT_HOUR)));
+    }
+
+    @Test
+    void aRefreshNeverAsksTheCharger() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+
+        command(CHANNEL_STATUS, RefreshType.REFRESH);
+        command(CHANNEL_ENERGY_ACTIVE_IMPORT, RefreshType.REFRESH);
+        command(CHANNEL_CHARGE_LIMIT, RefreshType.REFRESH);
+
+        verify(chargePoint, never()).send(any());
+    }
+
+    @Test
+    void anAvailableForgetsAnOpenSessionWithoutLoggingATotalForIt() {
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 100, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));
+        handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "1.6"));
+
+        handler.onStatusNotification(status(ChargePointStatus.Available));
+
+        assertChannel(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_METER_STOP)), any());
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_LAST_SESSION_ENERGY)), any());
+    }
+
+    @Test
+    void aSessionRecoveredAfterARestartIsForgottenWithoutInventingAStopReading() {
+        ThingUID chargePointUID = new ThingUID(THING_TYPE_CHARGEPOINT, "server", "charger");
+        when(thing.getBridgeUID()).thenReturn(chargePointUID);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.commands()).thenReturn(new Ocpp16Commands());
+        when(chargePoint.getChargePointId()).thenReturn("charger");
+        when(chargePoint.recoverTransactionId(1)).thenReturn(7);
+        when(chargePoint.recoverMeterStart(7)).thenReturn(1000);
+        Bridge bridge = mock(Bridge.class);
+        when(bridge.getHandler()).thenReturn(chargePoint);
+        when(callback.getBridge(chargePointUID)).thenReturn(bridge);
+        handler.initialize();
+        handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "48.0"));
+
+        handler.onStatusNotification(status(ChargePointStatus.Available));
+
+        verify(chargePoint).transactionCompleted(7);
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_METER_STOP)), any());
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_LAST_SESSION_ENERGY)), any());
     }
 }
