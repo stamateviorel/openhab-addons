@@ -15,17 +15,9 @@
   <name>openHAB Add-ons :: Bundles :: OCPP Binding</name>
 
   <properties>
-    <!-- The ChargeTime OCA-OCPP jars are plain (non-OSGi) jars, so they are inlined into this
-         bundle. Java-WebSocket is an OSGi bundle upstream but is inlined too to keep the feature
-         self-contained (only this bundle + openHAB core). gson is provided by core, so it stays a
-         normal import and is NOT inlined. -->
-    <bnd.includeresource>-${.}/NOTICE, -${.}/*.xsd, @ocpp16-2.0.jar, @ocpp2-2.0.jar, @ocpp-common-2.0.jar, @ocpp-json-2.0.jar, @Java-WebSocket-1.6.0.jar</bnd.includeresource>
-    <!-- The ChargeTime 'common' jar carries SOAP transport classes we never load (JSON only). Their
-         javax.xml.bind / javax.xml.soap references were removed from the JDK after Java 8 and are
-         not exported by the runtime, so make those imports optional; the bundle resolves without
-         them. javax.annotation is the same case: the ocpp2 classes carry jsr305 annotations, which
-         are CLASS-retention and never loaded. -->
-    <bnd.importpackage>javax.xml.bind.*;resolution:=optional,javax.xml.soap.*;resolution:=optional,com.sun.net.httpserver.*;resolution:=optional,javax.annotation;resolution:=optional</bnd.importpackage>
+    <!-- The ChargeTime model classes carry JAXB and jsr305 annotations; neither is shipped by the
+         JDK or exported by the runtime, and the bundle resolves without them. -->
+    <bnd.importpackage>javax.xml.bind.*;resolution:=optional,javax.annotation;resolution:=optional</bnd.importpackage>
   </properties>
 
   <dependencies>
@@ -106,7 +98,6 @@
         </exclusion>
       </exclusions>
     </dependency>
-    <!-- Pinned to match the version already shipped in-tree (see ojelectronics binding). -->
     <dependency>
       <groupId>org.java-websocket</groupId>
       <artifactId>Java-WebSocket</artifactId>

@@ -27,10 +27,6 @@ public final class WssListenerSupport {
     private WssListenerSupport() {
     }
 
-    public static void enableWss(WebSocketListener listener, WssFactoryBuilder wssFactoryBuilder) {
-        listener.enableWSS(wssFactoryBuilder);
-    }
-
     public static void enableWss(MultiProtocolWebSocketListener listener, WssFactoryBuilder wssFactoryBuilder) {
         listener.enableWSS(wssFactoryBuilder);
     }
