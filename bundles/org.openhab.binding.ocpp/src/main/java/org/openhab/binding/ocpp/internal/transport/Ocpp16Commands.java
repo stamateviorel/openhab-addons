@@ -216,6 +216,12 @@ public class Ocpp16Commands implements OcppCommands {
     }
 
     @Override
+    public boolean isFeatureUnsupported(@Nullable Confirmation confirmation) {
+        return confirmation instanceof SetChargingProfileConfirmation profile
+                && profile.getStatus() == ChargingProfileStatus.NotSupported;
+    }
+
+    @Override
     public boolean isNotApplicable(@Nullable Confirmation confirmation) {
         return false;
     }

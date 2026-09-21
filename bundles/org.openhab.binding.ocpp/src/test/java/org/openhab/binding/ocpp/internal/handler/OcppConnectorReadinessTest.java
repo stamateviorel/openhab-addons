@@ -16,6 +16,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.openhab.binding.ocpp.internal.OcppBindingConstants.*;
@@ -24,10 +25,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.openhab.binding.ocpp.internal.transport.ChargerCapabilities;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Commands;
 import org.openhab.binding.ocpp.internal.transport.Ocpp16Events;
@@ -44,7 +47,10 @@ import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.thing.ThingStatusInfo;
 import org.openhab.core.thing.ThingUID;
 import org.openhab.core.thing.binding.ThingHandlerCallback;
+import org.openhab.core.types.RefreshType;
+import org.openhab.core.types.UnDefType;
 
+import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.core.ChargePointErrorCode;
 import eu.chargetime.ocpp.model.core.ChargePointStatus;
@@ -55,6 +61,7 @@ import eu.chargetime.ocpp.model.core.KeyValueType;
 import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
 import eu.chargetime.ocpp.model.core.UnlockConnectorRequest;
 import eu.chargetime.ocpp.model.smartcharging.ChargingProfileStatus;
+import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileRequest;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileRequest;
 
@@ -382,6 +389,269 @@ class OcppConnectorReadinessTest {
     private static boolean isMeterValuesTrigger(Request request) {
         return request instanceof eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequest trigger && trigger
                 .getRequestedMessage() == eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequestType.MeterValues;
+    }
+
+    private void refuseProfilesWith(ChargingProfileStatus status) {
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile)))
+                .thenReturn(CompletableFuture.completedFuture(new SetChargingProfileConfirmation(status)));
+    }
+
+    private static ChannelUID channel(String channelId) {
+        return new ChannelUID(CONN_UID, channelId);
+    }
+
+    @Test
+    void aNotSupportedProfileStopsEveryFurtherProfileIncludingAPause() {
+        // The charger advertises SmartCharging and refuses it anyway. Once it says NotSupported nothing more is
+        // sent — a pause most of all, since it is a 0 A profile and such a charger may end the transaction on one.
+        ready.set(true);
+        refuseProfilesWith(ChargingProfileStatus.NotSupported);
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_PAUSE), OnOffType.ON);
+
+        verify(parent, times(1)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void aPlainRejectedLeavesSmartChargingOn() {
+        // Rejected is about this one profile, not the feature; backing off on it would cost a working charger
+        // its charge limit for the rest of the session.
+        ready.set(true);
+        refuseProfilesWith(ChargingProfileStatus.Rejected);
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+
+        verify(parent, times(2)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void aNotSupportedCallErrorStopsThemToo() {
+        // How OCPP 2.0.1 says the same thing: its ChargingProfileStatusEnum has no NotSupported, so a station
+        // without SmartCharging refuses the message itself.
+        ready.set(true);
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile))).thenReturn(CompletableFuture
+                .failedFuture(new eu.chargetime.ocpp.CallErrorException("NotSupported", "no smart charging", null)));
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_PAUSE), OnOffType.ON);
+
+        verify(parent, times(1)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void anOrdinarySendFailureIsStillRetriedOnceTheChargePointIsReadyAgain() {
+        // Only a NotSupported answer backs off; a dropped connection must still leave the limit to re-send.
+        ready.set(true);
+        AtomicInteger sends = new AtomicInteger();
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile)))
+                .thenAnswer(invocation -> sends.getAndIncrement() == 0
+                        ? CompletableFuture.failedFuture(new IllegalStateException("Charger charger disconnected"))
+                        : CompletableFuture
+                                .completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted)));
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.onChargePointReady();
+
+        verify(parent, times(2)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void theBackoffOutlivesAReconnectAndEndsOnlyOnAFreshBoot() {
+        // onChargePointReady is reached by a bare reconnect and even by a heartbeat, so the re-probe hangs off
+        // the BootNotification instead: only a charger that actually restarted gets another profile.
+        ready.set(true);
+        refuseProfilesWith(ChargingProfileStatus.NotSupported);
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.onChargePointReady();
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+        verify(parent, times(1)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+
+        handler.onChargerBooted();
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(12, Units.AMPERE));
+
+        verify(parent, times(2)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void theControlChannelsStopReportingALimitTheBindingNoLongerHolds() {
+        // The charger takes one profile and refuses the next. The accepted 16 A must not stay on the channel:
+        // REFRESH answers from what was last reported, and nothing maintains that value any more.
+        ready.set(true);
+        AtomicInteger answered = new AtomicInteger();
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile)))
+                .thenAnswer(invocation -> CompletableFuture.completedFuture(new SetChargingProfileConfirmation(
+                        answered.getAndIncrement() == 0 ? ChargingProfileStatus.Accepted
+                                : ChargingProfileStatus.NotSupported)));
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_PAUSE), OnOffType.ON);
+        org.mockito.Mockito.clearInvocations(callback);
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), RefreshType.REFRESH);
+        handler.handleCommand(channel(CHANNEL_PAUSE), RefreshType.REFRESH);
+
+        verify(callback).stateUpdated(org.mockito.ArgumentMatchers.eq(channel(CHANNEL_CHARGE_LIMIT)),
+                org.mockito.ArgumentMatchers.eq(UnDefType.UNDEF));
+        verify(callback).stateUpdated(org.mockito.ArgumentMatchers.eq(channel(CHANNEL_PAUSE)),
+                org.mockito.ArgumentMatchers.eq(UnDefType.UNDEF));
+        verify(callback, never()).stateUpdated(org.mockito.ArgumentMatchers.eq(channel(CHANNEL_CHARGE_LIMIT)),
+                argThat(state -> state instanceof QuantityType<?>));
+    }
+
+    @Test
+    void disableSmartChargingNeverSendsEvenTheFirstProfile() {
+        ready.set(true);
+        OcppConnectorHandler off = newConnector(Map.of("connectorId", 1, "disableSmartCharging", true));
+
+        off.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        off.handleCommand(channel(CHANNEL_PAUSE), OnOffType.ON);
+
+        verify(parent, never()).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    private static boolean isClearChargingProfile(Request request) {
+        return request instanceof ClearChargingProfileRequest;
+    }
+
+    private static boolean isChargingProfileMessage(Request request) {
+        return isSetChargingProfile(request) || isClearChargingProfile(request);
+    }
+
+    @Test
+    void aPauseCoalescedBeforeTheRefusalNeverGoesOut() {
+        // profileMinIntervalMs holds the pause back as a scheduled flush, which reaches the charger without
+        // passing applyLimit() again. A pause is a 0 A profile, so it is the one send that must not survive.
+        ready.set(true);
+        CompletableFuture<Confirmation> firstAnswer = new CompletableFuture<>();
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile))).thenReturn(firstAnswer);
+        OcppConnectorHandler coalescing = newConnector(Map.of("connectorId", 1, "profileMinIntervalMs", 600));
+
+        coalescing.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        coalescing.handleCommand(channel(CHANNEL_PAUSE), OnOffType.ON);
+        firstAnswer.complete(new SetChargingProfileConfirmation(ChargingProfileStatus.NotSupported));
+
+        // Any charging-profile message: with the pause flag already neutralised, a surviving flush leaves as
+        // a ClearChargingProfile rather than the 0 A profile, and neither may reach this charger.
+        verify(parent, org.mockito.Mockito.after(1500).times(1))
+                .send(argThat(OcppConnectorReadinessTest::isChargingProfileMessage));
+    }
+
+    @Test
+    void aConfigEditClearsTheBackoff() {
+        // thingUpdated() is dispose() then initialize() on this same handler, and editing the connector is
+        // what a user reaches for first — a charger may want forceTxDefaultProfile before it takes a profile.
+        ready.set(true);
+        refuseProfilesWith(ChargingProfileStatus.NotSupported);
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+        verify(parent, times(1)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+
+        handler.thingUpdated(handler.getThing());
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(12, Units.AMPERE));
+
+        verify(parent, times(2)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void aPauseTheBackoffSwallowedDoesNotGateTheLimitAfterABoot() {
+        // Only a pause OFF command clears the pause flag, and the pause channel reads UNDEF once the backoff
+        // arms, so a pause recorded but never sent would silently swallow every later limit.
+        ready.set(true);
+        refuseProfilesWith(ChargingProfileStatus.NotSupported);
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_PAUSE), OnOffType.ON);
+
+        handler.onChargerBooted();
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile))).thenReturn(
+                CompletableFuture.completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted)));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+
+        ArgumentCaptor<Request> sent = ArgumentCaptor.forClass(Request.class);
+        verify(parent, times(2)).send(sent.capture());
+        SetChargingProfileRequest resent = (SetChargingProfileRequest) sent.getAllValues().get(1);
+        org.junit.jupiter.api.Assertions.assertEquals(10.0,
+                resent.getCsChargingProfiles().getChargingSchedule().getChargingSchedulePeriod()[0].getLimit()
+                        .doubleValue());
+    }
+
+    @Test
+    void aPauseRefusedOnTheWireDoesNotGateTheLimitAfterABoot() {
+        // The same trap from the other side: the pause is recorded, then refused on the wire. The flag has to
+        // go with the UNDEF the backoff publishes, or every later limit is swallowed once the charger reboots.
+        ready.set(true);
+        AtomicInteger answered = new AtomicInteger();
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile)))
+                .thenAnswer(invocation -> CompletableFuture.completedFuture(new SetChargingProfileConfirmation(
+                        answered.getAndIncrement() == 0 ? ChargingProfileStatus.Accepted
+                                : ChargingProfileStatus.NotSupported)));
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_PAUSE), OnOffType.ON);
+        verify(parent, times(2)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+
+        handler.onChargerBooted();
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+
+        verify(parent, times(3)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void aChargerThatLacksOnlyClearChargingProfileKeepsItsChargeLimit() {
+        // ClearChargingProfile is a message of its own, and ClearChargingProfileStatus has no NotSupported, so
+        // a charger without it refuses with a CALL ERROR. That says nothing about SetChargingProfile.
+        ready.set(true);
+        when(parent.send(argThat(OcppConnectorReadinessTest::isClearChargingProfile))).thenReturn(CompletableFuture
+                .failedFuture(new eu.chargetime.ocpp.CallErrorException("NotSupported", "no clear", null)));
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(0, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+
+        verify(parent, times(1)).send(argThat(OcppConnectorReadinessTest::isClearChargingProfile));
+        verify(parent, times(1)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void aCallErrorWithAnotherCodeTakesTheOrdinaryRetryPath() {
+        // Only NotSupported and NotImplemented say the feature is missing; anything else is one failed call
+        // and must still leave the limit to re-send.
+        ready.set(true);
+        AtomicInteger sends = new AtomicInteger();
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile)))
+                .thenAnswer(invocation -> sends.getAndIncrement() == 0
+                        ? CompletableFuture
+                                .failedFuture(new eu.chargetime.ocpp.CallErrorException("GenericError", "busy", null))
+                        : CompletableFuture
+                                .completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted)));
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.onChargePointReady();
+
+        verify(parent, times(2)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void aProfileStillInFlightCannotRepublishALimitTheBackoffJustCleared() {
+        // Two profiles outstanding: the later one is refused and arms the backoff, then the earlier one is
+        // accepted. Its Accepted must not put a limit back on channels that have just gone UNDEF.
+        ready.set(true);
+        CompletableFuture<Confirmation> first = new CompletableFuture<>();
+        CompletableFuture<Confirmation> second = new CompletableFuture<>();
+        AtomicInteger sends = new AtomicInteger();
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile)))
+                .thenAnswer(invocation -> sends.getAndIncrement() == 0 ? first : second);
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+        second.complete(new SetChargingProfileConfirmation(ChargingProfileStatus.NotSupported));
+        org.mockito.Mockito.clearInvocations(callback);
+        first.complete(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted));
+
+        verify(callback, never()).stateUpdated(org.mockito.ArgumentMatchers.eq(channel(CHANNEL_CHARGE_LIMIT)),
+                argThat(state -> state instanceof QuantityType<?>));
     }
 
     private OcppConnectorHandler newConnector(Map<String, Object> config) {

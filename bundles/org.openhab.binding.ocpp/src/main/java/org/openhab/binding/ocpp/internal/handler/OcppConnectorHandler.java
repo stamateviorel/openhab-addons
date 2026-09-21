@@ -63,6 +63,7 @@ import org.openhab.core.types.UnDefType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import eu.chargetime.ocpp.CallErrorException;
 import eu.chargetime.ocpp.model.core.ChargingRateUnitType;
 
 /**
@@ -129,6 +130,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     private volatile int connectorId = 1;
     private volatile boolean forceTxDefaultProfile;
+    private volatile boolean disableSmartCharging;
     private volatile int profileMinIntervalMs;
     private volatile String hardwareMaxCurrentKey = "";
     private volatile String remoteStartTag = "openhab";
@@ -153,6 +155,9 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private volatile boolean limitDeferred;
     private volatile boolean smartChargingUnsupportedLogged;
     private volatile boolean phaseSwitchWarningLogged;
+    // Set once the charger has answered a profile with NotSupported: nothing more is sent until it boots
+    // or its Thing config is edited.
+    private volatile boolean smartChargingObservedUnsupported;
 
     // Dedicated lock: the base class synchronizes on the handler monitor.
     private final Object lock = new Object();
@@ -182,6 +187,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         OcppConnectorConfiguration config = getConfigAs(OcppConnectorConfiguration.class);
         connectorId = config.connectorId;
         forceTxDefaultProfile = config.forceTxDefaultProfile;
+        disableSmartCharging = config.disableSmartCharging;
         profileMinIntervalMs = config.profileMinIntervalMs;
         hardwareMaxCurrentKey = config.hardwareMaxCurrentKey;
         remoteStartTag = config.remoteStartTag;
@@ -192,6 +198,10 @@ public class OcppConnectorHandler extends BaseThingHandler {
         remoteStartRetries = config.remoteStartRetries;
         externalEnergyItem = config.externalEnergyItem;
         externalMeterType = config.externalMeterType;
+        // thingUpdated() is dispose() then initialize() on this same instance, so editing the config is the
+        // user's way out of a backoff — and out of the warn latch, so a second refusal is reported again.
+        smartChargingObservedUnsupported = false;
+        smartChargingUnsupportedLogged = false;
         OcppChargePointHandler parent = chargePointHandler();
         if (parent == null) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_UNINITIALIZED);
@@ -344,7 +354,9 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 }
                 break;
             case CHANNEL_PAUSE:
-                if (command instanceof OnOffType onOff) {
+                if (command instanceof OnOffType onOff && !smartChargingUnsupported()) {
+                    // Recording a pause that never went out would leave the three limits above gated behind
+                    // it for good, since only a pause OFF command clears the flag.
                     paused = onOff == OnOffType.ON;
                     applyLimit();
                 }
@@ -395,18 +407,87 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     private boolean smartChargingUnsupported() {
+        if (smartChargingObservedUnsupported) {
+            return true;
+        }
+        if (disableSmartCharging) {
+            warnSmartChargingOff("has disableSmartCharging set in its Thing configuration");
+            return true;
+        }
         OcppChargePointHandler cp = chargePoint;
         if (cp == null || !Boolean.FALSE.equals(cp.getCapabilities().supportsSmartCharging().orElse(null))) {
             return false;
         }
-        if (!smartChargingUnsupportedLogged) {
-            smartChargingUnsupportedLogged = true;
-            logger.warn(
-                    "Charger {} connector {} does not support OCPP SmartCharging; charge-limit and pause have "
-                            + "no effect and are not sent (some chargers stop charging on a profile)",
-                    cp.getChargePointId(), connectorId);
-        }
+        warnSmartChargingOff("does not support OCPP SmartCharging");
         return true;
+    }
+
+    /**
+     * Stops sending profiles to a charger that advertised SmartCharging and then refused one. A pause is a 0 A
+     * profile and some of these chargers end the running transaction on any profile, so a retry would stop the
+     * charge rather than throttle it.
+     */
+    /** A profile the config edit or an earlier refusal outranked says nothing about the charger now. */
+    private boolean isCurrent(ProfileClaim claim) {
+        synchronized (lock) {
+            return claim.generation() > lastPublishedGeneration;
+        }
+    }
+
+    private void observeSmartChargingUnsupported(String answer) {
+        synchronized (lock) {
+            if (smartChargingObservedUnsupported) {
+                return;
+            }
+            smartChargingObservedUnsupported = true;
+            // A profile coalesced before the latch armed is still due to flush, and it may be the pause.
+            cancel(pendingFlush);
+            pendingFlush = null;
+            // Outranks every profile still in flight, so a late Accepted cannot publish a limit back over
+            // the UNDEF below.
+            lastPublishedGeneration = profileGeneration;
+            // The pause channel goes UNDEF below, so the flag goes with it: left set it would gate
+            // charge-limit, power-limit and number-phases with nothing on screen to explain why.
+            paused = false;
+        }
+        String reason = "advertised SmartCharging but answered " + answer
+                + " to a charging profile, and is sent no more until it reboots or its Thing configuration is edited";
+        if (smartChargingUnsupportedLogged) {
+            // Already warned, so this is a charger that refused again after a reboot re-probed it.
+            logger.debug("Charger {} connector {} {}", chargePointId(), connectorId, reason);
+        } else {
+            warnSmartChargingOff(reason);
+        }
+        // REFRESH answers from what was last reported, so leaving the accepted values there would have the
+        // channels claim a limit the binding no longer maintains.
+        publish(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
+        publish(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
+        publish(CHANNEL_NUMBER_PHASES, UnDefType.UNDEF);
+        publish(CHANNEL_PAUSE, UnDefType.UNDEF);
+    }
+
+    private void warnSmartChargingOff(String reason) {
+        if (smartChargingUnsupportedLogged) {
+            return;
+        }
+        smartChargingUnsupportedLogged = true;
+        logger.warn(
+                "Charger {} connector {} {}; charge-limit, power-limit, number-phases and pause have no "
+                        + "effect and are not sent (some chargers stop charging on a profile)",
+                chargePointId(), connectorId, reason);
+    }
+
+    private String chargePointId() {
+        OcppChargePointHandler cp = chargePoint;
+        return cp != null ? cp.getChargePointId() : "?";
+    }
+
+    /**
+     * A genuine BootNotification: re-probe a charger that refused profiles, so firmware that has since gained
+     * SmartCharging is tried again. A charger that only drops and reopens its socket does not reach here.
+     */
+    public void onChargerBooted() {
+        smartChargingObservedUnsupported = false;
     }
 
     public void onChargePointReady() {
@@ -502,6 +583,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     private void sendProfile(ProfileClaim claim) {
+        if (smartChargingUnsupported()) {
+            // The gate belongs here as well as in applyLimit(): a coalesced flush reaches the wire without
+            // passing through applyLimit() at all.
+            return;
+        }
         if (!claim.paused() && claim.wireValue() <= 0.0) {
             clearProfile(claim);
         } else {
@@ -522,11 +608,40 @@ public class OcppConnectorHandler extends BaseThingHandler {
                             logger.debug("Stale SetChargingProfile confirmation on connector {} ignored", connectorId);
                         }
                     } else if (ex == null) {
-                        logger.debug("SetChargingProfile on connector {} not accepted: {}", connectorId, confirmation);
+                        if (commands.isFeatureUnsupported(confirmation) && isCurrent(claim)) {
+                            observeSmartChargingUnsupported("NotSupported");
+                        } else {
+                            logger.debug("SetChargingProfile on connector {} not accepted: {}", connectorId,
+                                    confirmation);
+                        }
+                    } else if (isCurrent(claim)) {
+                        onProfileSendFailed(ex);
                     } else {
-                        limitDeferred = true;
+                        logger.debug("Stale SetChargingProfile failure on connector {} ignored", connectorId);
                     }
                 });
+    }
+
+    /** A CALL ERROR for SetChargingProfile itself, rather than a refusal of this one profile. */
+    private void onProfileSendFailed(Throwable ex) {
+        String errorCode = unsupportedFeatureError(ex);
+        if (errorCode != null) {
+            observeSmartChargingUnsupported("CALL ERROR " + errorCode);
+        } else {
+            limitDeferred = true;
+        }
+    }
+
+    /** 2.0.1 has no NotSupported charging-profile status, so a station without SmartCharging refuses this way. */
+    private static @Nullable String unsupportedFeatureError(Throwable ex) {
+        Throwable unwrapped = ex.getCause();
+        Throwable cause = ex instanceof CompletionException && unwrapped != null ? unwrapped : ex;
+        if (!(cause instanceof CallErrorException callError)) {
+            return null;
+        }
+        String errorCode = callError.getErrorCode();
+        return "NotSupported".equalsIgnoreCase(errorCode) || "NotImplemented".equalsIgnoreCase(errorCode) ? errorCode
+                : null;
     }
 
     private void publishAcceptedLimit(ProfileClaim claim) {
@@ -559,6 +674,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
                         logger.debug("ClearChargingProfile on connector {} not accepted: {}", connectorId,
                                 confirmation);
                     } else {
+                        // Deliberately not the backoff: a charger can implement SetChargingProfile and only
+                        // refuse ClearChargingProfile, and backing off would cost it its working charge limit.
                         limitDeferred = true;
                     }
                 });

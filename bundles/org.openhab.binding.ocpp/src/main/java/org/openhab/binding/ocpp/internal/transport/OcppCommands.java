@@ -80,6 +80,9 @@ public interface OcppCommands {
     /** Whether the charger refused the value itself (not the setting), so a shorter list is worth a retry. */
     boolean isValueRejected(@Nullable Confirmation confirmation);
 
+    /** The charger does not implement the feature at all, as opposed to declining this one request. */
+    boolean isFeatureUnsupported(@Nullable Confirmation confirmation);
+
     /** Unknown component/variable, as distinct from a rejected value. */
     boolean isNotApplicable(@Nullable Confirmation confirmation);
 }

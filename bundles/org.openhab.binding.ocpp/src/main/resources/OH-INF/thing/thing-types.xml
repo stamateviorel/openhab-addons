@@ -290,6 +290,19 @@
 				<default>0</default>
 				<advanced>true</advanced>
 			</parameter>
+			<parameter name="disableSmartCharging" type="boolean">
+				<label>Disable Smart Charging</label>
+				<description>Never send a SetChargingProfile to this connector, so the charge limit, power limit, phase
+					count and
+					pause do nothing. For a charger that lists SmartCharging among its feature profiles but
+					refuses every profile, and
+					may stop the charge when it gets one. The binding also stops sending
+					profiles on its own once a charger answers
+					NotSupported, so this is only needed to skip even that
+					first attempt.</description>
+				<default>false</default>
+				<advanced>true</advanced>
+			</parameter>
 			<parameter name="stuckStateRecovery" type="boolean">
 				<label>Stuck State Recovery</label>
 				<description>Send an UnlockConnector if the connector stays in a transient state (Preparing/Finishing) too long.

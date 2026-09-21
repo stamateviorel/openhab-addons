@@ -93,6 +93,7 @@ For the charger's own offline authorization cache, see the `chargepoint` `local-
 | refreshInterval       | integer | Poll this connector for MeterValues every N seconds via TriggerMessage. 0 disables polling                                                                         | 0       | no       | yes      |
 | nominalVoltage        | decimal | Line voltage for converting an amps charge-limit to watts on a charger that only accepts a power limit (W = A×V×phases)                                            | 230     | no       | yes      |
 | phases                | integer | Phases assumed in that amps→watts conversion — 1 single-phase, 3 three-phase                                                                                       | 1       | no       | yes      |
+| disableSmartCharging  | boolean | Never send a SetChargingProfile; charge-limit, power-limit, number-phases and pause do nothing. For a charger that refuses every profile                           | false   | no       | yes      |
 | stuckStateRecovery    | boolean | Send an UnlockConnector if the connector stays in a transient state (Preparing/Finishing) too long. Off by default; enable only for a charger known to wedge there | false   | no       | yes      |
 | remoteStartRetries    | integer | Retry a RemoteStart the charger does not answer, this many times. 0 disables. For a charger that drops the first start request but accepts a retry                 | 0       | no       | yes      |
 | externalEnergyItem    | text    | Number item metering this connector, for usage accounting when the charger has no OCPP meter                                                                       | (empty) | no       | no       |
@@ -110,6 +111,12 @@ A charger reports which of its settings are writable, and the ones it calls read
 `refreshInterval` actively polls a connector for `MeterValues` for chargers that do not push them on their own; a poll is skipped while the previous one is still outstanding, so a charger that stops answering cannot build a backlog.
 `hardwareMaxCurrentKey` binds the `hardware-max-current` channel to a vendor `ChangeConfiguration` key, since the hardware ceiling is not a standard OCPP setting; the channel appears only once that key is set.
 `stuckStateRecovery` is left off because auto-unlocking a connector is a physical side effect, and `Preparing` and `Finishing` are normal states a charger can dwell in.
+`disableSmartCharging` is for a charger that lists `SmartCharging` in its feature profiles and then answers every `SetChargingProfile` with `NotSupported` — a few of those also end the running transaction when they get one, and since a pause is a 0 A profile, pausing such a charger stops the charge instead.
+The binding already detects this on its own: the first `SetChargingProfile` answered `NotSupported` (or refused with a `NotSupported`/`NotImplemented` CALL ERROR, which is how OCPP 2.0.1 says the same thing) stops it sending that connector any further profile, and `charge-limit`, `power-limit`, `number-phases` and `pause` go `UNDEF` to show they no longer control anything.
+It tries again after the charger's next `BootNotification`, so firmware that adds real support re-enables them; reconnecting alone does not.
+Editing the connector's configuration clears it too, for a charger that needs a different setting — `forceTxDefaultProfile`, say — before it will take a profile at all.
+A refused `ClearChargingProfile` never arms it: that is a message of its own, and a charger can lack it while smart charging itself works.
+Set this option to skip even the first attempt, and drive such a charger's current through the `hardware-max-current` channel with a vendor key instead.
 `remoteStartRetries` is for a charger that intermittently ignores the first `RemoteStartTransaction`: the binding re-sends it up to that many times, a few seconds apart, and stops as soon as a transaction starts, so it never double-starts.
 Off (0) by default, so a charger that answers first time is unaffected.
 `externalEnergyItem` is for a charger with no internal meter (a Phoenix CHARX, say): point it at a Number item fed by a separate meter, such as a Modbus energy clamp, and the binding uses that item for the session's energy instead of the charger's own meter.
@@ -424,6 +431,7 @@ Every charger dials `ws://<openhab-host>:<port>/<chargePointId>`; the only real 
 | Alfen Eve Single/Double             | `ws://<host>:8887/<id>` (CSMS URL in the ACE Service Installer)                   | Speaks either version; the network profile that wins decides which. Its BootNotification model can exceed OCPP's 20-character limit; the binding accepts it rather than refusing the charger. |
 | Mennekes Amtron (Bender controller) | Backend URL `ws://<host>:8887/` plus ChargeBoxIdentity `<id>` in a separate field | The controller joins them into `ws://<host>:8887/<id>`. Do not copy the `/OCPPJProxy/v16/` path from the Bender docs — that is only for their proxy backend.         |
 | V2C Trydan                          | `ws://<host>:8887/<id>`                                                           | Sends a short-password HTTP Basic-auth header on every connection; accepted (the binding relaxes the library's password-length check when no `authPassword` is set). |
+| EV Partner / e-vision pro 11 kW     | `ws://<host>:8887/<id>`                                                           | Advertises `SmartCharging` and then answers every `SetChargingProfile` with `NotSupported`, ending the transaction on one. The binding stops sending profiles after the first such answer; `disableSmartCharging` skips even that. |
 
 ## Security
 

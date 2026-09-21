@@ -47,9 +47,11 @@ import eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest;
 import eu.chargetime.ocpp.model.localauthlist.UpdateType;
 import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequest;
 import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequestType;
+import eu.chargetime.ocpp.model.smartcharging.ChargingProfileStatus;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileConfirmation;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileRequest;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileStatus;
+import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileRequest;
 
 /**
@@ -189,6 +191,16 @@ class Ocpp16CommandsTest {
         assertFalse(commands.isAccepted(new ResetConfirmation(ResetStatus.Rejected)));
         assertTrue(commands.isAccepted(new ChangeAvailabilityConfirmation(AvailabilityStatus.Scheduled)),
                 "scheduled is the charger agreeing to do it once the connector is free");
+    }
+
+    @Test
+    void onlyNotSupportedMeansTheChargerHasNoSmartCharging() {
+        assertTrue(
+                commands.isFeatureUnsupported(new SetChargingProfileConfirmation(ChargingProfileStatus.NotSupported)));
+        assertFalse(commands.isFeatureUnsupported(new SetChargingProfileConfirmation(ChargingProfileStatus.Rejected)),
+                "a rejected profile is one profile refused, not the feature missing");
+        assertFalse(commands.isFeatureUnsupported(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted)));
+        assertFalse(commands.isFeatureUnsupported(null));
     }
 
     private static Map<String, TokenType> tokens(String... ids) {

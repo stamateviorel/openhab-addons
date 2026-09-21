@@ -309,6 +309,14 @@ public class Ocpp201Commands implements OcppCommands {
     }
 
     @Override
+    public boolean isFeatureUnsupported(@Nullable Confirmation confirmation) {
+        // ChargingProfileStatusEnum is Accepted/Rejected only — 2.0.1 has no NotSupported answer. A station
+        // that cannot smart-charge refuses with a CALL ERROR, which arrives as an exception, not a
+        // confirmation.
+        return false;
+    }
+
+    @Override
     public boolean isNotApplicable(@Nullable Confirmation confirmation) {
         if (!(confirmation instanceof SetVariablesResponse variables)) {
             return false;

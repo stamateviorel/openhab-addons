@@ -24,6 +24,7 @@ public class OcppConnectorConfiguration {
 
     public int connectorId = 1;
     public boolean forceTxDefaultProfile = false;
+    public boolean disableSmartCharging = false;
     public int profileMinIntervalMs = 0;
     public String hardwareMaxCurrentKey = "";
     public String remoteStartTag = "openhab";

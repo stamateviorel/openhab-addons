@@ -256,6 +256,15 @@ class Ocpp201CommandsTest {
     }
 
     @Test
+    void aRefusedProfileNeverReadsAsTheFeatureMissing() {
+        // ChargingProfileStatusEnum has no NotSupported: a 2.0.1 station without SmartCharging raises a CALL
+        // ERROR instead, which the binding sees as a failure rather than a confirmation.
+        assertFalse(commands.isFeatureUnsupported(new SetChargingProfileResponse(ChargingProfileStatusEnum.Rejected)));
+        assertFalse(commands.isFeatureUnsupported(new SetChargingProfileResponse(ChargingProfileStatusEnum.Accepted)));
+        assertFalse(commands.isFeatureUnsupported(null));
+    }
+
+    @Test
     void aVehicleTokenIsPresentedAsAMacAddress() {
         RequestStartTransactionRequest start = (RequestStartTransactionRequest) commands.remoteStart(1,
                 "AA:BB:CC:DD:EE:FF", TokenType.VEHICLE);
