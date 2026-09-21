@@ -16,16 +16,21 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
+import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 
 import eu.chargetime.ocpp.v201.model.types.MeasurandEnum;
+import eu.chargetime.ocpp.v201.model.types.MeterValue;
 import eu.chargetime.ocpp.v201.model.types.PhaseEnum;
+import eu.chargetime.ocpp.v201.model.types.SampledValue;
 
 /**
- * Wire spellings of the OCPP 2.0.1 measurand and phase enums.
+ * Translation of OCPP 2.0.1 wire values onto the binding's protocol-neutral events.
  *
  * @author Stamate Viorel - Initial contribution
  */
@@ -61,6 +66,20 @@ class Ocpp201EventsTest {
         }
         assertEquals(25, MeasurandEnum.values().length, "a library upgrade added or removed a measurand");
         assertEquals(10, PhaseEnum.values().length, "a library upgrade added or removed a phase");
+    }
+
+    @Test
+    void meteringBlocksComeOutOldestFirst() {
+        // A transaction event lists its readings in no guaranteed order, and every reader of a sample
+        // takes the last block as the latest reading.
+        ZonedDateTime latest = ZonedDateTime.now(ZoneOffset.UTC);
+        MeterValue[] unordered = { new MeterValue(new SampledValue[] { new SampledValue(33970d) }, latest),
+                new MeterValue(new SampledValue[] { new SampledValue(21483d) }, latest.minusHours(9)) };
+
+        MeterSample sample = Ocpp201Events.toMeterSample(1, unordered);
+
+        assertEquals("21483.0", sample.blocks().get(0).readings().get(0).value());
+        assertEquals("33970.0", sample.blocks().get(1).readings().get(0).value());
     }
 
     @Test

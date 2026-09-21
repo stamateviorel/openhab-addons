@@ -120,9 +120,10 @@ class Ocpp201CommandsTest {
     }
 
     @Test
-    void aResetLeavesAChargeInProgressAlone() {
-        // 2.0.1 split reset into Immediate and OnIdle; the 1.6 soft reset behaved like OnIdle.
-        assertEquals(ResetEnum.OnIdle, assertInstanceOf(ResetRequest.class, commands.reset()).getType());
+    void aResetRebootsNowOnEitherProtocolVersion() {
+        // 2.0.1 split reset into Immediate and OnIdle; only Immediate matches the 1.6 soft reset, which
+        // is the one behaviour the reset channel documents.
+        assertEquals(ResetEnum.Immediate, assertInstanceOf(ResetRequest.class, commands.reset()).getType());
     }
 
     @Test
@@ -259,7 +260,8 @@ class Ocpp201CommandsTest {
         RequestStartTransactionRequest start = (RequestStartTransactionRequest) commands.remoteStart(1,
                 "AA:BB:CC:DD:EE:FF", TokenType.VEHICLE);
         assertEquals(IdTokenEnum.MacAddress, start.getIdToken().getType());
-        assertEquals(IdTokenEnum.ISO14443,
+        // A tag the binding cannot place is one it supplied itself, not a card standard it can claim.
+        assertEquals(IdTokenEnum.Central,
                 ((RequestStartTransactionRequest) commands.remoteStart(1, "CARD", TokenType.UNKNOWN)).getIdToken()
                         .getType());
 

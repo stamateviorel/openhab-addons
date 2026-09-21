@@ -84,11 +84,12 @@ public class InboundCoreHandler implements ServerCoreEventHandler {
         return confirmation;
     }
 
+    /** Deliver an inbound message to the listener without letting a throw there starve the response. */
     private void deliver(String what, UUID session, Runnable delivery) {
         try {
             delivery.run();
         } catch (RuntimeException e) {
-            logger.warn("Failed to process {} from session {}: {}", what, session, e.getMessage());
+            logger.warn("Failed to process {} from session {}", what, session, e);
         }
     }
 

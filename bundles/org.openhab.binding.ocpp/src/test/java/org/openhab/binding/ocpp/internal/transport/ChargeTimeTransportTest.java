@@ -34,6 +34,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
@@ -280,6 +281,50 @@ class ChargeTimeTransportTest {
             assertTrue(opened.await(5, TimeUnit.SECONDS), "the session should reach the listener");
             assertEquals(expected, client.getProtocol().getProvidedProtocol());
             assertEquals(expectedVersion, negotiatedVersion.get(), "the server must route the session by version");
+        } finally {
+            client.closeBlocking();
+            transport.stop();
+        }
+    }
+
+    @Test
+    void aSmartChargingNotificationIsAnsweredNotFaulted() throws Exception {
+        // The station may report a limit of its own for any profile the binding sets; a registered
+        // function that cannot answer replies CALLERROR and the station keeps retrying.
+        CountDownLatch opened = new CountDownLatch(1);
+        CountDownLatch answered = new CountDownLatch(1);
+        AtomicReference<String> reply = new AtomicReference<>("");
+        ChargeTimeTransport transport = new ChargeTimeTransport(listener(opened::countDown), 0, 30, "", "", "");
+        int port = findFreePort();
+        transport.start("127.0.0.1", port);
+        WebSocketClient client = new WebSocketClient(new URI("ws://127.0.0.1:" + port + "/smartcharger"),
+                new Draft_6455(List.of(), List.<IProtocol> of(new Protocol("ocpp2.0.1")))) {
+            @Override
+            public void onOpen(@Nullable ServerHandshake handshake) {
+            }
+
+            @Override
+            public void onMessage(@Nullable String message) {
+                reply.set(message == null ? "" : message);
+                answered.countDown();
+            }
+
+            @Override
+            public void onClose(int code, @Nullable String reason, boolean remote) {
+            }
+
+            @Override
+            public void onError(@Nullable Exception ex) {
+            }
+        };
+        try {
+            assertTrue(client.connectBlocking(5, TimeUnit.SECONDS), "the charger should connect");
+            assertTrue(opened.await(5, TimeUnit.SECONDS), "the session should reach the listener");
+            client.send(
+                    """
+                            [2,"1","NotifyEVChargingNeeds",                    {"evseId":1,"chargingNeeds":{"requestedEnergyTransfer":"AC_three_phase"}}]""");
+            assertTrue(answered.await(5, TimeUnit.SECONDS), "the station should get an answer");
+            assertTrue(reply.get().startsWith("[3,"), "expected a CALLRESULT but got " + reply.get());
         } finally {
             client.closeBlocking();
             transport.stop();

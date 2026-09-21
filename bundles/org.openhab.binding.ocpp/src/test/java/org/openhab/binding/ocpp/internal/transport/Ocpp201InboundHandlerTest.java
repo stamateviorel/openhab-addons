@@ -13,6 +13,7 @@
 package org.openhab.binding.ocpp.internal.transport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -42,18 +43,28 @@ import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 
 import eu.chargetime.ocpp.v201.model.messages.BootNotificationRequest;
+import eu.chargetime.ocpp.v201.model.messages.ClearedChargingLimitRequest;
+import eu.chargetime.ocpp.v201.model.messages.NotifyChargingLimitRequest;
+import eu.chargetime.ocpp.v201.model.messages.NotifyEVChargingNeedsRequest;
+import eu.chargetime.ocpp.v201.model.messages.NotifyEVChargingNeedsResponse;
 import eu.chargetime.ocpp.v201.model.messages.StatusNotificationRequest;
 import eu.chargetime.ocpp.v201.model.messages.TransactionEventRequest;
 import eu.chargetime.ocpp.v201.model.messages.TransactionEventResponse;
 import eu.chargetime.ocpp.v201.model.types.AuthorizationStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.BootReasonEnum;
+import eu.chargetime.ocpp.v201.model.types.ChargingLimit;
+import eu.chargetime.ocpp.v201.model.types.ChargingLimitSourceEnum;
+import eu.chargetime.ocpp.v201.model.types.ChargingNeeds;
 import eu.chargetime.ocpp.v201.model.types.ChargingStateEnum;
 import eu.chargetime.ocpp.v201.model.types.ChargingStation;
 import eu.chargetime.ocpp.v201.model.types.ConnectorStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.EVSE;
+import eu.chargetime.ocpp.v201.model.types.EnergyTransferModeEnum;
 import eu.chargetime.ocpp.v201.model.types.IdToken;
 import eu.chargetime.ocpp.v201.model.types.IdTokenEnum;
 import eu.chargetime.ocpp.v201.model.types.MeasurandEnum;
 import eu.chargetime.ocpp.v201.model.types.MeterValue;
+import eu.chargetime.ocpp.v201.model.types.NotifyEVChargingNeedsStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.PhaseEnum;
 import eu.chargetime.ocpp.v201.model.types.SampledValue;
 import eu.chargetime.ocpp.v201.model.types.Transaction;
@@ -94,8 +105,7 @@ class Ocpp201InboundHandlerTest {
         station.setFirmwareVersion("1.2.3");
         station.setSerialNumber("SER1");
 
-        handler.handleBootNotificationRequest(session,
-                new BootNotificationRequest(station, eu.chargetime.ocpp.v201.model.types.BootReasonEnum.PowerUp));
+        handler.handleBootNotificationRequest(session, new BootNotificationRequest(station, BootReasonEnum.PowerUp));
 
         var captor = ArgumentCaptor.forClass(org.openhab.binding.ocpp.internal.transport.event.BootInfo.class);
         verify(listener).onBootNotification(eq(session), captor.capture());
@@ -155,12 +165,37 @@ class Ocpp201InboundHandlerTest {
     }
 
     @Test
-    void aFreshTransactionStartsCountingAgain() {
+    void anEventReplayedAfterTheTransactionEndedIsStillRecognised() {
+        // The event most likely to be re-sent is the one that ended the transaction, so the watermark
+        // cannot be dropped with the transaction it guards.
         handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
         handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Ended, "abc", 1));
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Ended, "abc", 1));
+
+        verify(listener, times(2)).onTransactionEvent(eq(session), any());
+        verify(listener, times(1)).nextTransactionId();
+    }
+
+    @Test
+    void aTransactionIdReusedAfterARebootStartsCountingAgain() {
+        // A station that restarted may hand out an id it has used before; only its BootNotification says so.
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Ended, "abc", 1));
+        handler.handleBootNotificationRequest(session,
+                new BootNotificationRequest(new ChargingStation("model", "vendor"), BootReasonEnum.PowerUp));
         handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
 
         verify(listener, times(3)).onTransactionEvent(eq(session), any());
+    }
+
+    @Test
+    void aReplayedEventStillAnswersTheTokenItCarried() {
+        handler.handleTransactionEventRequest(session, seq(TransactionEventEnum.Started, "abc", 0));
+
+        TransactionEventResponse response = handler.handleTransactionEventRequest(session,
+                seq(TransactionEventEnum.Started, "abc", 0));
+
+        assertEquals(AuthorizationStatusEnum.Accepted, response.getIdTokenInfo().getStatus());
     }
 
     @Test
@@ -335,6 +370,23 @@ class Ocpp201InboundHandlerTest {
         handler.handleTransactionEventRequest(reconnected, seq(TransactionEventEnum.Started, "abc", 0));
 
         verify(listener, times(1)).onTransactionEvent(any(), any());
+    }
+
+    @Test
+    void theStationsOwnChargingLimitIsAcknowledged() {
+        assertNotNull(handler.handleNotifyChargingLimitRequest(session,
+                new NotifyChargingLimitRequest(new ChargingLimit(ChargingLimitSourceEnum.EMS))));
+        assertNotNull(handler.handleClearedChargingLimitRequest(session,
+                new ClearedChargingLimitRequest(ChargingLimitSourceEnum.EMS)));
+    }
+
+    @Test
+    void theCarsChargingNeedsAreRefusedRatherThanLeftWaitingForASchedule() {
+        // Accepted promises an ISO 15118 schedule the binding never sends, which strands the car.
+        NotifyEVChargingNeedsResponse response = handler.handleNotifyEVChargingNeedsRequest(session,
+                new NotifyEVChargingNeedsRequest(new ChargingNeeds(EnergyTransferModeEnum.AC_three_phase), 1));
+
+        assertEquals(NotifyEVChargingNeedsStatusEnum.Rejected, response.getStatus());
     }
 
     private TransactionEventRequest seq(TransactionEventEnum kind, String transactionId, int seqNo) {

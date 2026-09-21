@@ -14,6 +14,7 @@ package org.openhab.binding.ocpp.internal.transport;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -63,6 +64,7 @@ public final class Ocpp201Events {
         return new StatusInfo(evseId == null ? 0 : evseId, toConnectorStatus(request.getConnectorStatus()), null, true);
     }
 
+    /** A transaction event lists its readings in no guaranteed order, so the blocks come out sorted. */
     public static MeterSample toMeterSample(int connectorId, MeterValue @Nullable [] meterValues) {
         List<MeterSample.Block> blocks = new ArrayList<>();
         if (meterValues != null) {
@@ -76,6 +78,8 @@ public final class Ocpp201Events {
                 }
                 blocks.add(new MeterSample.Block(meterValue.getTimestamp(), readings));
             }
+            blocks.sort(Comparator.comparing(MeterSample.Block::timestamp,
+                    Comparator.nullsFirst(Comparator.naturalOrder())));
         }
         return new MeterSample(connectorId, blocks);
     }

@@ -45,6 +45,7 @@ import org.openhab.core.common.ThreadPoolManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import eu.chargetime.ocpp.AsyncPromiseFulfillerDecorator;
 import eu.chargetime.ocpp.AuthenticationException;
 import eu.chargetime.ocpp.ISession;
 import eu.chargetime.ocpp.JSONConfiguration;
@@ -93,6 +94,13 @@ public class ChargeTimeTransport implements OcppTransport {
     private static final String MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY = "OCPPJ_CP_MAX_PASSWORD_LENGTH";
     private static final String MIN_BASIC_AUTH_PASSWORD_LENGTH_KEY_201 = "OCPP2J_CP_MIN_PASSWORD_LENGTH";
     private static final String MAX_BASIC_AUTH_PASSWORD_LENGTH_KEY_201 = "OCPP2J_CP_MAX_PASSWORD_LENGTH";
+    // Distinct from the scheduled "ocpp" pool: ThreadPoolManager keys both kinds by one name.
+    private static final String INBOUND_POOL_NAME = "ocpp-inbound";
+
+    static {
+        // The library hands every inbound message to a static, non-daemon cached pool of its own.
+        AsyncPromiseFulfillerDecorator.setExecutor(ThreadPoolManager.getPool(INBOUND_POOL_NAME));
+    }
 
     private final Logger logger = LoggerFactory.getLogger(ChargeTimeTransport.class);
     private final Server server;
@@ -125,7 +133,7 @@ public class ChargeTimeTransport implements OcppTransport {
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerMeterValuesFunction(handler201));
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerAuthorizationFunction(handler201));
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerRemoteControlFunction());
-        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerSmartChargingFunction(null));
+        featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerSmartChargingFunction(handler201));
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerDataTransferFunction(handler201));
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1, new ServerSecurityFunction(handler201));
         featureRepository.addFeatureFunction(ProtocolVersion.OCPP2_0_1,

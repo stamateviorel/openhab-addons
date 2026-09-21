@@ -14,13 +14,13 @@ package org.openhab.binding.ocpp.internal.transport;
 
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -39,11 +39,14 @@ import eu.chargetime.ocpp.v201.feature.function.ServerDisplayMessageEventHandler
 import eu.chargetime.ocpp.v201.feature.function.ServerMeterValuesEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerProvisioningEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerSecurityEventHandler;
+import eu.chargetime.ocpp.v201.feature.function.ServerSmartChargingEventHandler;
 import eu.chargetime.ocpp.v201.feature.function.ServerTransactionsEventHandler;
 import eu.chargetime.ocpp.v201.model.messages.AuthorizeRequest;
 import eu.chargetime.ocpp.v201.model.messages.AuthorizeResponse;
 import eu.chargetime.ocpp.v201.model.messages.BootNotificationRequest;
 import eu.chargetime.ocpp.v201.model.messages.BootNotificationResponse;
+import eu.chargetime.ocpp.v201.model.messages.ClearedChargingLimitRequest;
+import eu.chargetime.ocpp.v201.model.messages.ClearedChargingLimitResponse;
 import eu.chargetime.ocpp.v201.model.messages.DataTransferRequest;
 import eu.chargetime.ocpp.v201.model.messages.DataTransferResponse;
 import eu.chargetime.ocpp.v201.model.messages.HeartbeatRequest;
@@ -52,16 +55,24 @@ import eu.chargetime.ocpp.v201.model.messages.LogStatusNotificationRequest;
 import eu.chargetime.ocpp.v201.model.messages.LogStatusNotificationResponse;
 import eu.chargetime.ocpp.v201.model.messages.MeterValuesRequest;
 import eu.chargetime.ocpp.v201.model.messages.MeterValuesResponse;
+import eu.chargetime.ocpp.v201.model.messages.NotifyChargingLimitRequest;
+import eu.chargetime.ocpp.v201.model.messages.NotifyChargingLimitResponse;
 import eu.chargetime.ocpp.v201.model.messages.NotifyCustomerInformationRequest;
 import eu.chargetime.ocpp.v201.model.messages.NotifyCustomerInformationResponse;
 import eu.chargetime.ocpp.v201.model.messages.NotifyDisplayMessagesRequest;
 import eu.chargetime.ocpp.v201.model.messages.NotifyDisplayMessagesResponse;
+import eu.chargetime.ocpp.v201.model.messages.NotifyEVChargingNeedsRequest;
+import eu.chargetime.ocpp.v201.model.messages.NotifyEVChargingNeedsResponse;
+import eu.chargetime.ocpp.v201.model.messages.NotifyEVChargingScheduleRequest;
+import eu.chargetime.ocpp.v201.model.messages.NotifyEVChargingScheduleResponse;
 import eu.chargetime.ocpp.v201.model.messages.NotifyEventRequest;
 import eu.chargetime.ocpp.v201.model.messages.NotifyEventResponse;
 import eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportRequest;
 import eu.chargetime.ocpp.v201.model.messages.NotifyMonitoringReportResponse;
 import eu.chargetime.ocpp.v201.model.messages.NotifyReportRequest;
 import eu.chargetime.ocpp.v201.model.messages.NotifyReportResponse;
+import eu.chargetime.ocpp.v201.model.messages.ReportChargingProfilesRequest;
+import eu.chargetime.ocpp.v201.model.messages.ReportChargingProfilesResponse;
 import eu.chargetime.ocpp.v201.model.messages.SecurityEventNotificationRequest;
 import eu.chargetime.ocpp.v201.model.messages.SecurityEventNotificationResponse;
 import eu.chargetime.ocpp.v201.model.messages.SignCertificateRequest;
@@ -78,6 +89,7 @@ import eu.chargetime.ocpp.v201.model.types.GenericStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.IdToken;
 import eu.chargetime.ocpp.v201.model.types.IdTokenEnum;
 import eu.chargetime.ocpp.v201.model.types.IdTokenInfo;
+import eu.chargetime.ocpp.v201.model.types.NotifyEVChargingNeedsStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.RegistrationStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.Transaction;
 
@@ -88,10 +100,14 @@ import eu.chargetime.ocpp.v201.model.types.Transaction;
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-public class Ocpp201InboundHandler
-        implements ServerProvisioningEventHandler, ServerTransactionsEventHandler, ServerAvailabilityEventHandler,
-        ServerMeterValuesEventHandler, ServerAuthorizationEventHandler, ServerDataTransferEventHandler,
-        ServerSecurityEventHandler, ServerDisplayMessageEventHandler, ServerDiagnosticsEventHandler {
+public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, ServerTransactionsEventHandler,
+        ServerAvailabilityEventHandler, ServerMeterValuesEventHandler, ServerAuthorizationEventHandler,
+        ServerDataTransferEventHandler, ServerSecurityEventHandler, ServerDisplayMessageEventHandler,
+        ServerDiagnosticsEventHandler, ServerSmartChargingEventHandler {
+
+    // A station's replay window is minutes, so a few hundred remembered transactions is generous.
+    private static final int REMEMBERED_TRANSACTIONS = 256;
+    private static final int TRANSACTION_ENDED = Integer.MAX_VALUE;
 
     private final Logger logger = LoggerFactory.getLogger(Ocpp201InboundHandler.class);
     private final OcppServerListener listener;
@@ -100,9 +116,11 @@ public class Ocpp201InboundHandler
     // A TransactionEvent need not repeat the EVSE after Started.
     private final Map<String, Integer> transactionConnectors = new ConcurrentHashMap<>();
     private final Map<String, DeviceModelReport> reports = new ConcurrentHashMap<>();
-    // Transaction state is kept per charger, not per socket, so a reconnect does not lose it.
+    // Socket to charger id, so transaction state can be keyed per charger and survive a reconnect.
     private final Map<UUID, String> sessionIdentity = new ConcurrentHashMap<>();
-    private final Map<String, Integer> lastSeqNo = new ConcurrentHashMap<>();
+    // Bounded because an entry outlives the transaction it guards; see isReplay.
+    private final Map<String, Integer> lastSeqNo = Collections
+            .synchronizedMap(new BoundedMap<>(REMEMBERED_TRANSACTIONS));
 
     public Ocpp201InboundHandler(OcppServerListener listener) {
         this.listener = listener;
@@ -134,12 +152,19 @@ public class Ocpp201InboundHandler
         logger.debug("NotifyReport from session {} seq {} tbc {}", sessionIndex, request.getSeqNo(), request.getTbc());
         // A charger can have more than one report in flight; requestId says which this belongs to.
         String key = sessionIndex + "/" + request.getRequestId();
-        DeviceModelReport report = Objects
-                .requireNonNull(reports.computeIfAbsent(key, ignored -> new DeviceModelReport()));
-        boolean complete = report.add(request);
-        if (complete) {
-            reports.remove(key);
-            Map<String, String> keys = report.asConfigurationKeys();
+        // The chunks of one report can arrive on different threads, so absorbing a chunk, reading the
+        // finished report and dropping it have to happen under one lock.
+        AtomicReference<Map<String, String>> complete = new AtomicReference<>();
+        reports.compute(key, (ignored, pending) -> {
+            DeviceModelReport report = pending != null ? pending : new DeviceModelReport();
+            if (!report.add(request)) {
+                return report;
+            }
+            complete.set(report.asConfigurationKeys());
+            return null;
+        });
+        Map<String, String> keys = complete.get();
+        if (keys != null) {
             deliver("NotifyReport", sessionIndex, () -> listener.onCapabilities(sessionIndex, keys));
         }
         return new NotifyReportResponse();
@@ -203,6 +228,53 @@ public class Ocpp201InboundHandler
         return new NotifyMonitoringReportResponse();
     }
 
+    // The binding registers the smart-charging function for its own SetChargingProfile, which makes the
+    // five below its inbound half; a registered function that cannot answer one replies CALLERROR.
+    @Override
+    @NonNullByDefault({})
+    public NotifyChargingLimitResponse handleNotifyChargingLimitRequest(UUID sessionIndex,
+            NotifyChargingLimitRequest request) {
+        logger.debug("NotifyChargingLimit from session {} evse {}: {}", sessionIndex, request.getEvseId(),
+                request.getChargingLimit() == null ? null : request.getChargingLimit().getChargingLimitSource());
+        return new NotifyChargingLimitResponse();
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public ClearedChargingLimitResponse handleClearedChargingLimitRequest(UUID sessionIndex,
+            ClearedChargingLimitRequest request) {
+        logger.debug("ClearedChargingLimit from session {} evse {}: {}", sessionIndex, request.getEvseId(),
+                request.getChargingLimitSource());
+        return new ClearedChargingLimitResponse();
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public ReportChargingProfilesResponse handleReportChargingProfilesRequest(UUID sessionIndex,
+            ReportChargingProfilesRequest request) {
+        logger.debug("ReportChargingProfiles from session {} evse {} request {}: {} profile(s)", sessionIndex,
+                request.getEvseId(), request.getRequestId(),
+                request.getChargingProfile() == null ? 0 : request.getChargingProfile().length);
+        return new ReportChargingProfilesResponse();
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public NotifyEVChargingNeedsResponse handleNotifyEVChargingNeedsRequest(UUID sessionIndex,
+            NotifyEVChargingNeedsRequest request) {
+        logger.debug("NotifyEVChargingNeeds from session {} evse {}", sessionIndex, request.getEvseId());
+        // Accepted would promise the ISO 15118 schedule the car asked for; the binding negotiates none.
+        return new NotifyEVChargingNeedsResponse(NotifyEVChargingNeedsStatusEnum.Rejected);
+    }
+
+    @Override
+    @NonNullByDefault({})
+    public NotifyEVChargingScheduleResponse handleNotifyEVChargingScheduleRequest(UUID sessionIndex,
+            NotifyEVChargingScheduleRequest request) {
+        logger.debug("NotifyEVChargingSchedule from session {} evse {}", sessionIndex, request.getEvseId());
+        return new NotifyEVChargingScheduleResponse(GenericStatusEnum.Accepted);
+    }
+
     /** Ties a session to its charger id; without one the socket id stands in. */
     public void bindSession(UUID session, @Nullable String chargePointId) {
         if (chargePointId != null) {
@@ -221,7 +293,9 @@ public class Ocpp201InboundHandler
         String prefix = identity(session) + "/";
         transactionIds.keySet().removeIf(key -> key.startsWith(prefix));
         transactionConnectors.keySet().removeIf(key -> key.startsWith(prefix));
-        lastSeqNo.keySet().removeIf(key -> key.startsWith(prefix));
+        synchronized (lastSeqNo) {
+            lastSeqNo.keySet().removeIf(key -> key.startsWith(prefix));
+        }
     }
 
     private String identity(UUID session) {
@@ -308,9 +382,9 @@ public class Ocpp201InboundHandler
             return refused;
         }
         if (remoteId != null && isReplay(sessionIndex, remoteId, request.getSeqNo())) {
-            logger.debug("TransactionEvent {} for {} seq {} already seen; not counted again", kind, remoteId,
-                    request.getSeqNo());
-            return new TransactionEventResponse();
+            logger.debug("TransactionEvent {} for {} seq {} already seen (offline={}); not counted again", kind,
+                    remoteId, request.getSeqNo(), request.getOffline());
+            return authorizationOf(idToken, authorized);
         }
         int transactionId = idFor(sessionIndex, remoteId);
         if (transactionId <= 0) {
@@ -349,9 +423,13 @@ public class Ocpp201InboundHandler
             String key = key(sessionIndex, remoteId);
             transactionIds.remove(key);
             transactionConnectors.remove(key);
-            lastSeqNo.remove(key);
+            lastSeqNo.put(key, TRANSACTION_ENDED);
         }
 
+        return authorizationOf(idToken, authorized);
+    }
+
+    private static TransactionEventResponse authorizationOf(@Nullable String idToken, boolean authorized) {
         TransactionEventResponse response = new TransactionEventResponse();
         if (idToken != null) {
             response.setIdTokenInfo(
@@ -360,18 +438,25 @@ public class Ocpp201InboundHandler
         return response;
     }
 
-    /** 2.0.1 seqNo restarts at 0 per transaction and events queued offline are replayed. */
+    /**
+     * 2.0.1 numbers a transaction's events from 0 and a station replays whatever it could not deliver,
+     * so the watermark has to outlive the transaction that it guards. Only a reboot clears it: a station
+     * that restarted may legitimately hand out a transaction id it has used before.
+     */
     private boolean isReplay(UUID session, String remoteId, @Nullable Integer seqNo) {
         if (seqNo == null) {
             return false;
         }
         String key = key(session, remoteId);
-        Integer previous = lastSeqNo.get(key);
-        if (previous != null && seqNo <= previous) {
-            return true;
+        // Handler bodies run concurrently, so the read and the write must share the map's lock.
+        synchronized (lastSeqNo) {
+            Integer previous = lastSeqNo.get(key);
+            if (previous != null && seqNo <= previous) {
+                return true;
+            }
+            lastSeqNo.put(key, seqNo);
+            return false;
         }
-        lastSeqNo.put(key, seqNo);
-        return false;
     }
 
     private int idFor(UUID session, @Nullable String remoteId) {
@@ -413,11 +498,7 @@ public class Ocpp201InboundHandler
     }
 
     private static @Nullable Integer meterWhOf(TransactionEventRequest request) {
-        MeterSample sample = Ocpp201Events.toMeterSample(0, request.getMeterValue());
-        // An Ended event lists the first and last readings in no guaranteed order.
-        List<MeterSample.Block> blocks = new ArrayList<>(sample.blocks());
-        blocks.sort(
-                Comparator.comparing(MeterSample.Block::timestamp, Comparator.nullsFirst(Comparator.naturalOrder())));
+        List<MeterSample.Block> blocks = Ocpp201Events.toMeterSample(0, request.getMeterValue()).blocks();
         for (int i = blocks.size() - 1; i >= 0; i--) {
             for (MeterSample.Reading reading : blocks.get(i).readings()) {
                 String measurand = reading.measurand();
@@ -451,7 +532,26 @@ public class Ocpp201InboundHandler
         try {
             delivery.run();
         } catch (RuntimeException e) {
-            logger.warn("Failed to process {} from session {}: {}", what, session, e.getMessage());
+            logger.warn("Failed to process {} from session {}", what, session, e);
+        }
+    }
+
+    /** Access-ordered map that drops its least recently used entry once it is over capacity. */
+    private static final class BoundedMap<K, V> extends LinkedHashMap<K, V> {
+
+        private static final long serialVersionUID = 1L;
+
+        private final int capacity;
+
+        BoundedMap(int capacity) {
+            super(16, 0.75f, true);
+            this.capacity = capacity;
+        }
+
+        @Override
+        @NonNullByDefault({})
+        protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+            return size() > capacity;
         }
     }
 }

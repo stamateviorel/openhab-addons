@@ -100,7 +100,11 @@ public class Ocpp201Commands implements OcppCommands {
 
     @Override
     public Request remoteStart(int connectorId, String idToken, TokenType type) {
-        RequestStartTransactionRequest request = new RequestStartTransactionRequest(idTokenOf(idToken, type),
+        // A tag the binding cannot place is one it supplied itself, which is what Central means; claiming
+        // ISO14443 would tell the station to expect a card it will never be shown.
+        IdToken token = type == TokenType.UNKNOWN ? new IdToken(idToken, IdTokenEnum.Central)
+                : idTokenOf(idToken, type);
+        RequestStartTransactionRequest request = new RequestStartTransactionRequest(token,
                 remoteStartIds.incrementAndGet());
         request.setEvseId(connectorId);
         return request;
@@ -127,8 +131,9 @@ public class Ocpp201Commands implements OcppCommands {
 
     @Override
     public Request reset() {
-        // OnIdle waits for a running transaction to end before rebooting.
-        return new ResetRequest(ResetEnum.OnIdle);
+        // Immediate is the 2.0.1 counterpart of the 1.6 soft reset the reset channel documents; OnIdle
+        // would answer Scheduled and reboot only once the transaction ends.
+        return new ResetRequest(ResetEnum.Immediate);
     }
 
     @Override

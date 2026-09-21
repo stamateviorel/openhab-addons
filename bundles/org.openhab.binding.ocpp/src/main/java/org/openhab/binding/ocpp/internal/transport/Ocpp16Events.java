@@ -13,6 +13,7 @@
 package org.openhab.binding.ocpp.internal.transport;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -54,6 +55,7 @@ public final class Ocpp16Events {
         return new StatusInfo(connectorOf(request.getConnectorId()), toConnectorStatus(request.getStatus()), errorCode);
     }
 
+    /** A MeterValues request lists its readings in no guaranteed order, so the blocks come out sorted. */
     public static MeterSample toMeterSample(MeterValuesRequest request) {
         List<MeterSample.Block> blocks = new ArrayList<>();
         MeterValue[] meterValues = request.getMeterValue();
@@ -69,6 +71,8 @@ public final class Ocpp16Events {
                 }
                 blocks.add(new MeterSample.Block(meterValue.getTimestamp(), readings));
             }
+            blocks.sort(Comparator.comparing(MeterSample.Block::timestamp,
+                    Comparator.nullsFirst(Comparator.naturalOrder())));
         }
         return new MeterSample(connectorOf(request.getConnectorId()), blocks);
     }

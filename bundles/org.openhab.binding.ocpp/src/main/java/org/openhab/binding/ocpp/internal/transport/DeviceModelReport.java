@@ -33,8 +33,9 @@ import eu.chargetime.ocpp.v201.model.types.VariableAttribute;
  * Collects an OCPP 2.0.1 device-model report and states it in the flat keys the binding's
  * {@link ChargerCapabilities} is built from.
  *
- * translated; the rest of the report is kept verbatim as {@code Component.Variable} so it is still
- * visible for diagnostics.
+ * <p>
+ * Every variable is kept as {@code Component.Variable} so the whole report stays visible for diagnostics; the few
+ * keys {@link ChargerCapabilities} reads are translated into their 1.6 names as well.
  *
  * @author Stamate Viorel - Initial contribution
  */

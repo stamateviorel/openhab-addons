@@ -96,6 +96,22 @@ class Ocpp16EventsTest {
     }
 
     @Test
+    void meteringBlocksComeOutOldestFirst() {
+        // A MeterValues request lists its readings in no guaranteed order, and every reader of a sample
+        // takes the last block as the latest reading.
+        ZonedDateTime latest = ZonedDateTime.now(ZoneOffset.UTC);
+        MeterValuesRequest request = new MeterValuesRequest(1);
+        request.setMeterValue(
+                new MeterValue[] { new MeterValue(latest, new SampledValue[] { new SampledValue("33970") }),
+                        new MeterValue(latest.minusHours(9), new SampledValue[] { new SampledValue("21483") }) });
+
+        MeterSample sample = Ocpp16Events.toMeterSample(request);
+
+        assertEquals("21483", sample.blocks().get(0).readings().get(0).value());
+        assertEquals("33970", sample.blocks().get(1).readings().get(0).value());
+    }
+
+    @Test
     void aStartCarriesTheAssignedIdAsItsOwnWireId() {
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
         TransactionEvent event = Ocpp16Events.toStarted(new StartTransactionRequest(2, "CARD1", 500, now), 77);
