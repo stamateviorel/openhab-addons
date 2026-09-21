@@ -13,6 +13,7 @@
 package org.openhab.binding.ocpp.internal.cpms;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,6 +26,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -111,6 +113,30 @@ class CpmsServiceTest {
         cpms.onTransactionStop(99, 5000, 200L);
 
         assertTrue(cpms.transactions().isEmpty());
+    }
+
+    @Test
+    void aSessionWhoseStopNeverArrivesIsForgottenRatherThanLogged() {
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
+        cpms.onTransactionStart(7, "CARD-A", "charger3", 1, 1000, 100L);
+
+        cpms.forgetTransaction(7);
+
+        assertTrue(cpms.transactions().isEmpty(),
+                "without a StopTransaction there is no stop reading to log as that session's energy");
+        assertNull(storage.get("open:7"), "the open session must still be dropped, not left behind for good");
+    }
+
+    @Test
+    void aStopThatDoesArriveAfterARestartIsStillLoggedFromTheChargersOwnRegister() {
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
+        cpms.onTransactionStart(7, "CARD-A", "charger3", 1, 1000, 100L);
+        CpmsService afterRestart = new CpmsService(storage);
+        afterRestart.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
+
+        afterRestart.onTransactionStop(7, 4200, 200L);
+
+        assertEquals(3200.0, afterRestart.transactions().get(0).energyWh());
     }
 
     @Test
@@ -202,6 +228,49 @@ class CpmsServiceTest {
         cpms.onTransactionStop(5, 5000, 200L);
 
         assertEquals("{not a valid transaction array", storage.get("transactions"));
+    }
+
+    @Test
+    void aJsonNullInTheStoredLogIsSkippedInsteadOfFailingEveryRead() {
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 0, List.of("CARD-A"), List.of()));
+        session(1, "CARD-A", 1_000L, 2000);
+        String stored = Objects.requireNonNull(storage.get("transactions"));
+        storage.put("transactions", "[null," + stored.substring(1));
+
+        List<CpmsTransaction> log = new CpmsService(storage).transactions();
+
+        assertEquals(1, log.size());
+        assertEquals(2000.0, log.get(0).energyWh());
+    }
+
+    @Test
+    void aCappedCardIsRefusedWhileTheLogIsUnreadable() {
+        storage.put("transactions", "{not a valid transaction array");
+        cpms.registerUser(new CpmsUser("u1", "Geert", true, 10, List.of("CARD-A"), List.of()));
+        cpms.registerUser(new CpmsUser("u2", "Anna", true, 0, List.of("CARD-B"), List.of()));
+
+        assertEquals(Boolean.FALSE, cpms.authorize("CARD-A"));
+        assertEquals(Boolean.TRUE, cpms.authorize("CARD-B"));
+    }
+
+    @Test
+    void anUnreadableOpenSessionIsDroppedInsteadOfBreakingTheStop() {
+        storage.put("open:5", "{not a session");
+
+        assertFalse(cpms.onTransactionAuthorized(5, "CARD-A"));
+        cpms.onTransactionStop(5, 5000, 200L);
+
+        assertNull(storage.get("open:5"));
+        assertTrue(cpms.transactions().isEmpty());
+    }
+
+    @Test
+    void theLogSummaryReportsTheCountAndTheNewestStop() {
+        session(1, "CARD-A", 100L, 1000);
+        session(2, "CARD-A", 300L, 2000);
+
+        assertEquals(2, cpms.transactionCount());
+        assertEquals(300L, cpms.lastStopEpoch());
     }
 
     @Test

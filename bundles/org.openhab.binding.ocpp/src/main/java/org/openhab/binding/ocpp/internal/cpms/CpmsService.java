@@ -29,7 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonSyntaxException;
+import com.google.gson.JsonParseException;
 
 /**
  * The CPMS: a user/card registry, person-based authorization, and a persisted log of completed
@@ -50,6 +50,7 @@ public class CpmsService {
     private final Map<String, CpmsUser> userRegistry = new ConcurrentHashMap<>();
     private final Clock clock;
     private @Nullable List<CpmsTransaction> cache;
+    private boolean corruptLogReported;
 
     public CpmsService(Storage<String> storage) {
         this(storage, Clock.systemDefaultZone());
@@ -94,8 +95,9 @@ public class CpmsService {
     }
 
     /**
-     * Authorization decision for a card, or {@code null} when the CPMS is not managing authorization
-     * (no users defined) so the caller falls back to its own whitelist.
+     * Authorization decision for a card, or {@code null} when no user is registered — which hands the
+     * decision back to the caller rather than granting anything. An enabled cpms-user thing whose handler
+     * has not attached yet also reads as no user here, so the caller must not treat {@code null} as a pass.
      */
     public @Nullable Boolean authorize(@Nullable String idTag) {
         if (userRegistry.isEmpty()) {
@@ -109,10 +111,19 @@ public class CpmsService {
             return false;
         }
         double cap = user.monthlyCapKwh();
-        if (cap > 0 && energyKwh(user.id(), monthStartEpoch(), Long.MAX_VALUE) >= cap) {
-            logger.debug("User {} reached the monthly cap of {} kWh; authorization rejected until next month",
-                    user.name(), cap);
-            return false;
+        if (cap > 0) {
+            Double used = energyKwhOrNull(user.id(), monthStartEpoch(), Long.MAX_VALUE);
+            // An unreadable log would otherwise read as 0 kWh and lift every cap.
+            if (used == null) {
+                logger.warn("Rejecting {}: the monthly cap of {} kWh cannot be checked against an unreadable log",
+                        user.name(), cap);
+                return false;
+            }
+            if (used >= cap) {
+                logger.debug("User {} reached the monthly cap of {} kWh; authorization rejected until next month",
+                        user.name(), cap);
+                return false;
+            }
         }
         return true;
     }
@@ -131,8 +142,7 @@ public class CpmsService {
     /** Adopts a later token into an ownerless session; on 1.6 the stopping tag need not be the starting one. */
     public synchronized boolean onTransactionAuthorized(int transactionId, String idTag) {
         String key = OPEN_PREFIX + transactionId;
-        String json = storage.get(key);
-        OpenTx open = json == null ? null : gson.fromJson(json, OpenTx.class);
+        OpenTx open = readOpenTx(key);
         if (open == null || open.idTag() != null) {
             return false;
         }
@@ -141,15 +151,11 @@ public class CpmsService {
         return true;
     }
 
+    /** The charger's own StopTransaction: both ends are its register, whoever opened the session. */
     public synchronized void onTransactionStop(int transactionId, @Nullable Integer meterStop, long stopEpoch) {
         String key = OPEN_PREFIX + transactionId;
-        String json = storage.get(key);
-        if (json == null) {
-            return;
-        }
-        OpenTx open = gson.fromJson(json, OpenTx.class);
+        OpenTx open = readOpenTx(key);
         if (open == null) {
-            storage.remove(key);
             return;
         }
         String idTag = open.idTag();
@@ -173,6 +179,16 @@ public class CpmsService {
         storage.remove(key);
     }
 
+    public synchronized void forgetTransaction(int transactionId) {
+        String key = OPEN_PREFIX + transactionId;
+        OpenTx open = readOpenTx(key);
+        if (open != null) {
+            logger.debug("Session {} on {} connector {} is dropped unlogged; its StopTransaction never arrived",
+                    transactionId, open.chargePointId(), open.connectorId());
+            storage.remove(key);
+        }
+    }
+
     /** Every session ever recorded — the durable log is append-only and never trimmed. */
     public synchronized List<CpmsTransaction> transactions() {
         List<CpmsTransaction> log = readLog();
@@ -192,11 +208,63 @@ public class CpmsService {
         }
         try {
             CpmsTransaction @Nullable [] arr = gson.fromJson(json, CpmsTransaction[].class);
-            cache = arr == null ? new ArrayList<>() : new ArrayList<>(List.of(arr));
-            return cache;
-        } catch (JsonSyntaxException e) {
+            List<CpmsTransaction> log = new ArrayList<>();
+            if (arr != null) {
+                for (CpmsTransaction tx : arr) {
+                    // Gson maps a JSON null - which only a hand-edited file holds - to a null element.
+                    if (tx != null) {
+                        log.add(tx);
+                    }
+                }
+            }
+            corruptLogReported = false;
+            cache = log;
+            return log;
+        } catch (JsonParseException e) {
+            if (!corruptLogReported) {
+                corruptLogReported = true;
+                logger.error("Storage key '{}' does not hold a readable session log; sessions are not recorded and"
+                        + " capped users are refused until it is repaired or removed", KEY_TRANSACTIONS, e);
+            }
             return null;
         }
+    }
+
+    /** {@code null} when nothing is stored under the key, or what was stored is corrupt and has been dropped. */
+    private @Nullable OpenTx readOpenTx(String key) {
+        String json = storage.get(key);
+        if (json == null) {
+            return null;
+        }
+        try {
+            OpenTx open = gson.fromJson(json, OpenTx.class);
+            if (open != null) {
+                return open;
+            }
+        } catch (JsonParseException e) {
+            logger.debug("Dropping the unreadable open session stored under '{}'", key, e);
+        }
+        storage.remove(key);
+        return null;
+    }
+
+    /** Session count without copying the log; 0 when the log is unreadable. */
+    public synchronized int transactionCount() {
+        List<CpmsTransaction> log = readLog();
+        return log == null ? 0 : log.size();
+    }
+
+    /** End of the newest logged session, or 0 when there is none. */
+    public synchronized long lastStopEpoch() {
+        List<CpmsTransaction> log = readLog();
+        if (log == null) {
+            return 0;
+        }
+        long last = 0;
+        for (CpmsTransaction tx : log) {
+            last = Math.max(last, tx.stopEpoch());
+        }
+        return last;
     }
 
     public synchronized List<CpmsTransaction> recentTransactions(int limit) {
@@ -209,8 +277,18 @@ public class CpmsService {
     }
 
     public synchronized double energyKwh(String userId, long fromEpoch, long toEpoch) {
+        Double kwh = energyKwhOrNull(userId, fromEpoch, toEpoch);
+        return kwh == null ? 0 : kwh;
+    }
+
+    /** {@code null} when the log is unreadable, which must not be mistaken for no usage. */
+    private synchronized @Nullable Double energyKwhOrNull(String userId, long fromEpoch, long toEpoch) {
+        List<CpmsTransaction> log = readLog();
+        if (log == null) {
+            return null;
+        }
         double wh = 0;
-        for (CpmsTransaction tx : transactions()) {
+        for (CpmsTransaction tx : log) {
             if (userId.equals(tx.userId()) && tx.stopEpoch() >= fromEpoch && tx.stopEpoch() < toEpoch) {
                 wh += tx.energyWh();
             }

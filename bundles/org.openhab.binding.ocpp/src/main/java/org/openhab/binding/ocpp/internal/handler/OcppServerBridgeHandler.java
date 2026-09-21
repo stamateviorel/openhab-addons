@@ -12,10 +12,15 @@
  */
 package org.openhab.binding.ocpp.internal.handler;
 
+import static org.openhab.binding.ocpp.internal.OcppBindingConstants.THING_TYPE_CPMS_USER;
+
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -71,7 +76,10 @@ import com.google.gson.Gson;
 public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppServerListener {
 
     private final Logger logger = LoggerFactory.getLogger(OcppServerBridgeHandler.class);
-    private final Set<String> missingItemsWarned = ConcurrentHashMap.newKeySet();
+    private final WarnOnce missingItemsWarned = new WarnOnce();
+    // A charger the server turns away reconnects on its own timer forever; warn once per peer.
+    private final WarnOnce rejectedChargersWarned = new WarnOnce();
+    private final WarnOnce anonymousPeersWarned = new WarnOnce();
 
     private static final long POWER_SAMPLE_SECONDS = 30;
     private static final String AUTH_LIST_VERSION_PREFIX = "authListVersion:";
@@ -81,6 +89,8 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private final Map<UUID, OcppVersion> sessionVersions = new ConcurrentHashMap<>();
     private final Map<String, OcppChargePointHandler> chargePoints = new ConcurrentHashMap<>();
     private final Map<Integer, PowerTally> powerTallies = new ConcurrentHashMap<>();
+    // Only sessions measured by an item are listed; no entry means the charger's own register.
+    private final Map<Integer, SessionMeter> meterSources = new ConcurrentHashMap<>();
     private volatile @Nullable ScheduledFuture<?> powerSampler;
     private final Gson gson = new Gson();
     private volatile @Nullable Storage<String> powerStore;
@@ -134,8 +144,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         OcppServerConfiguration localConfig = config;
         if (!localConfig.authPassword.isEmpty() && !localConfig.authPassword.matches("[\\x21-\\x7E]{16,40}")) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                    "authPassword must be 16-40 visible ASCII characters (OCPP security profile 1: 16-20 for 1.6, "
-                            + "up to 40 for 2.0.1); no charger could match one outside that window");
+                    "@text/offline.configuration-error.auth-password-length");
             return;
         }
         disposed = false;
@@ -144,8 +153,18 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         transactionStore = new TransactionStore(storage);
         cpms = new CpmsService(storageService.getStorage(getThing().getUID().getAsString() + ":cpms"));
         powerStore = storageService.getStorage(getThing().getUID().getAsString() + ":power");
-        reloadPowerTallies();
+        reloadMeterSources();
         updateStatus(ThingStatus.UNKNOWN);
+
+        OcppTransport newTransport;
+        try {
+            // The TLS keystore is read by the constructor, so a bad path or password throws here.
+            newTransport = createTransport(localConfig);
+        } catch (RuntimeException e) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
+                    "@text/offline.configuration-error.transport [\"" + e.getMessage() + "\"]");
+            return;
+        }
 
         ScheduledFuture<?> previousSampler = powerSampler;
         if (previousSampler != null) {
@@ -153,8 +172,6 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
         powerSampler = scheduler.scheduleWithFixedDelay(this::samplePowerTallies, POWER_SAMPLE_SECONDS,
                 POWER_SAMPLE_SECONDS, TimeUnit.SECONDS);
-
-        OcppTransport newTransport = createTransport(localConfig);
         long generation;
         synchronized (lifecycleLock) {
             if (disposed) {
@@ -173,6 +190,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             try {
                 newTransport.start(localConfig.host, localConfig.port);
             } catch (RuntimeException e) {
+                logger.warn("Could not start the OCPP server on {}:{}", localConfig.host, localConfig.port, e);
                 boolean current;
                 synchronized (lifecycleLock) {
                     current = !disposed && generation == lifecycleGeneration;
@@ -182,7 +200,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
                 }
                 if (current) {
                     updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                            "Could not start OCPP server: " + e.getMessage());
+                            "@text/offline.communication-error.server-start [\"" + e.getMessage() + "\"]");
                 }
                 return;
             }
@@ -221,6 +239,10 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             powerSampler = null;
         }
         powerTallies.clear();
+        meterSources.clear();
+        missingItemsWarned.clear();
+        rejectedChargersWarned.clear();
+        anonymousPeersWarned.clear();
         sessionChargePoints.clear();
         sessionVersions.clear();
         chargePoints.clear();
@@ -262,9 +284,13 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             OcppVersion version) {
         if (chargePointId == null || chargePointId.isBlank()) {
             Object peer = remote != null ? remote : session;
-            logger.warn(
-                    "Charger connected without a charge point id in its URL path and was ignored (connection {}); it must dial ws://<host>:{}/<chargePointId>, not the bare root",
-                    peer, config.port);
+            if (anonymousPeersWarned.first(peerKey(session, remote))) {
+                logger.warn(
+                        "Charger connected without a charge point id in its URL path and was ignored (connection {}); it must dial ws://<host>:{}/<chargePointId>, not the bare root",
+                        peer, config.port);
+            } else {
+                logger.debug("Ignoring connection {} again: still no charge point id in its URL path", peer);
+            }
             OcppTransport localTransport = transport;
             if (localTransport != null) {
                 localTransport.closeSession(session);
@@ -273,7 +299,11 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
         List<String> allowed = config.chargerIds;
         if (!allowed.isEmpty() && !allowed.contains(chargePointId)) {
-            logger.warn("Rejecting charger '{}' — not in the permitted chargers list", chargePointId);
+            if (rejectedChargersWarned.first(chargePointId)) {
+                logger.warn("Rejecting charger '{}' — not in the permitted chargers list", chargePointId);
+            } else {
+                logger.debug("Rejecting charger '{}' again — not in the permitted chargers list", chargePointId);
+            }
             OcppTransport localTransport = transport;
             if (localTransport != null) {
                 localTransport.closeSession(session);
@@ -405,6 +435,10 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         String chargePointId = sessionChargePoints.get(session);
         Integer connectorId = event.connectorId();
         if (chargePointId != null && connectorId != null) {
+            Integer superseded = openTransactionFor(chargePointId, connectorId);
+            if (superseded != null && superseded != transactionId) {
+                forgetTransaction(superseded);
+            }
             rememberTransaction(transactionId, chargePointId, connectorId, event.remoteId(), event.meterWh());
         }
         CpmsService service = cpms;
@@ -418,7 +452,12 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
                 meterStart = 0;
             } else {
                 Integer reading = energyMeterWh(meter);
-                meterStart = reading != null ? reading : event.meterWh();
+                if (reading != null) {
+                    startEnergyMeter(transactionId, meter);
+                    meterStart = reading;
+                } else {
+                    meterStart = event.meterWh();
+                }
             }
             service.onTransactionStart(transactionId, event.idToken(), chargePointId, connectorId, meterStart,
                     epochOf(event.timestamp()));
@@ -455,19 +494,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         CpmsService service = cpms;
         adoptToken(session, event);
         if (service != null) {
-            String cpId = sessionChargePoints.get(session);
-            Integer connId = cpId == null ? null : transactionConnector(transactionId, cpId);
-            OcppChargePointHandler.ExternalMeter meter = cpId != null && connId != null ? externalMeterFor(cpId, connId)
-                    : null;
-            Integer meterStop;
-            if (meter == null) {
-                meterStop = event.meterWh();
-            } else if (meter.power()) {
-                meterStop = finishPowerTally(transactionId);
-            } else {
-                Integer reading = energyMeterWh(meter);
-                meterStop = reading != null ? reading : event.meterWh();
-            }
+            Integer meterStop = finishMeter(transactionId, event.meterWh(), sessionChargePoints.get(session));
             service.onTransactionStop(transactionId, meterStop, epochOf(event.timestamp()));
         }
         OcppChargePointHandler handler = resolve(session);
@@ -506,7 +533,19 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             }
         }
         List<String> whitelist = bindingConfig.getWhitelist();
-        return whitelist.isEmpty() || (idTag != null && whitelist.contains(idTag));
+        if (!whitelist.isEmpty()) {
+            return idTag != null && whitelist.contains(idTag);
+        }
+        return !hasEnabledCpmsUsers();
+    }
+
+    /**
+     * Whether the CPMS is meant to be deciding. An enabled user thing registers nobody until its handler
+     * attaches, and an empty whitelist accepts every tag, so that window must not read as "no CPMS here".
+     */
+    private boolean hasEnabledCpmsUsers() {
+        return getThing().getThings().stream()
+                .anyMatch(child -> THING_TYPE_CPMS_USER.equals(child.getThingTypeUID()) && child.isEnabled());
     }
 
     public @Nullable CpmsService getCpms() {
@@ -522,7 +561,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         try {
             return itemRegistry.getItem(itemName).getState();
         } catch (ItemNotFoundException e) {
-            if (missingItemsWarned.add(itemName)) {
+            if (missingItemsWarned.first(itemName)) {
                 logger.warn("External energy item {} not found; falling back to the OCPP meter", itemName);
             }
             return null;
@@ -559,54 +598,100 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private void startPowerTally(int transactionId, OcppChargePointHandler.ExternalMeter meter) {
         PowerTally tally = new PowerTally(meter.itemName(), meter.kilo(), System.currentTimeMillis(), 0);
         powerTallies.put(transactionId, tally);
-        persistTally(transactionId, tally);
+        meterSources.put(transactionId, new SessionMeter(MeterSource.POWER_ITEM, meter.itemName()));
+        persistMeter(transactionId, tally.persisted());
+    }
+
+    private void startEnergyMeter(int transactionId, OcppChargePointHandler.ExternalMeter meter) {
+        meterSources.put(transactionId, new SessionMeter(MeterSource.ENERGY_ITEM, meter.itemName()));
+        persistMeter(transactionId, new PersistedMeter(MeterSource.ENERGY_ITEM, meter.itemName(), meter.kilo(), 0));
     }
 
     private void samplePowerTallies() {
         long now = System.currentTimeMillis();
-        for (Map.Entry<Integer, PowerTally> entry : powerTallies.entrySet()) {
-            entry.getValue().accumulate(now, this);
-            persistTally(entry.getKey(), entry.getValue());
+        try {
+            for (Map.Entry<Integer, PowerTally> entry : powerTallies.entrySet()) {
+                entry.getValue().accumulate(now, this);
+                persistMeter(entry.getKey(), entry.getValue().persisted());
+            }
+        } catch (RuntimeException e) {
+            // Letting it out would cancel the repeating task, so metering would stop for good.
+            logger.warn("Could not sample the external power meters: {}", e.getMessage());
         }
     }
 
-    private @Nullable Integer finishPowerTally(int transactionId) {
+    private @Nullable PowerTally removeMeter(int transactionId) {
+        meterSources.remove(transactionId);
         PowerTally tally = powerTallies.remove(transactionId);
-        if (tally == null) {
-            return null;
-        }
         Storage<String> store = powerStore;
         if (store != null) {
             store.remove(String.valueOf(transactionId));
         }
-        return (int) Math.round(tally.finish(System.currentTimeMillis(), this));
+        return tally;
     }
 
-    private void persistTally(int transactionId, PowerTally tally) {
+    /** The stop reading of a session, from the source its start came from; {@code null} if that one cannot be read. */
+    private @Nullable Integer finishMeter(int transactionId, @Nullable Integer chargerWh,
+            @Nullable String chargePointId) {
+        SessionMeter started = meterSources.get(transactionId);
+        PowerTally tally = removeMeter(transactionId);
+        if (started == null) {
+            return chargerWh;
+        }
+        if (started.source() == MeterSource.POWER_ITEM) {
+            return tally == null ? null : (int) Math.round(tally.finish(System.currentTimeMillis(), this));
+        }
+        if (chargePointId == null) {
+            return null;
+        }
+        Integer connectorId = transactionConnector(transactionId, chargePointId);
+        OcppChargePointHandler.ExternalMeter meter = connectorId == null ? null
+                : externalMeterFor(chargePointId, connectorId);
+        return meter != null && !meter.power() && meter.itemName().equals(started.itemName()) ? energyMeterWh(meter)
+                : null;
+    }
+
+    private void persistMeter(int transactionId, PersistedMeter meter) {
         Storage<String> store = powerStore;
         if (store != null) {
-            store.put(String.valueOf(transactionId), gson.toJson(tally.persisted()));
+            store.put(String.valueOf(transactionId), gson.toJson(meter));
         }
     }
 
-    private void reloadPowerTallies() {
+    private void reloadMeterSources() {
         Storage<String> store = powerStore;
-        if (store == null) {
+        TransactionStore transactions = transactionStore;
+        if (store == null || transactions == null) {
             return;
         }
         long now = System.currentTimeMillis();
-        for (String key : store.getKeys()) {
+        for (String key : new ArrayList<>(store.getKeys())) {
             String json = store.get(key);
             if (json == null) {
                 continue;
             }
             try {
-                PersistedTally p = gson.fromJson(json, PersistedTally.class);
-                if (p != null) {
-                    powerTallies.put(Integer.valueOf(key), new PowerTally(p.itemName(), p.kilo(), now, p.wh()));
+                Integer transactionId = Integer.valueOf(key);
+                if (transactions.locate(transactionId) == null) {
+                    store.remove(key);
+                    continue;
+                }
+                PersistedMeter p = gson.fromJson(json, PersistedMeter.class);
+                if (p == null) {
+                    continue;
+                }
+                MeterSource source = p.source();
+                String itemName = p.itemName();
+                if (source == null) {
+                    store.remove(key);
+                    continue;
+                }
+                meterSources.put(transactionId, new SessionMeter(source, itemName));
+                if (source == MeterSource.POWER_ITEM && itemName != null) {
+                    powerTallies.put(transactionId, new PowerTally(itemName, p.kilo(), now, p.wh()));
                 }
             } catch (RuntimeException e) {
-                logger.warn("Could not restore power tally {}: {}", key, e.getMessage());
+                logger.warn("Could not restore the meter of session {}: {}", key, e.getMessage());
             }
         }
     }
@@ -639,12 +724,20 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             return wh;
         }
 
-        synchronized PersistedTally persisted() {
-            return new PersistedTally(itemName, kilo, wh);
+        synchronized PersistedMeter persisted() {
+            return new PersistedMeter(MeterSource.POWER_ITEM, itemName, kilo, wh);
         }
     }
 
-    private record PersistedTally(String itemName, boolean kilo, double wh) {
+    private enum MeterSource {
+        ENERGY_ITEM,
+        POWER_ITEM
+    }
+
+    private record SessionMeter(MeterSource source, @Nullable String itemName) {
+    }
+
+    private record PersistedMeter(@Nullable MeterSource source, @Nullable String itemName, boolean kilo, double wh) {
     }
 
     private static long epochOf(@Nullable ZonedDateTime timestamp) {
@@ -721,7 +814,25 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         return chargePointId == null ? null : transactionConnector(transactionId, chargePointId);
     }
 
+    /**
+     * Drops a transaction whose StopTransaction never arrived. Its storage goes, but no session is logged: the
+     * binding has no stop reading it can defend, and the log gates the monthly caps.
+     */
     public void forgetTransaction(int transactionId) {
+        removeMeter(transactionId);
+        CpmsService service = cpms;
+        if (service != null) {
+            service.forgetTransaction(transactionId);
+        }
+        releaseTransaction(transactionId);
+    }
+
+    /**
+     * Ends the transaction but keeps what a StopTransaction would still need. A charger may report a connector
+     * Available before it sends the stop, so the usage entry and the meter it was started against stay until the
+     * stop arrives or the connector starts its next transaction.
+     */
+    public void releaseTransaction(int transactionId) {
         TransactionStore store = transactionStore;
         if (store != null) {
             store.end(transactionId);
@@ -746,6 +857,39 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     public @Nullable Integer openTransactionFor(String chargePointId, int connectorId) {
         TransactionStore store = transactionStore;
         return store != null ? store.openTransaction(chargePointId, connectorId) : null;
+    }
+
+    /**
+     * Warn-once memory. Its keys come from the peer — the address it dials from, or the charge point id it
+     * picked — so it has to be bounded; the eldest key goes rather than the whole set, or one flood of
+     * unknown peers makes every standing misconfiguration warn all over again.
+     */
+    static final class WarnOnce {
+        private static final int CAPACITY = 64;
+
+        private final Set<String> seen = new LinkedHashSet<>();
+
+        synchronized boolean first(String key) {
+            if (!seen.add(key)) {
+                return false;
+            }
+            if (seen.size() > CAPACITY) {
+                Iterator<String> eldest = seen.iterator();
+                eldest.next();
+                eldest.remove();
+            }
+            return true;
+        }
+
+        synchronized void clear() {
+            seen.clear();
+        }
+    }
+
+    /** The port changes on every reconnect, so a repeat offender is recognised by its address alone. */
+    private static String peerKey(UUID session, @Nullable InetSocketAddress remote) {
+        InetAddress address = remote == null ? null : remote.getAddress();
+        return address != null ? address.getHostAddress() : session.toString();
     }
 
     private @Nullable OcppChargePointHandler resolve(UUID session) {
