@@ -48,7 +48,7 @@ public class OcppCpmsUserHandler extends BaseThingHandler {
     private static final long REFRESH_MINUTES = 5;
 
     private volatile @Nullable CpmsService cpms;
-    private @Nullable ScheduledFuture<?> refreshTask;
+    private volatile @Nullable ScheduledFuture<?> refreshTask;
 
     public OcppCpmsUserHandler(Thing thing) {
         super(thing);
@@ -56,9 +56,28 @@ public class OcppCpmsUserHandler extends BaseThingHandler {
 
     @Override
     public void initialize() {
+        attach();
+    }
+
+    @Override
+    public void bridgeStatusChanged(ThingStatusInfo bridgeStatusInfo) {
+        // Not super: the CPMS is built by the bridge handler, so a bridge re-init hands out a new one.
+        if (bridgeStatusInfo.getStatus() == ThingStatus.ONLINE) {
+            attach();
+        } else {
+            cancelRefresh();
+            // The user stays registered: an empty registry turns CPMS authorization off for every charger.
+            cpms = null;
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_OFFLINE);
+        }
+    }
+
+    private void attach() {
+        cancelRefresh();
         OcppServerBridgeHandler server = serverHandler();
         CpmsService service = server != null ? server.getCpms() : null;
         if (service == null) {
+            cpms = null;
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_UNINITIALIZED);
             return;
         }
@@ -66,18 +85,8 @@ public class OcppCpmsUserHandler extends BaseThingHandler {
         registerUser(service);
         updateStatus(ThingStatus.ONLINE);
         publishUsage();
-        cancelRefresh();
         refreshTask = scheduler.scheduleWithFixedDelay(this::publishUsage, REFRESH_MINUTES, REFRESH_MINUTES,
                 TimeUnit.MINUTES);
-    }
-
-    @Override
-    public void bridgeStatusChanged(ThingStatusInfo bridgeStatusInfo) {
-        if (bridgeStatusInfo.getStatus() == ThingStatus.ONLINE) {
-            initialize();
-        } else {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_OFFLINE);
-        }
     }
 
     @Override
@@ -90,7 +99,9 @@ public class OcppCpmsUserHandler extends BaseThingHandler {
     @Override
     public void dispose() {
         cancelRefresh();
-        CpmsService service = cpms;
+        // A bridge that went offline cleared the field, but the registration it holds is still live.
+        OcppServerBridgeHandler server = serverHandler();
+        CpmsService service = server != null ? server.getCpms() : cpms;
         if (service != null) {
             service.unregisterUser(getThing().getUID().getAsString());
         }

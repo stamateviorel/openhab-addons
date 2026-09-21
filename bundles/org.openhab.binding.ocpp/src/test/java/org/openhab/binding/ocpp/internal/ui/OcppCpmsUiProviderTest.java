@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -99,6 +100,40 @@ class OcppCpmsUiProviderTest {
         } finally {
             provider.deactivate();
         }
+    }
+
+    @Test
+    void aNameOrChargerIdThatLooksLikeAnExpressionIsShownAsText() {
+        CpmsService cpms = new CpmsService(new MemoryStorage());
+        cpms.registerUser(new CpmsUser("ocpp:cpms-user:main:eve", "=1+1", true, 0, List.of("CARD-E"), List.of()));
+        long now = System.currentTimeMillis();
+        cpms.onTransactionStart(1, "CARD-E", "=ACE", 1, 0, now - 7_200_000L);
+        cpms.onTransactionStop(1, 1_000, now - 3_600_000L);
+        OcppServerBridgeHandler handler = mock(OcppServerBridgeHandler.class);
+        when(handler.getCpms()).thenReturn(cpms);
+        Thing server = mock(Thing.class);
+        when(server.getThingTypeUID()).thenReturn(THING_TYPE_SERVER);
+        when(server.getHandler()).thenReturn(handler);
+        ThingRegistry registry = mock(ThingRegistry.class);
+        when(registry.getAll()).thenReturn(List.of(server));
+
+        OcppCpmsUiProvider provider = new OcppCpmsUiProvider(registry);
+        try {
+            Map<String, RootUIComponent> pages = new HashMap<>();
+            provider.getAll().forEach(page -> pages.put(page.getUID(), page));
+
+            RootUIComponent overview = Objects.requireNonNull(pages.get("ocpp_cpms"));
+            RootUIComponent userPage = Objects.requireNonNull(pages.get("ocpp_user_ocpp_cpms_user_main_eve"));
+
+            assertTrue(titles(overview).contains("\u200B=1+1"));
+            assertTrue(titles(userPage).contains("\u200B=ACE · socket 1"));
+        } finally {
+            provider.deactivate();
+        }
+    }
+
+    private static List<String> titles(RootUIComponent page) {
+        return find(page, "oh-list-item").stream().map(item -> String.valueOf(item.getConfig().get("title"))).toList();
     }
 
     private static List<UIComponent> find(UIComponent root, String type) {

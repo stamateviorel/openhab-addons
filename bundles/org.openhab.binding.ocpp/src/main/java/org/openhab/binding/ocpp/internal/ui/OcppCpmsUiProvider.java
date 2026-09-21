@@ -53,7 +53,7 @@ import org.osgi.service.component.annotations.Reference;
 
 /**
  * Read-only {@link UIComponentProvider} in the {@code ui:page} namespace serving the CPMS dashboard from binding state.
- * 
+ *
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
@@ -180,12 +180,12 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
         }
         // Include the month so the "this month" totals rebuild at the rollover, not only on the next session.
         StringBuilder sb = new StringBuilder().append(YearMonth.now(ZoneId.systemDefault())).append('#')
-                .append(cpms.transactions().size());
+                .append(cpms.transactionCount());
         for (CpmsUser user : cpms.users()) {
             sb.append('|').append(user.id()).append(user.enabled()).append(user.name()).append(user.monthlyCapKwh())
                     .append(user.cards()).append(user.vehicles());
         }
-        sb.append('#').append(cpms.transactions().stream().mapToLong(CpmsTransaction::stopEpoch).max().orElse(0L));
+        sb.append('#').append(cpms.lastStopEpoch());
         return sb.toString();
     }
 
@@ -434,8 +434,8 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
                 ZonedDateTime start = Instant.ofEpochMilli(tx.startEpoch()).atZone(zone);
                 ZonedDateTime stop = Instant.ofEpochMilli(tx.stopEpoch()).atZone(zone);
                 UIComponent item = new UIComponent("oh-list-item");
-                item.addConfig("title",
-                        withUser ? who : chargerLabel(tx.chargePointId()) + " · socket " + tx.connectorId());
+                item.addConfig("title", withUser ? text(who)
+                        : text(chargerLabel(tx.chargePointId())) + " · socket " + tx.connectorId());
                 item.addConfig("icon", "f7:bolt_fill");
                 item.addConfig("after", kwh(tx.energyWh() / 1000.0) + " kWh");
                 item.addConfig("subtitle",
