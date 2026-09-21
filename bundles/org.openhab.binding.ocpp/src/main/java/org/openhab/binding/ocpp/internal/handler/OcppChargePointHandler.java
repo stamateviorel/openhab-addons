@@ -90,6 +90,9 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         CompletableFuture<Confirmation> send();
     }
 
+    private record BootConfigRun(UUID session, int generation) {
+    }
+
     private record PendingSend(UUID session, Request request, CompletableFuture<Confirmation> future) {
     }
 
@@ -141,6 +144,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private volatile @Nullable String appliedConfigFingerprint;
     private volatile @Nullable String attemptedConfigFingerprint;
     private final AtomicInteger bootConfigAttempts = new AtomicInteger();
+    private final AtomicInteger bootConfigGeneration = new AtomicInteger();
 
     public OcppChargePointHandler(Bridge bridge) {
         super(bridge);
@@ -281,7 +285,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
         if (chargePointId.isBlank()) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                    "chargePointId must be set to the charger's OCPP identity");
+                    "@text/offline.configuration-error.missing-charge-point-id");
             return;
         }
         OcppServerBridgeHandler serverHandler = serverHandler();
@@ -558,10 +562,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
     }
 
-    public OcppVersion getVersion() {
-        return version;
-    }
-
     public OcppCommands commands() {
         return version == OcppVersion.V2_0_1 ? COMMANDS_201 : COMMANDS_16;
     }
@@ -636,7 +636,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
         cancelScheduledWork();
         failPendingSends();
-        updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, "Charger disconnected");
+        updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                "@text/offline.communication-error.charger-disconnected");
         updateState(CHANNEL_CONNECTED, OnOffType.OFF);
     }
 
@@ -777,23 +778,31 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         transactions.remove(transactionId);
         OcppServerBridgeHandler serverHandler = server;
         if (serverHandler != null) {
-            serverHandler.forgetTransaction(transactionId);
+            serverHandler.releaseTransaction(transactionId);
         }
     }
 
     private void scheduleBootConfig(UUID bootSession) {
         cancel(bootConfigTask);
-        bootConfigTask = scheduler.schedule(() -> runBootConfig(bootSession), Math.max(0, configSettleSeconds),
+        BootConfigRun run = new BootConfigRun(bootSession, bootConfigGeneration.incrementAndGet());
+        bootConfigTask = scheduler.schedule(() -> runBootConfig(run), Math.max(0, configSettleSeconds),
                 TimeUnit.SECONDS);
     }
 
-    private void runBootConfig(UUID bootSession) {
-        if (!bootSession.equals(session)) {
-            logger.debug("Boot config for {} skipped — its session was replaced during the settle delay",
-                    chargePointId);
+    private void runBootConfig(BootConfigRun run) {
+        if (superseded(run)) {
             return;
         }
-        readCapabilities(bootSession);
+        readCapabilities(run);
+    }
+
+    /** Cancelling the task stops only a burst that has not started; one already running is taken over here. */
+    private boolean superseded(BootConfigRun run) {
+        if (run.session().equals(session) && run.generation() == bootConfigGeneration.get()) {
+            return false;
+        }
+        logger.debug("Boot config for {} abandoned — a newer session or boot replaced it", chargePointId);
+        return true;
     }
 
     /** 2.0.1 answers GetBaseReport with NotifyReport messages, not in the response. */
@@ -802,7 +811,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         publishCapabilities(capabilities);
     }
 
-    private void readCapabilities(UUID bootSession) {
+    private void readCapabilities(BootConfigRun run) {
         if (version == OcppVersion.V2_0_1) {
             // The device model arrives as NotifyReport messages, so the burst cannot wait on this.
             send(commands().readCapabilities()).whenComplete((confirmation, ex) -> {
@@ -810,14 +819,14 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                     logger.debug("Capability read for {} failed: {}", chargePointId, ex.getMessage());
                 }
             });
-            runBootConfigBurst(bootSession, false);
+            runBootConfigBurst(run, false);
             return;
         }
         send(new GetConfigurationRequest()).whenComplete((confirmation, ex) -> {
-            if (!bootSession.equals(session)) {
+            if (superseded(run)) {
                 return;
             }
-            runBootConfigBurst(bootSession, !applyCapabilities(confirmation, ex));
+            runBootConfigBurst(run, !applyCapabilities(confirmation, ex));
         });
     }
 
@@ -831,7 +840,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
         logger.debug("Charge point {} reconnected without booting; treating it as ready", chargePointId);
         becomeReady(connectedSession);
-        readCapabilities(connectedSession);
+        readCapabilities(new BootConfigRun(connectedSession, bootConfigGeneration.incrementAndGet()));
         requestConnectorStatusesNow();
     }
 
@@ -869,9 +878,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
      * @param readFailed the charger's configuration could not be read, so a fingerprint match cannot be taken as
      *            proof that it still holds its settings
      */
-    private void runBootConfigBurst(UUID bootSession, boolean readFailed) {
-        if (!bootSession.equals(session)) {
-            logger.debug("Boot config for {} skipped — its session was replaced", chargePointId);
+    private void runBootConfigBurst(BootConfigRun run, boolean readFailed) {
+        if (superseded(run)) {
             return;
         }
         OcppServerBridgeHandler serverHandler = server;
@@ -903,39 +911,51 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         }
         List<BootConfigStep> steps = new ArrayList<>();
         if (meterless) {
-            steps.add(() -> sendConfig("ClockAlignedDataInterval", "0"));
+            addConfigStep(steps, "ClockAlignedDataInterval", "0");
         } else {
             if (config.meterValueSampleInterval >= 0) {
-                steps.add(() -> sendConfig("MeterValueSampleInterval",
-                        Integer.toString(config.meterValueSampleInterval)));
+                addConfigStep(steps, "MeterValueSampleInterval", Integer.toString(config.meterValueSampleInterval));
             }
             if (!config.meterValuesData.isBlank()) {
-                steps.add(() -> negotiateMeasurand("MeterValuesSampledData",
-                        startingMeasurands(config, "MeterValuesSampledData")));
-                steps.add(() -> negotiateMeasurand("MeterValuesAlignedData",
-                        startingMeasurands(config, "MeterValuesAlignedData")));
+                addMeasurandStep(steps, "MeterValuesSampledData", startingMeasurands(config, "MeterValuesSampledData"));
+                addMeasurandStep(steps, "MeterValuesAlignedData", startingMeasurands(config, "MeterValuesAlignedData"));
             }
             if (config.clockAlignedDataInterval >= 0) {
-                steps.add(() -> sendConfig("ClockAlignedDataInterval",
-                        Integer.toString(config.clockAlignedDataInterval)));
+                addConfigStep(steps, "ClockAlignedDataInterval", Integer.toString(config.clockAlignedDataInterval));
             }
         }
         if (config.disableRemoteTxAuthorization) {
-            steps.add(() -> sendConfig("AuthorizeRemoteTxRequests", "false"));
+            addConfigStep(steps, "AuthorizeRemoteTxRequests", "false");
         }
         for (String pair : concat(config.extraConfig, extraConfig)) {
             int equals = pair.indexOf('=');
             if (equals > 0) {
-                String key = pair.substring(0, equals).trim();
-                String value = pair.substring(equals + 1).trim();
-                steps.add(() -> sendConfig(key, value));
+                addConfigStep(steps, pair.substring(0, equals).trim(), pair.substring(equals + 1).trim());
             }
         }
         if (!localAuthList.isEmpty() && Boolean.TRUE.equals(capabilities.supportsLocalAuthList().orElse(false))) {
             List<String> tags = localAuthList;
             steps.add(() -> provisionLocalAuthList(tags));
         }
-        runBootConfigStep(steps, 0, fingerprint, bootSession, new AtomicBoolean(true));
+        runBootConfigStep(steps, 0, fingerprint, run, new AtomicBoolean(true));
+    }
+
+    /** A setting the negotiated OCPP version cannot express is skipped, not queued as a step that can only fail. */
+    private void addConfigStep(List<BootConfigStep> steps, String key, String value) {
+        Request request = commands().setConfiguration(key, value);
+        if (request == null) {
+            logger.debug("Charge point {} has no {} setting on {}", chargePointId, key, version);
+            return;
+        }
+        steps.add(() -> send(request).toCompletableFuture());
+    }
+
+    private void addMeasurandStep(List<BootConfigStep> steps, String key, String value) {
+        if (commands().setConfiguration(key, value) == null) {
+            logger.debug("Charge point {} has no {} setting on {}", chargePointId, key, version);
+            return;
+        }
+        steps.add(() -> negotiateMeasurand(key, value));
     }
 
     /**
@@ -1022,10 +1042,9 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         return acceptedMeasurands.getOrDefault(key, config.meterValuesData);
     }
 
-    private void runBootConfigStep(List<BootConfigStep> steps, int index, String fingerprint, UUID bootSession,
+    private void runBootConfigStep(List<BootConfigStep> steps, int index, String fingerprint, BootConfigRun run,
             AtomicBoolean allSucceeded) {
-        if (!bootSession.equals(session)) {
-            logger.debug("Boot config sequence for {} abandoned — its session was replaced", chargePointId);
+        if (superseded(run)) {
             return;
         }
         if (index >= steps.size()) {
@@ -1057,7 +1076,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                         configStatusOf(confirmation));
             }
             return null;
-        }).thenRun(() -> runBootConfigStep(steps, index + 1, fingerprint, bootSession, allSucceeded));
+        }).thenRun(() -> runBootConfigStep(steps, index + 1, fingerprint, run, allSucceeded));
     }
 
     private boolean isConfigApplied(@Nullable Confirmation confirmation) {
@@ -1070,15 +1089,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
 
     private String configStatusOf(@Nullable Confirmation confirmation) {
         return commands().describe(confirmation);
-    }
-
-    private CompletableFuture<Confirmation> sendConfig(String key, String value) {
-        Request request = commands().setConfiguration(key, value);
-        if (request == null) {
-            logger.debug("Charge point {} has no {} setting to write on {}", chargePointId, key, version);
-            return CompletableFuture.failedFuture(new UnsupportedOperationException(key + " is not settable"));
-        }
-        return send(request).toCompletableFuture();
     }
 
     private CompletableFuture<Confirmation> negotiateMeasurand(String key, String value) {
@@ -1099,8 +1109,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 result.completeExceptionally(ex);
                 return;
             }
-            // ChangeConfiguration Rejected means the value, NotSupported the key; only the former is retried
-            // with a shorter list.
             if (commands().isAccepted(confirmation)) {
                 acceptedMeasurands.put(key, value);
             } else if (commands().isValueRejected(confirmation)) {
@@ -1181,7 +1189,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             transport.closeSession(localSession);
         }
         updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                "No messages received (liveness timeout)");
+                "@text/offline.communication-error.liveness-timeout");
         updateState(CHANNEL_CONNECTED, OnOffType.OFF);
     }
 

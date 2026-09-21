@@ -54,6 +54,14 @@ import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 import eu.chargetime.ocpp.model.core.GetConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
 import eu.chargetime.ocpp.model.core.KeyValueType;
+import eu.chargetime.ocpp.v201.model.messages.GetBaseReportResponse;
+import eu.chargetime.ocpp.v201.model.messages.SetVariablesRequest;
+import eu.chargetime.ocpp.v201.model.messages.SetVariablesResponse;
+import eu.chargetime.ocpp.v201.model.types.Component;
+import eu.chargetime.ocpp.v201.model.types.GenericDeviceModelStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.SetVariableResult;
+import eu.chargetime.ocpp.v201.model.types.SetVariableStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.Variable;
 
 /**
  * Tests the configuration a charge point receives after it boots and the outbound-request
@@ -436,13 +444,73 @@ class OcppBootConfigTest {
         // The give-up counter is for a burst the charger refuses, not for one it never got the chance to refuse.
         serverConfig.extraConfig = List.of("DynamicCircuitCurrent=16");
         readGoesUnanswered();
+        OcppConnectorHandler connector = mock(OcppConnectorHandler.class);
+        handler.registerConnector(1, connector);
 
-        for (int boot = 0; boot < 5; boot++) {
+        for (int boot = 1; boot <= 5; boot++) {
             handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+            verify(transport, timeout(3000).times(boot)).send(any(),
+                    eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "16")));
+            // a burst ends by refreshing the connector statuses; the next boot must not take it over mid-flight
+            verify(connector, timeout(3000).times(boot)).requestStatus();
         }
+    }
 
-        verify(transport, timeout(5000).times(5)).send(any(),
-                eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "16")));
+    @Test
+    void aSettingWithNo201VariableIsSkippedWithoutFailingTheBurst() {
+        // 2.0.1 addresses settings as Component.Variable, so a 1.6 key with neither a mapping nor a dot cannot be
+        // written at all; skipping it must not count as a failed burst.
+        serverConfig.extraConfig = List.of("VendorKey=42");
+        when(transport.send(any(), any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(1);
+            if (request instanceof SetVariablesRequest) {
+                return CompletableFuture.completedFuture(new SetVariablesResponse(
+                        new SetVariableResult[] { new SetVariableResult(SetVariableStatusEnum.Accepted,
+                                new Component("AuthCtrlr"), new Variable("AuthorizeRemoteStart")) }));
+            }
+            return CompletableFuture.completedFuture(new GetBaseReportResponse(GenericDeviceModelStatusEnum.Accepted));
+        });
+        handler.onConnected(UUID.randomUUID(), OcppVersion.V2_0_1);
+        OcppConnectorHandler connector = mock(OcppConnectorHandler.class);
+        handler.registerConnector(1, connector);
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        verify(transport, timeout(3000)).send(any(), argThat(r -> r instanceof SetVariablesRequest));
+        verify(connector, timeout(3000)).requestStatus();
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        verify(transport, org.mockito.Mockito.after(1000).times(1)).send(any(),
+                argThat(r -> r instanceof SetVariablesRequest));
+    }
+
+    @Test
+    void aSecondBootTakesOverTheBurstInsteadOfRunningASecondOne() {
+        serverConfig.extraConfig = List.of("VendorKey=42");
+        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> firstStep = new CompletableFuture<>();
+        when(transport.send(any(), any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(1);
+            record(request);
+            if (request instanceof GetConfigurationRequest) {
+                return CompletableFuture.completedFuture(new GetConfigurationConfirmation());
+            }
+            if (request instanceof ChangeConfigurationRequest change
+                    && "AuthorizeRemoteTxRequests".equals(change.getKey())) {
+                return firstStep;
+            }
+            return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
+        });
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        verify(transport, timeout(3000)).send(any(),
+                eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        firstStep.complete(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
+
+        verify(transport, timeout(3000).times(2)).send(any(),
+                eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
+        verify(transport, org.mockito.Mockito.after(1000).times(1)).send(any(),
+                eq(new ChangeConfigurationRequest("VendorKey", "42")));
     }
 
     /** The charger stays silent on GetConfiguration but answers everything else. */
