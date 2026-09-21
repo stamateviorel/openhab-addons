@@ -18,14 +18,10 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 
 /**
- * A 1.6 StopTransaction carries no connectorId; remoteId is the station's own id (2.0.1 quotes it back); chargingState
- * is 2.0.1-only.
+ * A transaction start, update or end, protocol-neutral. A 1.6 StopTransaction carries no connectorId;
+ * {@code remoteId} is the charger's own id for the transaction, which a 2.0.1 RequestStopTransaction has to quote
+ * back verbatim; {@code chargingState} is 2.0.1-only.
  *
- * the same three kinds. {@code connectorId} is null where the protocol does not carry it — a 1.6
- * {@code transactionId} is the binding's own id, kept numeric because the usage log is persisted
- * under it. {@code remoteId} is the id as the charger states it, which a 2.0.1 RequestStopTransaction
- * has to quote back verbatim. {@code chargingState} is 2.0.1 only: it carries the detail that 1.6
- * 
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault

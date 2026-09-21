@@ -19,6 +19,7 @@ import eu.chargetime.ocpp.model.core.BootNotificationRequest;
 /**
  * A {@link BootNotificationRequest} that is accepted whatever its vendor and model say.
  *
+ * <p>
  * The library refuses a BootNotification whose vendor or model is absent or longer than the CiString20 the
  * OCPP 1.6 schema allows, and answers a CALLERROR instead of a BootNotificationConfirmation, which leaves the
  * charger unable to come online. Both happen in the field. The binding identifies a charger by the charge

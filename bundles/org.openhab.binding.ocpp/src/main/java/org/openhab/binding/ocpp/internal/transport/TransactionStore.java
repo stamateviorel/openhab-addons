@@ -153,7 +153,7 @@ public class TransactionStore {
         if (value == null) {
             return null;
         }
-        // remoteId (may be empty) and meterStart are absent in entries written by older versions.
+        // The optional tail fields are written only when the charger supplies them.
         String[] fields = value.split(String.valueOf(SEPARATOR), 4);
         if (fields.length < 2) {
             return null;

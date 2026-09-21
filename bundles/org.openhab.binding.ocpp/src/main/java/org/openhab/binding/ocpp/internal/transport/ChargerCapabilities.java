@@ -29,7 +29,8 @@ import eu.chargetime.ocpp.model.core.GetConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.KeyValueType;
 
 /**
- * A charger's OCPP configuration, read via {@code GetConfiguration}.
+ * A charger's OCPP configuration: the 1.6 {@code GetConfiguration} keys, or the 2.0.1 device-model report
+ * flattened into the same keys.
  *
  * @author Stamate Viorel - Initial contribution
  */

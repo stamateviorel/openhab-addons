@@ -17,8 +17,6 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 /**
  * OCPP 1.6 carries only the token value (always {@link #UNKNOWN}); 2.0.1 also names its kind.
  *
- * OCPP 1.6 carries only the value, so a token from a 1.6 charger is {@link #UNKNOWN} whatever it
- * 
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
@@ -30,5 +28,6 @@ public enum TokenType {
     VEHICLE,
     /** A key code, a local id, or a token the CSMS itself supplied. */
     OTHER,
+    /** Neither the charger nor the local registry names a kind. */
     UNKNOWN
 }
