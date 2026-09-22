@@ -404,7 +404,7 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
         // A token refused on a later event must not become the session's owner downstream.
         TransactionEvent event = new TransactionEvent(kind, connectorId, transactionId, remoteId,
                 authorized ? idToken : null, Ocpp201Events.toTokenType(typeOf(request.getIdToken())), meterWh,
-                request.getTimestamp(), reason, chargingState);
+                request.getTimestamp(), reason);
         deliver("TransactionEvent", sessionIndex, () -> listener.onTransactionEvent(sessionIndex, event));
         if (connectorId != null) {
             // A 2.0.1 TransactionEvent carries meter values and charging state on every kind, not only

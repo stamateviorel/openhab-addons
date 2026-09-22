@@ -90,7 +90,7 @@ class OcppChargePointHandlerTest {
     void aLateTokenReachesTheConnectorWhoseTransactionItIs() {
         handler.onTransactionStarted(started(2, 5));
         TransactionEvent update = new TransactionEvent(TransactionEvent.Kind.UPDATED, null, 5, null, "CARD-X",
-                TokenType.CARD, null, null, null, null);
+                TokenType.CARD, null, null, null);
 
         handler.onTransactionUpdated(update);
 

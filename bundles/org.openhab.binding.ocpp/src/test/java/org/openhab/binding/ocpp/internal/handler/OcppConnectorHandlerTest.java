@@ -108,7 +108,7 @@ class OcppConnectorHandlerTest {
     @Test
     void aLateTokenIsPublishedOnTheIdTagChannel() {
         handler.onTransactionUpdated(new TransactionEvent(TransactionEvent.Kind.UPDATED, 1, 5, null, "CARD-X",
-                TokenType.CARD, null, null, null, null));
+                TokenType.CARD, null, null, null));
 
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_ID_TAG)), eq(new StringType("CARD-X")));
     }
@@ -219,7 +219,7 @@ class OcppConnectorHandlerTest {
 
         // The handler never saw this transaction start; the charger's update is what it has to go on.
         handler.onTransactionUpdated(new TransactionEvent(TransactionEvent.Kind.UPDATED, 1, 12, "10848555779671014738",
-                null, TokenType.UNKNOWN, null, null, null, null));
+                null, TokenType.UNKNOWN, null, null, null));
         command(CHANNEL_CHARGING, OnOffType.OFF);
 
         ArgumentCaptor<eu.chargetime.ocpp.model.Request> captor = ArgumentCaptor

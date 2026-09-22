@@ -244,7 +244,7 @@ class OcppServerBridgeHandlerTest {
         verify(discovery).tokenDiscovered("CARD-NEW", TokenType.CARD, "Charger 2");
 
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 5, "t1", "CARD-NEW",
-                TokenType.CARD, null, null, null, null));
+                TokenType.CARD, null, null, null));
         verify(discovery).tokenDiscovered("CARD-NEW", TokenType.CARD, "Charger 2 connector 2");
     }
 
@@ -258,7 +258,7 @@ class OcppServerBridgeHandlerTest {
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null, OcppVersion.V2_0_1);
         TransactionEvent update = new TransactionEvent(TransactionEvent.Kind.UPDATED, 2, 5, "t1", null,
-                TokenType.UNKNOWN, null, null, null, null);
+                TokenType.UNKNOWN, null, null, null);
 
         handler.onTransactionEvent(session, update);
 
@@ -273,7 +273,7 @@ class OcppServerBridgeHandlerTest {
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null, OcppVersion.V2_0_1);
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
-                TokenType.CARD, null, null, null, null));
+                TokenType.CARD, null, null, null));
 
         OcppServerBridgeHandler restarted = new TestableBridgeHandler(thing, storageService, transport);
         restarted.setCallback(callback);
@@ -344,11 +344,9 @@ class OcppServerBridgeHandlerTest {
         handler.onTransactionEvent(session, Ocpp16Events.toEnded(stop, 77));
         verify(configuration, never()).update(any());
 
-        handler.onTransactionEvent(session,
-                new org.openhab.binding.ocpp.internal.transport.event.TransactionEvent(
-                        org.openhab.binding.ocpp.internal.transport.event.TransactionEvent.Kind.UPDATED, 2, 78, null,
-                        "PLUGFIRST", org.openhab.binding.ocpp.internal.transport.event.TokenType.UNKNOWN, null, null,
-                        null, null));
+        handler.onTransactionEvent(session, new org.openhab.binding.ocpp.internal.transport.event.TransactionEvent(
+                org.openhab.binding.ocpp.internal.transport.event.TransactionEvent.Kind.UPDATED, 2, 78, null,
+                "PLUGFIRST", org.openhab.binding.ocpp.internal.transport.event.TokenType.UNKNOWN, null, null, null));
         verify(configuration)
                 .update(argThat(updated -> String.valueOf(updated.get("whitelistTagIds")).contains("PLUGFIRST")));
     }
@@ -455,7 +453,7 @@ class OcppServerBridgeHandlerTest {
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
-                TokenType.CARD, 0, null, null, null));
+                TokenType.CARD, 0, null, null));
         // One store stands in for all of them here, so the bare transaction id is the tally's key.
         assertTrue(storage.containsKey("77"));
 
@@ -484,10 +482,10 @@ class OcppServerBridgeHandlerTest {
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
-                TokenType.CARD, 0, null, null, null));
+                TokenType.CARD, 0, null, null));
 
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.ENDED, 2, 77, "t1", "CARD",
-                TokenType.CARD, 1_240_000, null, null, null));
+                TokenType.CARD, 1_240_000, null, null));
 
         assertFalse(storage.containsKey("77"));
         CpmsService cpms = Objects.requireNonNull(handler.getCpms());
@@ -515,7 +513,7 @@ class OcppServerBridgeHandlerTest {
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
-                TokenType.CARD, 1000, null, null, null));
+                TokenType.CARD, 1000, null, null));
         assertTrue(storage.containsKey("open:77"));
 
         handler.forgetTransaction(77);
@@ -533,10 +531,10 @@ class OcppServerBridgeHandlerTest {
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
-                TokenType.CARD, 1000, null, null, null));
+                TokenType.CARD, 1000, null, null));
 
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 78, "t2", "CARD",
-                TokenType.CARD, 5000, null, null, null));
+                TokenType.CARD, 5000, null, null));
 
         assertFalse(storage.containsKey("open:77"), "a transaction superseded by a fresh start on its own "
                 + "connector must be dropped, not left open in the CPMS for good");
@@ -550,9 +548,9 @@ class OcppServerBridgeHandlerTest {
         UUID session = UUID.randomUUID();
         handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
-                TokenType.CARD, 0, null, null, null));
+                TokenType.CARD, 0, null, null));
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.ENDED, 2, 77, "t1", "CARD",
-                TokenType.CARD, 5000, null, null, null));
+                TokenType.CARD, 5000, null, null));
 
         handler.forgetTransaction(77);
 
@@ -617,13 +615,13 @@ class OcppServerBridgeHandlerTest {
         UUID session = UUID.randomUUID();
         before.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
         before.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
-                TokenType.CARD, 0, null, null, null));
+                TokenType.CARD, 0, null, null));
 
         TestableBridgeHandler afterRestart = energyMeterHandler(meterItem);
         UUID resumed = UUID.randomUUID();
         afterRestart.onSessionOpened(resumed, "charx", null, OcppVersion.V1_6);
         afterRestart.onTransactionEvent(resumed, new TransactionEvent(TransactionEvent.Kind.ENDED, 2, 77, "t1", "CARD",
-                TokenType.CARD, 2_000_000, null, null, null));
+                TokenType.CARD, 2_000_000, null, null));
 
         CpmsService cpms = Objects.requireNonNull(afterRestart.getCpms());
         assertEquals(1, cpms.transactions().size());
@@ -677,9 +675,9 @@ class OcppServerBridgeHandlerTest {
         UUID session = UUID.randomUUID();
         withMeter.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
         withMeter.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
-                TokenType.CARD, startWh, null, null, null));
+                TokenType.CARD, startWh, null, null));
         withMeter.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.ENDED, 2, 77, "t1", "CARD",
-                TokenType.CARD, stopWh, null, null, null));
+                TokenType.CARD, stopWh, null, null));
         CpmsService cpms = Objects.requireNonNull(withMeter.getCpms());
         assertEquals(1, cpms.transactions().size());
         return cpms.transactions().get(0).energyWh();

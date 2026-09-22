@@ -107,7 +107,7 @@ public final class Ocpp201Events {
             case Reserved -> ConnectorStatus.RESERVED;
             case Unavailable -> ConnectorStatus.UNAVAILABLE;
             case Faulted -> ConnectorStatus.FAULTED;
-            // 2.0.1 Occupied carries no charging detail; TransactionEvent.chargingState refines it.
+            // 2.0.1 Occupied carries no charging detail; the transaction event's own state refines it.
             case Occupied -> ConnectorStatus.PREPARING;
         };
     }

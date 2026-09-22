@@ -20,14 +20,14 @@ import org.eclipse.jdt.annotation.Nullable;
 /**
  * A transaction start, update or end, protocol-neutral. A 1.6 StopTransaction carries no connectorId;
  * {@code remoteId} is the charger's own id for the transaction, which a 2.0.1 RequestStopTransaction has to quote
- * back verbatim; {@code chargingState} is 2.0.1-only.
+ * back verbatim.
  *
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
 public record TransactionEvent(Kind kind, @Nullable Integer connectorId, int transactionId, @Nullable String remoteId,
         @Nullable String idToken, TokenType tokenType, @Nullable Integer meterWh, @Nullable ZonedDateTime timestamp,
-        @Nullable String reason, @Nullable ConnectorStatus chargingState) {
+        @Nullable String reason) {
 
     public enum Kind {
         STARTED,

@@ -140,7 +140,7 @@ class OcppTransactionRecoveryTest {
         OcppConnectorHandler connector = mock(OcppConnectorHandler.class);
         handler.registerConnector(1, connector);
         TransactionEvent update = new TransactionEvent(TransactionEvent.Kind.UPDATED, 1, 60, "t9", null,
-                TokenType.UNKNOWN, null, null, null, null);
+                TokenType.UNKNOWN, null, null, null);
 
         handler.onTransactionUpdated(update);
 
