@@ -15,6 +15,7 @@
   <name>openHAB Add-ons :: Bundles :: OCPP Binding</name>
 
   <properties>
+    <ocpp.version>2.0</ocpp.version>
     <!-- The ChargeTime model classes carry JAXB and jsr305 annotations; neither is shipped by the
          JDK or exported by the runtime, and the bundle resolves without them. -->
     <bnd.importpackage>javax.xml.bind.*;resolution:=optional,javax.annotation;resolution:=optional</bnd.importpackage>
@@ -23,11 +24,11 @@
   <dependencies>
     <!-- ChargeTime OCA-OCPP 2.0: ocpp16 (1.6 models and profiles), ocpp2 (2.0.1 models and functions),
          ocpp-json (transport), ocpp-common (base). slf4j, gson and jaxb come from the platform and are
-         excluded; Java-WebSocket 1.6.0 matches ocpp-json 2.0. -->
+         excluded. -->
     <dependency>
       <groupId>eu.chargetime.ocpp</groupId>
       <artifactId>ocpp16</artifactId>
-      <version>2.0</version>
+      <version>${ocpp.version}</version>
       <scope>compile</scope>
       <exclusions>
         <exclusion>
@@ -45,7 +46,7 @@
     <dependency>
       <groupId>eu.chargetime.ocpp</groupId>
       <artifactId>ocpp2</artifactId>
-      <version>2.0</version>
+      <version>${ocpp.version}</version>
       <scope>compile</scope>
       <exclusions>
         <exclusion>
@@ -65,7 +66,7 @@
     <dependency>
       <groupId>eu.chargetime.ocpp</groupId>
       <artifactId>ocpp-json</artifactId>
-      <version>2.0</version>
+      <version>${ocpp.version}</version>
       <scope>compile</scope>
       <exclusions>
         <exclusion>
@@ -76,16 +77,12 @@
           <groupId>org.slf4j</groupId>
           <artifactId>slf4j-api</artifactId>
         </exclusion>
-        <exclusion>
-          <groupId>org.java-websocket</groupId>
-          <artifactId>Java-WebSocket</artifactId>
-        </exclusion>
       </exclusions>
     </dependency>
     <dependency>
       <groupId>eu.chargetime.ocpp</groupId>
       <artifactId>ocpp-common</artifactId>
-      <version>2.0</version>
+      <version>${ocpp.version}</version>
       <scope>compile</scope>
       <exclusions>
         <exclusion>
@@ -98,12 +95,24 @@
         </exclusion>
       </exclusions>
     </dependency>
-    <dependency>
-      <groupId>org.java-websocket</groupId>
-      <artifactId>Java-WebSocket</artifactId>
-      <version>1.6.0</version>
-      <scope>compile</scope>
-    </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>embed-dependencies</id>
+            <configuration>
+              <!-- ocpp-json brings Java-WebSocket, which has to be embedded with it. -->
+              <excludeTransitive>false</excludeTransitive>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 
 </project>
