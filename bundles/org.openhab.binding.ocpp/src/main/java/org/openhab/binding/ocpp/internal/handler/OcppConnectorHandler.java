@@ -152,6 +152,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private volatile double powerLimitWatts;
     private volatile int numberPhasesRequested;
     private volatile boolean paused;
+    // A TxProfile lapses with its transaction (OCPP 1.6 errata 7.10), so what it carried moves to the default.
+    private volatile boolean limitHeldByTxProfile;
     private volatile boolean limitDeferred;
     private volatile boolean smartChargingUnsupportedLogged;
     private volatile boolean phaseSwitchWarningLogged;
@@ -588,6 +590,9 @@ public class OcppConnectorHandler extends BaseThingHandler {
             // passing through applyLimit() at all.
             return;
         }
+        if (transactionId != null && !forceTxDefaultProfile) {
+            limitHeldByTxProfile = true;
+        }
         if (!claim.paused() && claim.wireValue() <= 0.0) {
             clearProfile(claim);
         } else {
@@ -1022,6 +1027,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (timestamp != null) {
             publish(CHANNEL_TIMESTAMP_STOP, new DateTimeType(timestamp));
         }
+        carryLimitPastTransaction();
     }
 
     /** Available means no transaction is running, so one still open here never had its StopTransaction. */
@@ -1037,6 +1043,15 @@ public class OcppConnectorHandler extends BaseThingHandler {
         OcppChargePointHandler cp = chargePoint;
         if (cp != null) {
             cp.transactionCompleted(stale);
+        }
+        carryLimitPastTransaction();
+    }
+
+    /** With the transaction gone, a re-send lands as the TxDefaultProfile the next transaction starts under. */
+    private void carryLimitPastTransaction() {
+        if (limitHeldByTxProfile) {
+            limitHeldByTxProfile = false;
+            applyLimit();
         }
     }
 

@@ -59,6 +59,7 @@ import org.openhab.core.types.UnDefType;
 import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.core.ChargePointErrorCode;
 import eu.chargetime.ocpp.model.core.ChargePointStatus;
+import eu.chargetime.ocpp.model.core.ChargingProfilePurposeType;
 import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
 import eu.chargetime.ocpp.model.smartcharging.ChargingProfileStatus;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileConfirmation;
@@ -471,6 +472,92 @@ class OcppConnectorHandlerTest {
 
     private void command(String channelId, Command value) {
         handler.handleCommand(new ChannelUID(THING_UID, channelId), value);
+    }
+
+    @Test
+    void aLimitSetDuringATransactionBecomesTheDefaultOnceItEnds() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        startTransaction(7);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        clearInvocations(chargePoint);
+
+        endTransaction(7);
+
+        SetChargingProfileRequest carried = lastProfile(chargePoint);
+        assertEquals(ChargingProfilePurposeType.TxDefaultProfile,
+                carried.getCsChargingProfiles().getChargingProfilePurpose());
+        assertEquals(10.0, sentLimit(carried));
+    }
+
+    @Test
+    void aPauseDuringATransactionStillHoldsForTheNextOne() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        startTransaction(7);
+        command(CHANNEL_PAUSE, OnOffType.ON);
+        clearInvocations(chargePoint);
+
+        endTransaction(7);
+
+        SetChargingProfileRequest carried = lastProfile(chargePoint);
+        assertEquals(ChargingProfilePurposeType.TxDefaultProfile,
+                carried.getCsChargingProfiles().getChargingProfilePurpose());
+        assertEquals(0.0, sentLimit(carried));
+    }
+
+    @Test
+    void aSessionThatEndsWithoutAStopStillPassesItsLimitOn() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        startTransaction(7);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        clearInvocations(chargePoint);
+
+        handler.onStatusNotification(status(ChargePointStatus.Available));
+
+        assertEquals(ChargingProfilePurposeType.TxDefaultProfile,
+                lastProfile(chargePoint).getCsChargingProfiles().getChargingProfilePurpose());
+    }
+
+    @Test
+    void aTransactionNobodyThrottledEndsWithoutTouchingTheProfile() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        startTransaction(7);
+
+        endTransaction(7);
+
+        verify(chargePoint, never())
+                .send(argThat(r -> r instanceof SetChargingProfileRequest || r instanceof ClearChargingProfileRequest));
+    }
+
+    @Test
+    void aConnectorThatAlwaysUsesTheDefaultIsNotSentItAgain() {
+        when(thing.getConfiguration()).thenReturn(
+                new org.openhab.core.config.core.Configuration(java.util.Map.of("forceTxDefaultProfile", true)));
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        handler.initialize();
+        startTransaction(7);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        clearInvocations(chargePoint);
+
+        endTransaction(7);
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+    }
+
+    private void startTransaction(int transactionId) {
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 100, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), transactionId));
+    }
+
+    private void endTransaction(int transactionId) {
+        handler.onTransactionEnded(Ocpp16Events.toEnded(new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600,
+                java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC), transactionId), transactionId));
+    }
+
+    private static SetChargingProfileRequest lastProfile(OcppChargePointHandler chargePoint) {
+        ArgumentCaptor<Request> captor = ArgumentCaptor.forClass(Request.class);
+        verify(chargePoint, org.mockito.Mockito.atLeastOnce()).send(captor.capture());
+        List<Request> sent = captor.getAllValues();
+        return (SetChargingProfileRequest) sent.get(sent.size() - 1);
     }
 
     private static double sentLimit(Request request) {
