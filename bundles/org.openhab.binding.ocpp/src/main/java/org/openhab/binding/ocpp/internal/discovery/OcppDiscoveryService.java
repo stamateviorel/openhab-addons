@@ -102,7 +102,7 @@ public class OcppDiscoveryService extends AbstractThingHandlerDiscoveryService<O
      * Reduces a charge point id to a valid ThingUID segment; non-segment ids are Base64-encoded so they stay distinct.
      */
     static String sanitize(String id) {
-        if (VALID_SEGMENT.matcher(id).matches()) {
+        if (VALID_SEGMENT.matcher(id).matches() && !id.startsWith("b64-")) {
             return id;
         }
         return "b64-" + Base64.getUrlEncoder().withoutPadding().encodeToString(id.getBytes(StandardCharsets.UTF_8));
