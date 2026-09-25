@@ -810,6 +810,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     public void onCapabilities(Map<String, String> configurationKeys) {
         capabilities = ChargerCapabilities.fromKeys(configurationKeys);
         publishCapabilities(capabilities);
+        reconcileLocalAuthList();
     }
 
     private void readCapabilities(BootConfigRun run) {
@@ -827,7 +828,9 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             if (superseded(run)) {
                 return;
             }
-            runBootConfigBurst(run, !applyCapabilities(confirmation, ex));
+            boolean read = applyCapabilities(confirmation, ex);
+            reconcileLocalAuthList();
+            runBootConfigBurst(run, !read);
         });
     }
 
@@ -934,10 +937,6 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 addConfigStep(steps, pair.substring(0, equals).trim(), pair.substring(equals + 1).trim());
             }
         }
-        if (!localAuthList.isEmpty() && Boolean.TRUE.equals(capabilities.supportsLocalAuthList().orElse(false))) {
-            List<String> tags = localAuthList;
-            steps.add(() -> provisionLocalAuthList(tags));
-        }
         runBootConfigStep(steps, 0, fingerprint, run, new AtomicBoolean(true));
     }
 
@@ -1012,12 +1011,34 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         return all;
     }
 
+    /**
+     * The boot configuration is skipped once applied, so the list is reconciled on every connect instead: a list
+     * edited while the charger was offline would otherwise never reach it.
+     */
+    private void reconcileLocalAuthList() {
+        if (!Boolean.TRUE.equals(capabilities.supportsLocalAuthList().orElse(false))) {
+            return;
+        }
+        List<String> tags = localAuthList;
+        OcppServerBridgeHandler bridge = serverHandler();
+        if (tags.isEmpty() && (bridge == null || !bridge.hasProvisionedLocalAuthList(chargePointId))) {
+            return;
+        }
+        provisionLocalAuthList(tags).whenComplete((confirmation, ex) -> {
+            if (ex != null) {
+                logger.warn("SendLocalList to {} failed: {}", chargePointId, ex.getMessage());
+            }
+        });
+    }
+
     private CompletableFuture<Confirmation> provisionLocalAuthList(List<String> tags) {
         OcppServerBridgeHandler server = serverHandler();
         int version = server == null ? 1 : server.localAuthListVersion(chargePointId, tags);
         OcppCommands commands = commands();
         return send(commands.readLocalListVersion()).thenCompose(current -> {
-            if (Integer.valueOf(version).equals(commands.localListVersionOf(current))) {
+            Integer reported = commands.localListVersionOf(current);
+            // OCPP reports an emptied list as version 0, not the version that emptied it.
+            if (Integer.valueOf(version).equals(reported) || (tags.isEmpty() && Integer.valueOf(0).equals(reported))) {
                 return CompletableFuture.completedFuture(current);
             }
             Map<String, TokenType> tokens = new LinkedHashMap<>();

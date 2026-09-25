@@ -80,6 +80,8 @@ class OcppBootConfigTest {
     private @NonNullByDefault({}) OcppTransport transport;
     private @NonNullByDefault({}) ThingHandlerCallback callback;
     private @NonNullByDefault({}) OcppServerConfiguration serverConfig;
+    private @NonNullByDefault({}) OcppServerBridgeHandler serverHandler;
+    private @NonNullByDefault({}) UUID session;
     private final List<ChangeConfigurationRequest> sent = new ArrayList<>();
 
     @BeforeEach
@@ -91,7 +93,7 @@ class OcppBootConfigTest {
         transport = mock(OcppTransport.class);
         acceptEverything();
 
-        OcppServerBridgeHandler serverHandler = mock(OcppServerBridgeHandler.class);
+        serverHandler = mock(OcppServerBridgeHandler.class);
         when(serverHandler.getServerConfig()).thenReturn(serverConfig);
         when(serverHandler.getTransport()).thenReturn(transport);
         when(serverHandler.localAuthListVersion(any(), any())).thenReturn(1);
@@ -112,7 +114,8 @@ class OcppBootConfigTest {
         handler = new OcppChargePointHandler(cpThing);
         handler.setCallback(callback);
         handler.initialize();
-        handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
+        session = UUID.randomUUID();
+        handler.onConnected(session, OcppVersion.V1_6);
     }
 
     private void acceptEverything() {
@@ -716,6 +719,89 @@ class OcppBootConfigTest {
         verify(transport, timeout(2000)).send(any(),
                 argThat(r -> r instanceof eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest s
                         && s.getLocalAuthorizationList() != null && s.getLocalAuthorizationList().length == 2));
+    }
+
+    @Test
+    void aListEditedWhileTheChargerWasOfflineReachesItOnReconnect() {
+        chargerKeepingItsLocalList(0);
+        handler.handleCommand(new org.openhab.core.thing.ChannelUID(CP_UID, "local-auth-list"),
+                new org.openhab.core.library.types.StringType("RFID-A"));
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        verify(transport, timeout(2000)).send(any(), argThat(r -> sentList(r, "RFID-A")));
+
+        handler.onDisconnected(session);
+        handler.handleCommand(new org.openhab.core.thing.ChannelUID(CP_UID, "local-auth-list"),
+                new org.openhab.core.library.types.StringType("RFID-B"));
+        chargerKeepingItsLocalList(1);
+        when(serverHandler.localAuthListVersion(any(), any())).thenReturn(2);
+        session = UUID.randomUUID();
+        handler.onConnected(session, OcppVersion.V1_6);
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+
+        verify(transport, timeout(2000)).send(any(), argThat(r -> sentList(r, "RFID-B")));
+    }
+
+    @Test
+    void aListClearedWhileOfflineIsSentEmptyOnceTheBindingHadProvisionedIt() {
+        chargerKeepingItsLocalList(1);
+        when(serverHandler.hasProvisionedLocalAuthList("charger")).thenReturn(true);
+        when(serverHandler.localAuthListVersion(any(), any())).thenReturn(2);
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+
+        verify(transport, timeout(2000)).send(any(), argThat(r -> sentList(r)));
+    }
+
+    @Test
+    void aClearedListIsNotResentOnceTheChargerReportsItEmpty() {
+        chargerKeepingItsLocalList(0);
+        when(serverHandler.hasProvisionedLocalAuthList("charger")).thenReturn(true);
+        when(serverHandler.localAuthListVersion(any(), any())).thenReturn(2);
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+
+        verify(transport, timeout(2000)).send(any(),
+                argThat(r -> r instanceof eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest));
+        verify(transport, org.mockito.Mockito.after(1000).never()).send(any(),
+                argThat(r -> r instanceof eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest));
+    }
+
+    @Test
+    void anEmptyListLeavesAChargerTheBindingNeverProvisionedAlone() {
+        chargerKeepingItsLocalList(5);
+        when(serverHandler.hasProvisionedLocalAuthList("charger")).thenReturn(false);
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+
+        verify(transport, org.mockito.Mockito.after(1500).never()).send(any(),
+                argThat(r -> r instanceof eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest));
+    }
+
+    /** Supports a local list, holds {@code version}, and still reports the boot setting, so a reboot skips it. */
+    private void chargerKeepingItsLocalList(int version) {
+        when(transport.send(any(), any())).thenAnswer(invocation -> {
+            Request req = invocation.getArgument(1);
+            record(req);
+            if (req instanceof GetConfigurationRequest) {
+                return CompletableFuture.completedFuture(configurationAnswer(Map.of("SupportedFeatureProfiles",
+                        "Core,LocalAuthListManagement", "AuthorizeRemoteTxRequests", "false")));
+            }
+            if (req instanceof eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest) {
+                return CompletableFuture.completedFuture(
+                        new eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionConfirmation(version));
+            }
+            return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
+        });
+    }
+
+    private static boolean sentList(Request request, String... tags) {
+        if (!(request instanceof eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest list)) {
+            return false;
+        }
+        eu.chargetime.ocpp.model.localauthlist.AuthorizationData[] data = list.getLocalAuthorizationList();
+        String[] sentTags = data == null ? new String[0]
+                : java.util.Arrays.stream(data).map(d -> d.getIdTag()).toArray(String[]::new);
+        return java.util.Arrays.equals(sentTags, tags);
     }
 
     private static boolean isStatusTrigger(Request request) {
