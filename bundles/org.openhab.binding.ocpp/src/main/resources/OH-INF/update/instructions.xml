@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<update:update-descriptions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:update="https://openhab.org/schemas/update-description/v1.0.0"
+	xsi:schemaLocation="https://openhab.org/schemas/update-description/v1.0.0 https://openhab.org/schemas/update-description-1.0.0.xsd">
+
+	<!-- update-channel, not add-channel: a Thing without a thingTypeVersion replays every set, and core throws when it
+		adds a channel the Thing already has. -->
+	<thing-type uid="ocpp:chargepoint">
+		<instruction-set targetVersion="1">
+			<update-channel id="local-auth-list">
+				<type>ocpp:local-auth-list</type>
+			</update-channel>
+			<remove-channel id="last-id-tag"/>
+		</instruction-set>
+		<instruction-set targetVersion="2">
+			<remove-channel id="learn-card"/>
+		</instruction-set>
+		<instruction-set targetVersion="3">
+			<update-channel id="custom-message">
+				<type>ocpp:custom-message</type>
+			</update-channel>
+			<update-channel id="display-message">
+				<type>ocpp:display-message</type>
+			</update-channel>
+		</instruction-set>
+	</thing-type>
+
+	<thing-type uid="ocpp:connector">
+		<instruction-set targetVersion="1">
+			<update-channel id="session-energy">
+				<type>ocpp:session-energy</type>
+			</update-channel>
+		</instruction-set>
+		<instruction-set targetVersion="2">
+			<update-channel id="last-session-energy">
+				<type>ocpp:last-session-energy</type>
+			</update-channel>
+		</instruction-set>
+		<instruction-set targetVersion="3">
+			<!-- The handler creates it again where hardwareMaxCurrentKey is set. -->
+			<remove-channel id="hardware-max-current"/>
+		</instruction-set>
+		<instruction-set targetVersion="4">
+			<update-channel id="unlock">
+				<type>ocpp:unlock</type>
+			</update-channel>
+			<update-channel id="number-phases">
+				<type>ocpp:number-phases</type>
+			</update-channel>
+			<update-channel id="power-limit">
+				<type>ocpp:power-limit</type>
+			</update-channel>
+			<remove-channel id="lock"/>
+			<remove-channel id="reset"/>
+		</instruction-set>
+	</thing-type>
+
+</update:update-descriptions>

@@ -127,6 +127,10 @@
 			<channel id="display-message" typeId="display-message"/>
 		</channels>
 
+		<properties>
+			<property name="thingTypeVersion">3</property>
+		</properties>
+
 		<representation-property>chargePointId</representation-property>
 
 		<config-description>
@@ -234,6 +238,10 @@
 				<label>Transaction Stop Time</label>
 			</channel>
 		</channels>
+
+		<properties>
+			<property name="thingTypeVersion">4</property>
+		</properties>
 
 		<representation-property>uniqueId</representation-property>
 
