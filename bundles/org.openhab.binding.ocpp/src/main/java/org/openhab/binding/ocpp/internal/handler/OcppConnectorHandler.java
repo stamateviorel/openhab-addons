@@ -148,8 +148,9 @@ public class OcppConnectorHandler extends BaseThingHandler {
     // 2.0.1 stops a transaction by the id the charger chose, so it is kept alongside the numeric one.
     private volatile @Nullable String remoteTransactionId;
     private volatile @Nullable Integer meterStart;
-    private volatile double currentLimitAmps;
-    private volatile double powerLimitWatts;
+    // NaN is no limit, which leaves the charger at its own maximum; 0 is a limit that stops the charge.
+    private volatile double currentLimitAmps = Double.NaN;
+    private volatile double powerLimitWatts = Double.NaN;
     private volatile int numberPhasesRequested;
     private volatile boolean paused;
     // A TxProfile lapses with its transaction (OCPP 1.6 errata 7.10), so what it carried moves to the default.
@@ -329,9 +330,9 @@ public class OcppConnectorHandler extends BaseThingHandler {
             case CHANNEL_CHARGE_LIMIT:
                 Double limit = toAmps(command);
                 if (limit != null) {
-                    currentLimitAmps = limit;
+                    currentLimitAmps = Math.max(0, limit);
                     // charge-limit and power-limit are mutually exclusive; the last one commanded wins.
-                    powerLimitWatts = 0;
+                    powerLimitWatts = Double.NaN;
                     if (!paused) {
                         applyLimit();
                     }
@@ -340,10 +341,20 @@ public class OcppConnectorHandler extends BaseThingHandler {
             case CHANNEL_POWER_LIMIT:
                 Double powerWatts = toWatts(command);
                 if (powerWatts != null) {
-                    powerLimitWatts = powerWatts;
+                    powerLimitWatts = Math.max(0, powerWatts);
                     if (!paused) {
                         applyLimit();
                     }
+                }
+                break;
+            case CHANNEL_CLEAR_LIMIT:
+                if (command == OnOffType.ON) {
+                    currentLimitAmps = Double.NaN;
+                    powerLimitWatts = Double.NaN;
+                    if (!paused) {
+                        applyLimit();
+                    }
+                    publish(CHANNEL_CLEAR_LIMIT, OnOffType.OFF);
                 }
                 break;
             case CHANNEL_NUMBER_PHASES:
@@ -557,7 +568,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                             + "the requested {}-phase setting may be ignored",
                     cp != null ? cp.getChargePointId() : "?", connectorId, numberPhases);
         }
-        boolean powerSourced = watts > 0.0 && !paused && allowsPower;
+        boolean powerSourced = !Double.isNaN(watts) && !paused && allowsPower;
         ChargingRateUnitType wireUnit;
         double wireValue;
         if (powerSourced) {
@@ -593,7 +604,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (transactionId != null && !forceTxDefaultProfile) {
             limitHeldByTxProfile = true;
         }
-        if (!claim.paused() && claim.wireValue() <= 0.0) {
+        if (!claim.paused() && Double.isNaN(claim.wireValue())) {
             clearProfile(claim);
         } else {
             setProfile(claim);
@@ -653,7 +664,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (claim.powerSourced()) {
             publish(CHANNEL_POWER_LIMIT, new QuantityType<>(claim.limitWatts(), Units.WATT));
         } else {
-            publish(CHANNEL_CHARGE_LIMIT, new QuantityType<>(claim.limitAmps(), Units.AMPERE));
+            publish(CHANNEL_CHARGE_LIMIT, Double.isNaN(claim.limitAmps()) ? UnDefType.UNDEF
+                    : new QuantityType<>(claim.limitAmps(), Units.AMPERE));
         }
         Integer phaseCount = claim.numberPhases();
         if (phaseCount != null) {

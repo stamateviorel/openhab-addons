@@ -607,7 +607,7 @@ class OcppConnectorReadinessTest {
         when(parent.send(argThat(OcppConnectorReadinessTest::isClearChargingProfile))).thenReturn(CompletableFuture
                 .failedFuture(new eu.chargetime.ocpp.CallErrorException("NotSupported", "no clear", null)));
 
-        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(0, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_CLEAR_LIMIT), OnOffType.ON);
         handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
 
         verify(parent, times(1)).send(argThat(OcppConnectorReadinessTest::isClearChargingProfile));

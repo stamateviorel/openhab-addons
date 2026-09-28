@@ -53,6 +53,11 @@
 			<remove-channel id="lock"/>
 			<remove-channel id="reset"/>
 		</instruction-set>
+		<instruction-set targetVersion="5">
+			<update-channel id="clear-limit">
+				<type>ocpp:clear-limit</type>
+			</update-channel>
+		</instruction-set>
 	</thing-type>
 
 </update:update-descriptions>
