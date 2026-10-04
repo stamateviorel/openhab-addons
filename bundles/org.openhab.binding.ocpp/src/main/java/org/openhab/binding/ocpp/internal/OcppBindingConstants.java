@@ -109,6 +109,8 @@ public class OcppBindingConstants {
     public static final String PROPERTY_UNIQUE_ID = "uniqueId";
     public static final String PROPERTY_SEEN_ON = "seenOn";
     public static final String PROPERTY_SEEN_AT = "seenAt";
+    /** Set while this binding has left a 0 A stop in the charger's own persistent default profile. */
+    public static final String PROPERTY_PERSISTED_STOP = "persistedStop";
 
     public static String uniqueConnectorId(String chargePointId, int connectorId) {
         return chargePointId + ":" + connectorId;
