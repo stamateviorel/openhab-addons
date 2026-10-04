@@ -573,6 +573,17 @@ class OcppConnectorHandlerTest {
      * more than the wiring allows.
      */
     @Test
+    void aReleasedStopShowsTheConnectorAsNoLongerPaused() {
+        rememberStop();
+        attachReadyChargePoint();
+
+        handler.onChargePointReady();
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_PAUSE)), eq(OnOffType.OFF));
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_CHARGE_LIMIT)), eq(UnDefType.UNDEF));
+    }
+
+    @Test
     void aCapLeftByAnEarlierRunIsLeftExactlyWhereItIs() {
         OcppChargePointHandler chargePoint = attachReadyChargePoint();
 

@@ -540,6 +540,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
                         logger.info("Connector {} released a 0 A charging profile left by an earlier run; "
                                 + "it would have suspended every charge", connectorId);
                         rememberPersistedStop(false);
+                        // Items restored from persistence may still say paused; a rule that only writes on
+                        // change would then never send the pause it still wants.
+                        publish(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
+                        publish(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
+                        publish(CHANNEL_PAUSE, OnOffType.OFF);
                     } else if (ex != null) {
                         // Worth another attempt on the next reconnect: until it lands the stop still binds.
                         rememberedStopUnchecked = true;
