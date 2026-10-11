@@ -786,6 +786,75 @@ class OcppConnectorHandlerTest {
         verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
     }
 
+    @Test
+    void aChargeEndingOnAnotherLimitStartsTheNextAtTheStartLimit() {
+        OcppChargePointHandler chargePoint = attachWithStartLimit(8);
+        startTransaction(7);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(16));
+        clearInvocations(chargePoint);
+
+        endTransaction(7);
+
+        SetChargingProfileRequest next = lastProfile(chargePoint);
+        assertEquals(ChargingProfilePurposeType.TxDefaultProfile,
+                next.getCsChargingProfiles().getChargingProfilePurpose());
+        assertEquals(8.0, sentLimit(next));
+    }
+
+    @Test
+    void aChargeEndingPausedStartsTheNextAtTheStartLimitUnpaused() {
+        OcppChargePointHandler chargePoint = attachWithStartLimit(8);
+        startTransaction(7);
+        command(CHANNEL_PAUSE, OnOffType.ON);
+        clearInvocations(chargePoint, callback);
+
+        endTransaction(7);
+
+        assertEquals(8.0, sentLimit(lastProfile(chargePoint)));
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_PAUSE)), eq(OnOffType.OFF));
+    }
+
+    @Test
+    void aChargeNobodyThrottledStillEndsAtTheStartLimit() {
+        OcppChargePointHandler chargePoint = attachWithStartLimit(8);
+        startTransaction(7);
+        clearInvocations(chargePoint);
+
+        endTransaction(7);
+
+        assertEquals(8.0, sentLimit(lastProfile(chargePoint)));
+    }
+
+    @Test
+    void theStartLimitIsWhereAChargerStartsOutOnce() {
+        OcppChargePointHandler chargePoint = attachWithStartLimit(8);
+        handler.onChargePointReady();
+        handler.onChargePointReady();
+
+        verify(chargePoint, times(1)).send(argThat(r -> r instanceof SetChargingProfileRequest));
+        verify(chargePoint).send(argThat(r -> r instanceof SetChargingProfileRequest && sentLimit(r) == 8.0));
+    }
+
+    @Test
+    void aLimitOfThisRunIsNotReplacedByTheStartLimit() {
+        OcppChargePointHandler chargePoint = attachWithStartLimit(8);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(12));
+        clearInvocations(chargePoint);
+
+        handler.onChargePointReady();
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+    }
+
+    private OcppChargePointHandler attachWithStartLimit(double amps) {
+        when(thing.getConfiguration())
+                .thenReturn(new org.openhab.core.config.core.Configuration(java.util.Map.of("startLimit", amps)));
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        when(chargePoint.recoverTransactionId(1)).thenReturn(null);
+        handler.initialize();
+        return chargePoint;
+    }
+
     /** A charge point that reports {@code limit} amps in force now, or declines to say when it is null. */
     private OcppChargePointHandler chargerApplying(@org.eclipse.jdt.annotation.Nullable Double limit) {
         OcppChargePointHandler chargePoint = attachReadyChargePoint();

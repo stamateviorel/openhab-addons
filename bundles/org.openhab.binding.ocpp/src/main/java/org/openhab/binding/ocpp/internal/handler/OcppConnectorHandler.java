@@ -132,6 +132,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private volatile boolean forceTxDefaultProfile;
     private volatile boolean disableSmartCharging;
     private volatile int profileMinIntervalMs;
+    private volatile double startLimit = -1;
     private volatile String hardwareMaxCurrentKey = "";
     private volatile String remoteStartTag = "openhab";
     private volatile @Nullable String pendingStartTag;
@@ -196,6 +197,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         forceTxDefaultProfile = config.forceTxDefaultProfile;
         disableSmartCharging = config.disableSmartCharging;
         profileMinIntervalMs = config.profileMinIntervalMs;
+        startLimit = config.startLimit;
         hardwareMaxCurrentKey = config.hardwareMaxCurrentKey;
         remoteStartTag = config.remoteStartTag;
         refreshInterval = config.refreshInterval;
@@ -514,6 +516,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (limitDeferred) {
             limitDeferred = false;
             applyLimit();
+        }
+        if (startLimit >= 0 && transactionId == null && !paused && Double.isNaN(currentLimitAmps)
+                && Double.isNaN(powerLimitWatts)) {
+            // Nothing of this run's own yet, so the charger starts out where every charge is meant to.
+            startAgainAtStartLimit();
         }
         dropRememberedStop();
     }
@@ -1184,10 +1191,21 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     /** With the transaction gone, a re-send lands as the TxDefaultProfile the next transaction starts under. */
     private void carryLimitPastTransaction() {
-        if (limitHeldByTxProfile) {
+        if (startLimit >= 0) {
+            limitHeldByTxProfile = false;
+            startAgainAtStartLimit();
+        } else if (limitHeldByTxProfile) {
             limitHeldByTxProfile = false;
             applyLimit();
         }
+    }
+
+    /** With a start limit set, every charge begins at it with pause off, whatever the last one ended on. */
+    private void startAgainAtStartLimit() {
+        paused = false;
+        currentLimitAmps = startLimit;
+        powerLimitWatts = Double.NaN;
+        applyLimit();
     }
 
     private void armStuckWatchdog(ConnectorStatus status) {

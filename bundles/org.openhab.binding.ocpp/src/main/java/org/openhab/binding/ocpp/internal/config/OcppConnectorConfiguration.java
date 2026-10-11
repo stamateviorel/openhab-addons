@@ -26,6 +26,8 @@ public class OcppConnectorConfiguration {
     public boolean forceTxDefaultProfile = false;
     public boolean disableSmartCharging = false;
     public int profileMinIntervalMs = 0;
+    /** Negative is unset: the last limit and pause carry over to the next charge. */
+    public double startLimit = -1;
     public String hardwareMaxCurrentKey = "";
     public String remoteStartTag = "openhab";
     public double nominalVoltage = 230.0;
