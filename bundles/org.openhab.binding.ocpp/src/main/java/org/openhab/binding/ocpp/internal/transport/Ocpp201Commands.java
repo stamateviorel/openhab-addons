@@ -171,6 +171,16 @@ public class Ocpp201Commands implements OcppCommands {
     }
 
     @Override
+    public @Nullable Request readCompositeSchedule(int connectorId, boolean inWatts) {
+        return null;
+    }
+
+    @Override
+    public @Nullable AppliedLimit appliedLimitOf(@Nullable Confirmation confirmation, boolean inWatts) {
+        return null;
+    }
+
+    @Override
     public Request clearChargingProfile(int connectorId) {
         ClearChargingProfile criteria = new ClearChargingProfile();
         criteria.setEvseId(connectorId);

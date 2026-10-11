@@ -28,6 +28,8 @@ import eu.chargetime.ocpp.model.core.ChangeAvailabilityRequest;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationRequest;
 import eu.chargetime.ocpp.model.core.ChargingRateUnitType;
+import eu.chargetime.ocpp.model.core.ChargingSchedule;
+import eu.chargetime.ocpp.model.core.ChargingSchedulePeriod;
 import eu.chargetime.ocpp.model.core.ConfigurationStatus;
 import eu.chargetime.ocpp.model.core.GetConfigurationRequest;
 import eu.chargetime.ocpp.model.core.IdTagInfo;
@@ -57,6 +59,9 @@ import eu.chargetime.ocpp.model.remotetrigger.TriggerMessageStatus;
 import eu.chargetime.ocpp.model.smartcharging.ChargingProfileStatus;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileConfirmation;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileStatus;
+import eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleConfirmation;
+import eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleRequest;
+import eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleStatus;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
 
 /**
@@ -66,6 +71,9 @@ import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
  */
 @NonNullByDefault
 public class Ocpp16Commands implements OcppCommands {
+
+    // Long enough to cover the moment of the answer, short enough not to ask the charger to plan ahead.
+    private static final int COMPOSITE_WINDOW_SECONDS = 60;
 
     @Override
     public Request remoteStart(int connectorId, String idToken, TokenType type) {
@@ -120,6 +128,39 @@ public class Ocpp16Commands implements OcppCommands {
     @Override
     public Request clearChargingProfile(int connectorId) {
         return ChargingProfileBuilder.clearLimit(connectorId);
+    }
+
+    @Override
+    public @Nullable Request readCompositeSchedule(int connectorId, boolean inWatts) {
+        GetCompositeScheduleRequest request = new GetCompositeScheduleRequest(connectorId, COMPOSITE_WINDOW_SECONDS);
+        request.setChargingRateUnit(inWatts ? eu.chargetime.ocpp.model.smartcharging.ChargingRateUnitType.W
+                : eu.chargetime.ocpp.model.smartcharging.ChargingRateUnitType.A);
+        return request;
+    }
+
+    @Override
+    public @Nullable AppliedLimit appliedLimitOf(@Nullable Confirmation confirmation, boolean inWatts) {
+        if (!(confirmation instanceof GetCompositeScheduleConfirmation composite)
+                || composite.getStatus() != GetCompositeScheduleStatus.Accepted) {
+            return null;
+        }
+        ChargingSchedule schedule = composite.getChargingSchedule();
+        if (schedule == null
+                || schedule.getChargingRateUnit() != (inWatts ? ChargingRateUnitType.W : ChargingRateUnitType.A)) {
+            return null;
+        }
+        ChargingSchedulePeriod[] periods = schedule.getChargingSchedulePeriod();
+        if (periods == null) {
+            return null;
+        }
+        for (ChargingSchedulePeriod period : periods) {
+            Integer start = period.getStartPeriod();
+            Double limit = period.getLimit();
+            if (start != null && start == 0 && limit != null) {
+                return new AppliedLimit(limit, period.getNumberPhases());
+            }
+        }
+        return null;
     }
 
     @Override

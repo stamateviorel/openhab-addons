@@ -49,6 +49,17 @@ public interface OcppCommands {
 
     Request clearChargingProfile(int connectorId);
 
+    /** What the charger applies on the connector right now; null on a version this binding does not read it on. */
+    @Nullable
+    Request readCompositeSchedule(int connectorId, boolean inWatts);
+
+    /** The limit in force now, or null unless the answer states one in the unit asked for. */
+    @Nullable
+    AppliedLimit appliedLimitOf(@Nullable Confirmation confirmation, boolean inWatts);
+
+    record AppliedLimit(double limit, @Nullable Integer numberPhases) {
+    }
+
     /** 1.6 answers in the confirmation; 2.0.1 answers later via {@link OcppServerListener#onCapabilities}. */
     Request readCapabilities();
 

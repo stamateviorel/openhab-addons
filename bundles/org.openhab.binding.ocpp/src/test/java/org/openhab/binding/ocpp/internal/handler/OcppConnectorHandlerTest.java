@@ -65,6 +65,9 @@ import eu.chargetime.ocpp.model.smartcharging.ChargingProfileStatus;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileConfirmation;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileRequest;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileStatus;
+import eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleConfirmation;
+import eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleRequest;
+import eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleStatus;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileConfirmation;
 import eu.chargetime.ocpp.model.smartcharging.SetChargingProfileRequest;
 import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
@@ -685,6 +688,137 @@ class OcppConnectorHandlerTest {
         return (SetChargingProfileRequest) sent.get(sent.size() - 1);
     }
 
+    @Test
+    void aDefaultTheChargerAlreadyAppliesIsNotWrittenAgain() {
+        OcppChargePointHandler chargePoint = chargerApplying(10.0);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        verify(chargePoint).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_CHARGE_LIMIT)), eq(
+                new org.openhab.core.library.types.QuantityType<>(10.0, org.openhab.core.library.unit.Units.AMPERE)));
+    }
+
+    @Test
+    void aDifferentDefaultIsWritten() {
+        OcppChargePointHandler chargePoint = chargerApplying(16.0);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        assertEquals(10.0, sentLimit(lastProfile(chargePoint)));
+    }
+
+    @Test
+    void aStopAlreadyInPlaceIsNotWrittenAgain() {
+        OcppChargePointHandler chargePoint = chargerApplying(0.0);
+
+        command(CHANNEL_PAUSE, OnOffType.ON);
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_PAUSE)), eq(OnOffType.ON));
+    }
+
+    @Test
+    void aChargerThatDeclinesTheReadStillGetsTheWrite() {
+        OcppChargePointHandler chargePoint = chargerApplying(null);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        assertEquals(10.0, sentLimit(lastProfile(chargePoint)));
+    }
+
+    @Test
+    void aChargerWithoutTheReadIsWrittenToAndNotAskedAgain() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        when(chargePoint.send(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0) instanceof GetCompositeScheduleRequest
+                        ? CompletableFuture.failedFuture(
+                                new eu.chargetime.ocpp.CallErrorException("NotSupported", "no composite", null))
+                        : CompletableFuture
+                                .completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted)));
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(12));
+
+        verify(chargePoint, times(1)).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+        assertEquals(2, limitRequests(chargePoint).size());
+        assertEquals(12.0, sentLimit(lastProfile(chargePoint)));
+    }
+
+    @Test
+    void aLimitDuringATransactionIsNotReadBack() {
+        OcppChargePointHandler chargePoint = chargerApplying(10.0);
+        startTransaction(7);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+        assertEquals(10.0, sentLimit(lastProfile(chargePoint)));
+    }
+
+    @Test
+    void aSlowReadDoesNotOverwriteANewerLimit() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> slowRead = new CompletableFuture<>();
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        when(chargePoint.send(any())).thenAnswer(invocation -> {
+            if (!(invocation.getArgument(0) instanceof GetCompositeScheduleRequest)) {
+                return CompletableFuture
+                        .completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted));
+            }
+            if (reads.getAndIncrement() == 0) {
+                return slowRead;
+            }
+            GetCompositeScheduleConfirmation applies12 = new GetCompositeScheduleConfirmation(
+                    GetCompositeScheduleStatus.Accepted);
+            applies12.setChargingSchedule(new eu.chargetime.ocpp.model.core.ChargingSchedule(
+                    eu.chargetime.ocpp.model.core.ChargingRateUnitType.A,
+                    new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod[] {
+                            new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod(0, 12.0) }));
+            return CompletableFuture.completedFuture(applies12);
+        });
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(12));
+        slowRead.complete(new GetCompositeScheduleConfirmation(GetCompositeScheduleStatus.Rejected));
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+    }
+
+    /** A charge point that reports {@code limit} amps in force now, or declines to say when it is null. */
+    private OcppChargePointHandler chargerApplying(@org.eclipse.jdt.annotation.Nullable Double limit) {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        when(chargePoint.send(any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(0);
+            if (request instanceof GetCompositeScheduleRequest) {
+                GetCompositeScheduleConfirmation answer = new GetCompositeScheduleConfirmation(
+                        limit == null ? GetCompositeScheduleStatus.Rejected : GetCompositeScheduleStatus.Accepted);
+                if (limit != null) {
+                    answer.setChargingSchedule(new eu.chargetime.ocpp.model.core.ChargingSchedule(
+                            eu.chargetime.ocpp.model.core.ChargingRateUnitType.A,
+                            new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod[] {
+                                    new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod(0, limit) }));
+                }
+                return CompletableFuture.completedFuture(answer);
+            }
+            if (request instanceof ClearChargingProfileRequest) {
+                return CompletableFuture
+                        .completedFuture(new ClearChargingProfileConfirmation(ClearChargingProfileStatus.Accepted));
+            }
+            return CompletableFuture
+                    .completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted));
+        });
+        return chargePoint;
+    }
+
+    /** The profile writes and clears sent so far, without the read-backs that may come before them. */
+    private static List<Request> limitRequests(OcppChargePointHandler chargePoint) {
+        ArgumentCaptor<Request> captor = ArgumentCaptor.forClass(Request.class);
+        verify(chargePoint, org.mockito.Mockito.atLeastOnce()).send(captor.capture());
+        return captor.getAllValues().stream().filter(r -> !(r instanceof GetCompositeScheduleRequest)).toList();
+    }
+
     private static double sentLimit(Request request) {
         return ((SetChargingProfileRequest) request).getCsChargingProfiles().getChargingSchedule()
                 .getChargingSchedulePeriod()[0].getLimit();
@@ -698,9 +832,8 @@ class OcppConnectorHandlerTest {
         command(CHANNEL_PAUSE, OnOffType.ON);
         command(CHANNEL_PAUSE, OnOffType.OFF);
 
-        ArgumentCaptor<Request> captor = ArgumentCaptor.forClass(Request.class);
-        verify(chargePoint, times(2)).send(captor.capture());
-        List<Request> requests = captor.getAllValues();
+        List<Request> requests = limitRequests(chargePoint);
+        assertEquals(2, requests.size());
 
         assertTrue(requests.get(0) instanceof SetChargingProfileRequest, "pause must send a SetChargingProfile");
         assertEquals(0.0, sentLimit(requests.get(0)), "pause must cap the connector at 0 A");
@@ -752,9 +885,9 @@ class OcppConnectorHandlerTest {
 
         command(CHANNEL_CLEAR_LIMIT, OnOffType.ON);
 
-        ArgumentCaptor<Request> captor = ArgumentCaptor.forClass(Request.class);
-        verify(chargePoint, times(2)).send(captor.capture());
-        assertTrue(captor.getAllValues().get(1) instanceof ClearChargingProfileRequest);
+        List<Request> requests = limitRequests(chargePoint);
+        assertEquals(2, requests.size());
+        assertTrue(requests.get(1) instanceof ClearChargingProfileRequest);
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_CHARGE_LIMIT)), eq(UnDefType.UNDEF));
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_CLEAR_LIMIT)), eq(OnOffType.OFF));
     }
@@ -766,12 +899,12 @@ class OcppConnectorHandlerTest {
         command(CHANNEL_PAUSE, OnOffType.ON);
 
         command(CHANNEL_CLEAR_LIMIT, OnOffType.ON);
-        verify(chargePoint, times(2)).send(any());
+        assertEquals(2, limitRequests(chargePoint).size());
         command(CHANNEL_PAUSE, OnOffType.OFF);
 
-        ArgumentCaptor<Request> captor = ArgumentCaptor.forClass(Request.class);
-        verify(chargePoint, times(3)).send(captor.capture());
-        assertTrue(captor.getAllValues().get(2) instanceof ClearChargingProfileRequest);
+        List<Request> requests = limitRequests(chargePoint);
+        assertEquals(3, requests.size());
+        assertTrue(requests.get(2) instanceof ClearChargingProfileRequest);
     }
 
     @Test
@@ -807,9 +940,8 @@ class OcppConnectorHandlerTest {
         command(CHANNEL_PAUSE, OnOffType.ON);
         command(CHANNEL_PAUSE, OnOffType.OFF);
 
-        ArgumentCaptor<Request> captor = ArgumentCaptor.forClass(Request.class);
-        verify(chargePoint, times(3)).send(captor.capture());
-        List<Request> requests = captor.getAllValues();
+        List<Request> requests = limitRequests(chargePoint);
+        assertEquals(3, requests.size());
 
         assertEquals(16.0, sentLimit(requests.get(0)), "the explicit limit must be sent");
         assertEquals(0.0, sentLimit(requests.get(1)), "pause must cap at 0 A");

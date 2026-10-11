@@ -210,4 +210,24 @@ class Ocpp16CommandsTest {
         }
         return map;
     }
+
+    @Test
+    void anAcceptedScheduleInTheUnitAskedForGivesTheLimitInForce() {
+        eu.chargetime.ocpp.model.core.ChargingSchedulePeriod now = new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod(
+                0, 16.0);
+        now.setNumberPhases(1);
+        eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleConfirmation answer = new eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleConfirmation(
+                eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleStatus.Accepted);
+        answer.setChargingSchedule(
+                new eu.chargetime.ocpp.model.core.ChargingSchedule(eu.chargetime.ocpp.model.core.ChargingRateUnitType.A,
+                        new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod[] {
+                                new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod(600, 6.0), now }));
+
+        OcppCommands.AppliedLimit applied = commands.appliedLimitOf(answer, false);
+
+        assertEquals(new OcppCommands.AppliedLimit(16.0, 1), applied);
+        assertNull(commands.appliedLimitOf(answer, true), "an answer in amps says nothing about watts");
+        assertNull(commands.appliedLimitOf(new eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleConfirmation(
+                eu.chargetime.ocpp.model.smartcharging.GetCompositeScheduleStatus.Rejected), false));
+    }
 }

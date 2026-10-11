@@ -163,6 +163,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
     // Set once the charger has answered a profile with NotSupported: nothing more is sent until it boots
     // or its Thing config is edited.
     private volatile boolean smartChargingObservedUnsupported;
+    // Set once the charger refuses GetCompositeSchedule as a feature; defaults are then written unread.
+    private volatile boolean compositeReadUnsupported;
 
     // Dedicated lock: the base class synchronizes on the handler monitor.
     private final Object lock = new Object();
@@ -207,6 +209,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         // user's way out of a backoff — and out of the warn latch, so a second refusal is reported again.
         smartChargingObservedUnsupported = false;
         smartChargingUnsupportedLogged = false;
+        compositeReadUnsupported = false;
         OcppChargePointHandler parent = chargePointHandler();
         if (parent == null) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_UNINITIALIZED);
@@ -503,6 +506,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
      */
     public void onChargerBooted() {
         smartChargingObservedUnsupported = false;
+        compositeReadUnsupported = false;
         rememberedStopUnchecked = true;
     }
 
@@ -664,15 +668,71 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (!claim.paused() && Double.isNaN(claim.wireValue())) {
             clearProfile(claim);
         } else {
+            writeUnlessAlreadyApplied(claim);
+        }
+    }
+
+    /**
+     * A default profile is written into the charger's persistent storage, so one that would change nothing is
+     * read back first and skipped. Anything short of a clear match is written as before.
+     */
+    private void writeUnlessAlreadyApplied(ProfileClaim claim) {
+        OcppCommands commands = commands();
+        boolean inWatts = claim.wireUnit() == ChargingRateUnitType.W;
+        eu.chargetime.ocpp.model.Request read = persistsDefault() && !compositeReadUnsupported
+                ? commands.readCompositeSchedule(connectorId, inWatts)
+                : null;
+        if (read == null) {
             setProfile(claim);
+            return;
+        }
+        dispatch(read, "GetCompositeSchedule").whenComplete((confirmation, ex) -> {
+            // The outbound queue runs in order, so a newer claim reads after this one's write and decides itself.
+            if (!isNewest(claim)) {
+                return;
+            }
+            if (ex != null && unsupportedFeatureError(ex) != null) {
+                compositeReadUnsupported = true;
+            }
+            OcppCommands.AppliedLimit applied = ex == null ? commands.appliedLimitOf(confirmation, inWatts) : null;
+            if (applied != null && persistsDefault() && alreadyApplied(applied, claim)) {
+                logger.debug("Connector {} already applies {} {}; default profile not rewritten", connectorId,
+                        claim.wireValue(), claim.wireUnit());
+                if (claimPublication(claim)) {
+                    publishAcceptedLimit(claim);
+                    rememberPersistedStop(claim.wireValue() == 0);
+                }
+                return;
+            }
+            setProfile(claim);
+        });
+    }
+
+    /** OCPP 1.6 carries one decimal, and an unstated phase count means three. */
+    private static boolean alreadyApplied(OcppCommands.AppliedLimit applied, ProfileClaim claim) {
+        if (Math.abs(applied.limit() - claim.wireValue()) >= 0.05) {
+            return false;
+        }
+        Integer reported = applied.numberPhases();
+        Integer requested = claim.numberPhases();
+        return (requested == null ? 3 : requested) == (reported == null ? 3 : reported);
+    }
+
+    /** A TxProfile lapses with its transaction; anything else lands in the charger's persistent default. */
+    private boolean persistsDefault() {
+        return forceTxDefaultProfile || transactionId == null;
+    }
+
+    private boolean isNewest(ProfileClaim claim) {
+        synchronized (lock) {
+            return claim.generation() == profileGeneration;
         }
     }
 
     private void setProfile(ProfileClaim claim) {
         OcppCommands commands = commands();
         Integer requestedPhases = claim.numberPhases();
-        // A TxProfile lapses with its transaction; anything else is written into the charger's persistent default.
-        boolean persists = forceTxDefaultProfile || transactionId == null;
+        boolean persists = persistsDefault();
         dispatch(commands.setChargingProfile(connectorId, claim.wireValue(), claim.wireUnit() == ChargingRateUnitType.W,
                 requestedPhases == null ? 0 : requestedPhases, forceTxDefaultProfile, transactionId,
                 remoteTransactionId), "SetChargingProfile").whenComplete((confirmation, ex) -> {

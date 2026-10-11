@@ -262,6 +262,7 @@ For such a session, suspend the power with `pause` (a 0 A profile needs no trans
 Setting it to 0 stops the charge, as a 0 A limit does in OCPP, and `clear-limit` removes the cap, so the charger goes back to its own maximum.
 Unless `forceTxDefaultProfile` is set, the limit goes out during a transaction as a `TxProfile`, which the charger drops when that transaction ends, and outside one as the `TxDefaultProfile` the next transaction starts under.
 So when a transaction that got a `TxProfile` ends, the binding sends the current limit again as the `TxDefaultProfile`, and the next session starts at the last limit, or paused if it was paused.
+A `TxDefaultProfile` is kept in the charger's own storage, so on OCPP 1.6 the binding first asks the charger what it applies (`GetCompositeSchedule`) and leaves out a write that would change nothing; a charger that cannot answer is written to as before.
 Some chargers only accept a charge limit expressed in watts (their OCPP `ChargingScheduleAllowedChargingRateUnit` is `Power`, not `Current`); the binding learns this from the charger and converts `charge-limit` amps to watts with `nominalVoltage` and `phases`, so the same amps channel still works.
 Alternatively set `power-limit` (watts) directly — it is sent as-is, with no conversion, on any charger that accepts a power limit, and takes over from `charge-limit` while it is set.
 Commanding `charge-limit` again clears the power-limit and returns to amps, so the most recent command always wins.
