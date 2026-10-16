@@ -1138,4 +1138,44 @@ class OcppConnectorHandlerTest {
         verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_METER_STOP)), any());
         verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_LAST_SESSION_ENERGY)), any());
     }
+
+    @Test
+    void aStopThatArrivesAfterAvailableStillLogsTheSessionTotal() {
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 100, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));
+        handler.onStatusNotification(status(ChargePointStatus.Available));
+
+        handler.onTransactionEnded(Ocpp16Events.toEnded(new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600,
+                java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC), 7), 7));
+
+        assertChannel(CHANNEL_METER_STOP,
+                new org.openhab.core.library.types.QuantityType<>(1600, org.openhab.core.library.unit.Units.WATT_HOUR));
+        assertChannel(CHANNEL_SESSION_ENERGY,
+                new org.openhab.core.library.types.QuantityType<>(1500, org.openhab.core.library.unit.Units.WATT_HOUR));
+        assertChannel(CHANNEL_LAST_SESSION_ENERGY,
+                new org.openhab.core.library.types.QuantityType<>(1500, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
+
+    @Test
+    void aLateStopLeavesTheNextSessionRunning() {
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 100, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));
+        handler.onStatusNotification(status(ChargePointStatus.Available));
+        handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
+                "tag", 1600, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 8));
+        clearInvocations(callback);
+
+        handler.onTransactionEnded(Ocpp16Events.toEnded(new eu.chargetime.ocpp.model.core.StopTransactionRequest(1600,
+                java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC), 7), 7));
+        handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "kWh", "1.9"));
+
+        assertChannel(CHANNEL_LAST_SESSION_ENERGY,
+                new org.openhab.core.library.types.QuantityType<>(1500, org.openhab.core.library.unit.Units.WATT_HOUR));
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_TRANSACTION_ID)), any());
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_SESSION_ENERGY)),
+                eq(new org.openhab.core.library.types.QuantityType<>(1500,
+                        org.openhab.core.library.unit.Units.WATT_HOUR)));
+        assertChannel(CHANNEL_SESSION_ENERGY,
+                new org.openhab.core.library.types.QuantityType<>(300, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
 }

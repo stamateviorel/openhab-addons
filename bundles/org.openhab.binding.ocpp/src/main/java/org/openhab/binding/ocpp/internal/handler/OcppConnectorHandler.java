@@ -149,6 +149,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
     // 2.0.1 stops a transaction by the id the charger chose, so it is kept alongside the numeric one.
     private volatile @Nullable String remoteTransactionId;
     private volatile @Nullable Integer meterStart;
+    // A charger may report Available before it sends the stop, which still has to settle the session it ends.
+    private volatile @Nullable ForgottenTransaction forgotten;
     // NaN is no limit, which leaves the charger at its own maximum; 0 is a limit that stops the charge.
     private volatile double currentLimitAmps = Double.NaN;
     private volatile double powerLimitWatts = Double.NaN;
@@ -1149,27 +1151,44 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     public void onTransactionEnded(TransactionEvent event) {
-        Integer meterStop = event.meterWh();
-        if (meterStop != null) {
-            publish(CHANNEL_METER_STOP, new QuantityType<>(meterStop, Units.WATT_HOUR));
-            Integer start = meterStart;
-            if (start != null) {
-                int total = meterStop - start;
-                publish(CHANNEL_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
-                publish(CHANNEL_LAST_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
-            }
+        ForgottenTransaction late = forgotten;
+        if (late != null && late.transactionId() == event.transactionId()) {
+            forgotten = null;
+            publishStopReading(event, late.meterStart(), transactionId == null);
+            publishStopTimestamp(event);
+            return;
         }
+        publishStopReading(event, meterStart, true);
         // Energy totals must land before transaction-id clears, or a rule triggered by the end reads the mid-
         // session value.
         transactionId = null;
         remoteTransactionId = null;
         meterStart = null;
         publish(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
+        publishStopTimestamp(event);
+        carryLimitPastTransaction();
+    }
+
+    private void publishStopReading(TransactionEvent event, @Nullable Integer start, boolean sessionIdle) {
+        Integer meterStop = event.meterWh();
+        if (meterStop == null) {
+            return;
+        }
+        publish(CHANNEL_METER_STOP, new QuantityType<>(meterStop, Units.WATT_HOUR));
+        if (start != null) {
+            int total = meterStop - start;
+            if (sessionIdle) {
+                publish(CHANNEL_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
+            }
+            publish(CHANNEL_LAST_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
+        }
+    }
+
+    private void publishStopTimestamp(TransactionEvent event) {
         ZonedDateTime timestamp = event.timestamp();
         if (timestamp != null) {
             publish(CHANNEL_TIMESTAMP_STOP, new DateTimeType(timestamp));
         }
-        carryLimitPastTransaction();
     }
 
     /** Available means no transaction is running, so one still open here never had its StopTransaction. */
@@ -1178,6 +1197,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (stale == null) {
             return;
         }
+        forgotten = new ForgottenTransaction(stale, meterStart);
         transactionId = null;
         remoteTransactionId = null;
         meterStart = null;
@@ -1231,5 +1251,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
         if (task != null) {
             task.cancel(false);
         }
+    }
+
+    private record ForgottenTransaction(int transactionId, @Nullable Integer meterStart) {
     }
 }

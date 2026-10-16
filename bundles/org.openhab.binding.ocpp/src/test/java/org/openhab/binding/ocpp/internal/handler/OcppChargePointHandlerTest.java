@@ -144,6 +144,16 @@ class OcppChargePointHandlerTest {
     }
 
     @Test
+    void aStopThatArrivesAfterTheConnectorReportedAvailableStillReachesIt() {
+        handler.onTransactionStarted(started(1, 100));
+        handler.transactionCompleted(100);
+
+        handler.onTransactionEnded(ended(100));
+
+        verify(connector1).onTransactionEnded(any());
+    }
+
+    @Test
     void anUnknownTransactionIdIsIgnored() {
         handler.onTransactionEnded(ended(999));
 
