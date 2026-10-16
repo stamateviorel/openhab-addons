@@ -26,6 +26,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -159,6 +160,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
     // A TxProfile lapses with its transaction (OCPP 1.6 errata 7.10), so what it carried moves to the default.
     private volatile boolean limitHeldByTxProfile;
     private volatile boolean limitDeferred;
+    // The unit the last profile went out in, checked again once the charger has said which units it takes.
+    private volatile @Nullable ChargingRateUnitType lastWireUnit;
     // Cleared once this run has accounted for a stop a previous run may have left on the charger.
     private volatile boolean rememberedStopUnchecked = true;
     private volatile boolean smartChargingUnsupportedLogged;
@@ -182,6 +185,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private @Nullable ScheduledFuture<?> pollTask;
     private @Nullable ScheduledFuture<?> stuckTask;
     private volatile @Nullable ScheduledFuture<?> remoteStartRetryTask;
+    // A start answered after a stop, or after a newer start, must not schedule another attempt.
+    private final AtomicInteger remoteStartRun = new AtomicInteger();
     private @Nullable CompletableFuture<eu.chargetime.ocpp.model.Confirmation> pendingPoll;
 
     private record ProfileClaim(long generation, ChargingRateUnitType wireUnit, double wireValue, double limitAmps,
@@ -298,9 +303,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
     @Override
     public void dispose() {
         cancel(pollTask);
-        cancel(remoteStartRetryTask);
         pollTask = null;
-        remoteStartRetryTask = null;
+        abandonRemoteStart();
         pendingStartTag = null;
         synchronized (lock) {
             cancel(stuckTask);
@@ -514,6 +518,20 @@ public class OcppConnectorHandler extends BaseThingHandler {
         rememberedStopUnchecked = true;
     }
 
+    /** A limit released before the charger reported its units may have gone out in one it rejects. */
+    public void onCapabilitiesRead() {
+        ChargingRateUnitType unit = lastWireUnit;
+        OcppChargePointHandler cp = chargePoint;
+        if (unit == null || cp == null) {
+            return;
+        }
+        ChargerCapabilities caps = cp.getCapabilities();
+        Optional<Boolean> allowed = unit == ChargingRateUnitType.W ? caps.allowsPowerUnit() : caps.allowsCurrentUnit();
+        if (Boolean.FALSE.equals(allowed.orElse(null))) {
+            applyLimit();
+        }
+    }
+
     public void onChargePointReady() {
         if (limitDeferred) {
             limitDeferred = false;
@@ -651,6 +669,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
             wireUnit = ChargingRateUnitType.A;
             wireValue = amps;
         }
+        lastWireUnit = !paused && Double.isNaN(wireValue) ? null : wireUnit;
         return new ProfileClaim(profileGeneration, wireUnit, wireValue, currentLimitAmps, watts, powerSourced,
                 numberPhases, paused);
     }
@@ -835,10 +854,16 @@ public class OcppConnectorHandler extends BaseThingHandler {
             logger.debug("RemoteStart on connector {} skipped — charge point not ready", connectorId);
             return;
         }
+        int run = abandonRemoteStart();
+        String chosen = pendingStartTag;
+        attemptRemoteStart(run, remoteStartRetries, chosen != null ? chosen : remoteStartTag);
+    }
+
+    /** @return the run a new start attempt belongs to */
+    private int abandonRemoteStart() {
         cancel(remoteStartRetryTask);
         remoteStartRetryTask = null;
-        String chosen = pendingStartTag;
-        attemptRemoteStart(remoteStartRetries, chosen != null ? chosen : remoteStartTag);
+        return remoteStartRun.incrementAndGet();
     }
 
     private void publishStartTag() {
@@ -846,7 +871,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         publish(CHANNEL_ID_TAG, new StringType(pending != null ? pending : remoteStartTag));
     }
 
-    private void attemptRemoteStart(int remaining, String tag) {
+    private void attemptRemoteStart(int run, int remaining, String tag) {
         OcppChargePointHandler parent = chargePointHandler();
         TokenType type = parent == null ? TokenType.UNKNOWN : parent.tokenTypeOf(tag);
         dispatch(commands().remoteStart(connectorId, tag, type), "RemoteStart").whenComplete((confirmation, ex) -> {
@@ -854,22 +879,22 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 pendingStartTag = null;
                 publishStartTag();
             }
-            if (ex == null || remaining <= 0 || transactionId != null || !isReadyToSend()) {
+            if (ex == null || remaining <= 0 || run != remoteStartRun.get() || transactionId != null
+                    || !isReadyToSend()) {
                 return;
             }
             logger.debug("RemoteStart on connector {} did not answer; retrying ({} attempt(s) left)", connectorId,
                     remaining);
             remoteStartRetryTask = scheduler.schedule(() -> {
-                if (transactionId == null && isReadyToSend()) {
-                    attemptRemoteStart(remaining - 1, tag);
+                if (run == remoteStartRun.get() && transactionId == null && isReadyToSend()) {
+                    attemptRemoteStart(run, remaining - 1, tag);
                 }
             }, REMOTE_START_RETRY_DELAY_SECONDS, TimeUnit.SECONDS);
         });
     }
 
     private void remoteStop() {
-        cancel(remoteStartRetryTask);
-        remoteStartRetryTask = null;
+        abandonRemoteStart();
         Integer transaction = transactionId;
         if (transaction == null) {
             logger.debug("No active transaction to stop on connector {}", connectorId);
@@ -1101,8 +1126,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     public void onTransactionStarted(TransactionEvent event) {
-        cancel(remoteStartRetryTask);
-        remoteStartRetryTask = null;
+        abandonRemoteStart();
         pendingStartTag = null;
         int transactionId = event.transactionId();
         this.transactionId = transactionId;

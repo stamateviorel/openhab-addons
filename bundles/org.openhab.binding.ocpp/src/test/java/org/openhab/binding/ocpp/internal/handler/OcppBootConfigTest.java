@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -487,6 +488,47 @@ class OcppBootConfigTest {
     }
 
     @Test
+    void connectorsAreToldOnceAConfigurationReadAfterReadinessReportsTheUnits() {
+        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> configuration = new CompletableFuture<>();
+        when(transport.send(any(), any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(1);
+            if (request instanceof GetConfigurationRequest) {
+                return configuration;
+            }
+            return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
+        });
+        OcppConnectorHandler connector = mock(OcppConnectorHandler.class);
+        handler.registerConnector(1, connector);
+
+        handler.reconnectedWithoutBoot(session);
+        verify(connector, timeout(3000)).onChargePointReady();
+        verify(connector, never()).onCapabilitiesRead();
+
+        configuration.complete(configurationAnswer(Map.of("ChargingScheduleAllowedChargingRateUnit", "Power")));
+
+        verify(connector, timeout(3000)).onCapabilitiesRead();
+        assertEquals(java.util.Optional.of(false), handler.getCapabilities().allowsCurrentUnit());
+    }
+
+    @Test
+    void aFailedConfigurationReadLeavesTheLimitsAsSent() {
+        when(transport.send(any(), any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(1);
+            if (request instanceof GetConfigurationRequest) {
+                return CompletableFuture.failedFuture(new java.util.concurrent.TimeoutException("no answer"));
+            }
+            return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
+        });
+        OcppConnectorHandler connector = mock(OcppConnectorHandler.class);
+        handler.registerConnector(1, connector);
+
+        handler.reconnectedWithoutBoot(session);
+
+        verify(connector, timeout(3000)).requestStatus();
+        verify(connector, never()).onCapabilitiesRead();
+    }
+
+    @Test
     void aSecondBootTakesOverTheBurstInsteadOfRunningASecondOne() {
         serverConfig.extraConfig = List.of("VendorKey=42");
         CompletableFuture<eu.chargetime.ocpp.model.Confirmation> firstStep = new CompletableFuture<>();
@@ -775,6 +817,51 @@ class OcppBootConfigTest {
 
         verify(transport, org.mockito.Mockito.after(1500).never()).send(any(),
                 argThat(r -> r instanceof eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest));
+    }
+
+    @Test
+    void aMatchingVersionFromAnotherBackendIsReplaced() {
+        chargerKeepingItsLocalList(1);
+        handler.handleCommand(new org.openhab.core.thing.ChannelUID(CP_UID, "local-auth-list"),
+                new org.openhab.core.library.types.StringType("RFID-A"));
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+
+        verify(transport, timeout(2000)).send(any(), argThat(r -> sentList(r, "RFID-A")));
+        verify(serverHandler, timeout(2000)).localAuthListInstalled("charger", 1);
+    }
+
+    @Test
+    void aListThisBindingInstalledIsNotSentAgain() {
+        chargerKeepingItsLocalList(1);
+        when(serverHandler.isLocalAuthListInstalled("charger", 1)).thenReturn(true);
+        handler.handleCommand(new org.openhab.core.thing.ChannelUID(CP_UID, "local-auth-list"),
+                new org.openhab.core.library.types.StringType("RFID-A"));
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+
+        verify(transport, timeout(2000)).send(any(),
+                argThat(r -> r instanceof eu.chargetime.ocpp.model.localauthlist.GetLocalListVersionRequest));
+        verify(transport, org.mockito.Mockito.after(1000).never()).send(any(),
+                argThat(r -> r instanceof eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest));
+    }
+
+    @Test
+    void aListTheChargerRefusedIsNotRecordedAsInstalled() {
+        chargerKeepingItsLocalList(1);
+        when(transport.send(any(),
+                argThat(r -> r instanceof eu.chargetime.ocpp.model.localauthlist.SendLocalListRequest)))
+                .thenReturn(CompletableFuture
+                        .completedFuture(new eu.chargetime.ocpp.model.localauthlist.SendLocalListConfirmation(
+                                eu.chargetime.ocpp.model.localauthlist.UpdateStatus.Failed)));
+        handler.handleCommand(new org.openhab.core.thing.ChannelUID(CP_UID, "local-auth-list"),
+                new org.openhab.core.library.types.StringType("RFID-A"));
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+
+        verify(transport, timeout(2000)).send(any(), argThat(r -> sentList(r, "RFID-A")));
+        verify(serverHandler, org.mockito.Mockito.after(500).never()).localAuthListInstalled(any(),
+                org.mockito.ArgumentMatchers.anyInt());
     }
 
     /** Supports a local list, holds {@code version}, and still reports the boot setting, so a reboot skips it. */

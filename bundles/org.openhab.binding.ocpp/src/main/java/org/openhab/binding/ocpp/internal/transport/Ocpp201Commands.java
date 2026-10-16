@@ -36,6 +36,7 @@ import eu.chargetime.ocpp.v201.model.messages.RequestStopTransactionRequest;
 import eu.chargetime.ocpp.v201.model.messages.ResetRequest;
 import eu.chargetime.ocpp.v201.model.messages.ResetResponse;
 import eu.chargetime.ocpp.v201.model.messages.SendLocalListRequest;
+import eu.chargetime.ocpp.v201.model.messages.SendLocalListResponse;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileRequest;
 import eu.chargetime.ocpp.v201.model.messages.SetChargingProfileResponse;
 import eu.chargetime.ocpp.v201.model.messages.SetDisplayMessageRequest;
@@ -73,6 +74,7 @@ import eu.chargetime.ocpp.v201.model.types.ReportBaseEnum;
 import eu.chargetime.ocpp.v201.model.types.RequestStartStopStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetEnum;
 import eu.chargetime.ocpp.v201.model.types.ResetStatusEnum;
+import eu.chargetime.ocpp.v201.model.types.SendLocalListStatusEnum;
 import eu.chargetime.ocpp.v201.model.types.SetVariableData;
 import eu.chargetime.ocpp.v201.model.types.SetVariableResult;
 import eu.chargetime.ocpp.v201.model.types.SetVariableStatusEnum;
@@ -314,6 +316,9 @@ public class Ocpp201Commands implements OcppCommands {
         }
         if (confirmation instanceof RequestStartTransactionResponse start) {
             return start.getStatus() == RequestStartStopStatusEnum.Accepted;
+        }
+        if (confirmation instanceof SendLocalListResponse list) {
+            return list.getStatus() == SendLocalListStatusEnum.Accepted;
         }
         return confirmation != null;
     }

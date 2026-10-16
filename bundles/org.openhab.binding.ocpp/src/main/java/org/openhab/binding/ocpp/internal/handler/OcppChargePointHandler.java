@@ -810,6 +810,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     public void onCapabilities(Map<String, String> configurationKeys) {
         capabilities = ChargerCapabilities.fromKeys(configurationKeys);
         publishCapabilities(capabilities);
+        connectors.values().forEach(OcppConnectorHandler::onCapabilitiesRead);
         reconcileLocalAuthList();
     }
 
@@ -829,6 +830,9 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 return;
             }
             boolean read = applyCapabilities(confirmation, ex);
+            if (read) {
+                connectors.values().forEach(OcppConnectorHandler::onCapabilitiesRead);
+            }
             reconcileLocalAuthList();
             runBootConfigBurst(run, !read);
         });
@@ -1037,8 +1041,10 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         OcppCommands commands = commands();
         return send(commands.readLocalListVersion()).thenCompose(current -> {
             Integer reported = commands.localListVersionOf(current);
+            boolean installed = server != null && server.isLocalAuthListInstalled(chargePointId, version);
             // OCPP reports an emptied list as version 0, not the version that emptied it.
-            if (Integer.valueOf(version).equals(reported) || (tags.isEmpty() && Integer.valueOf(0).equals(reported))) {
+            if ((installed && Integer.valueOf(version).equals(reported))
+                    || (tags.isEmpty() && Integer.valueOf(0).equals(reported))) {
                 return CompletableFuture.completedFuture(current);
             }
             Map<String, TokenType> tokens = new LinkedHashMap<>();
@@ -1046,6 +1052,9 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             return send(commands.sendLocalList(version, tokens)).thenApply(result -> {
                 logger.info("Local authorization list sent to {}: version {}, {} tag(s), {}", chargePointId, version,
                         tags.size(), result);
+                if (server != null && commands.isAccepted(result)) {
+                    server.localAuthListInstalled(chargePointId, version);
+                }
                 return result;
             });
         }).toCompletableFuture();

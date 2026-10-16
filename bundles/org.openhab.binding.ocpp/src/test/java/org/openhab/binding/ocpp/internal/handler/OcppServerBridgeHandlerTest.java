@@ -210,6 +210,23 @@ class OcppServerBridgeHandlerTest {
     }
 
     @Test
+    void aListCountsAsInstalledOnlyOnceRecordedAndSurvivesARestart() {
+        handler.initialize();
+        int version = handler.localAuthListVersion("charx", List.of("A"));
+        assertFalse(handler.isLocalAuthListInstalled("charx", version));
+
+        handler.localAuthListInstalled("charx", version);
+
+        TestableBridgeHandler afterRestart = new TestableBridgeHandler(thing, storageService, transport);
+        afterRestart.setCallback(callback);
+        afterRestart.initialize();
+        assertTrue(afterRestart.isLocalAuthListInstalled("charx", version));
+        assertFalse(afterRestart.isLocalAuthListInstalled("charx",
+                afterRestart.localAuthListVersion("charx", List.of("B"))));
+        assertFalse(afterRestart.isLocalAuthListInstalled("wallbox", version));
+    }
+
+    @Test
     void aPasswordOutsideTheProfile1WindowFailsInitialization() {
         // A configured password outside the 16-40 profile-1 window must fail config, not lock chargers out.
         when(thing.getConfiguration()).thenReturn(new Configuration(java.util.Map.of("authPassword", "tooshort")));
