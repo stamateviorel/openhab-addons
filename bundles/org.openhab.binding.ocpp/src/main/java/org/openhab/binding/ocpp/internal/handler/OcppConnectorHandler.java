@@ -84,6 +84,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private static final EnumSet<ConnectorStatus> TRANSIENT = EnumSet.of(ConnectorStatus.PREPARING,
             ConnectorStatus.FINISHING);
     private static final long STUCK_STATE_SECONDS = 120;
+    private static final int PROFILE_RETRY_LIMIT = 3;
     private static final long REMOTE_START_RETRY_DELAY_SECONDS = 5;
 
     private record DynamicChannel(String channelTypeId, String itemType, @Nullable String label) {
@@ -185,6 +186,9 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private @Nullable ScheduledFuture<?> pollTask;
     private @Nullable ScheduledFuture<?> stuckTask;
     private volatile @Nullable ScheduledFuture<?> remoteStartRetryTask;
+    private @Nullable ScheduledFuture<?> profileRetryTask;
+    private int profileRetries;
+    long profileRetryMillis = TimeUnit.SECONDS.toMillis(30);
     // A start answered after a stop, or after a newer start, must not schedule another attempt.
     private final AtomicInteger remoteStartRun = new AtomicInteger();
     private @Nullable CompletableFuture<eu.chargetime.ocpp.model.Confirmation> pendingPoll;
@@ -309,8 +313,10 @@ public class OcppConnectorHandler extends BaseThingHandler {
         synchronized (lock) {
             cancel(stuckTask);
             cancel(pendingFlush);
+            cancel(profileRetryTask);
             stuckTask = null;
             pendingFlush = null;
+            profileRetryTask = null;
         }
         OcppChargePointHandler parent = chargePoint;
         if (parent != null) {
@@ -533,6 +539,9 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     public void onChargePointReady() {
+        synchronized (lock) {
+            profileRetries = 0;
+        }
         if (limitDeferred) {
             limitDeferred = false;
             applyLimit();
@@ -656,12 +665,16 @@ public class OcppConnectorHandler extends BaseThingHandler {
                             + "the requested {}-phase setting may be ignored",
                     cp != null ? cp.getChargePointId() : "?", connectorId, numberPhases);
         }
-        boolean powerSourced = !Double.isNaN(watts) && !paused && allowsPower;
+        boolean powerSourced = !Double.isNaN(watts) && !paused;
         ChargingRateUnitType wireUnit;
         double wireValue;
-        if (powerSourced) {
+        if (powerSourced && allowsPower) {
             wireUnit = ChargingRateUnitType.W;
             wireValue = watts;
+        } else if (powerSourced) {
+            // Rounded down: a cap converted up would let the car draw past the power it was given.
+            wireUnit = ChargingRateUnitType.A;
+            wireValue = Math.floor(watts / (nominalVoltage * conversionPhases) * 10) / 10;
         } else if (!allowsCurrent && allowsPower) {
             wireUnit = ChargingRateUnitType.W;
             wireValue = amps * nominalVoltage * conversionPhases;
@@ -766,6 +779,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 remoteTransactionId), "SetChargingProfile").whenComplete((confirmation, ex) -> {
                     if (ex == null && commands.isAccepted(confirmation)) {
                         if (claimPublication(claim)) {
+                            profileLanded();
                             publishAcceptedLimit(claim);
                             if (persists) {
                                 rememberPersistedStop(claim.wireValue() == 0);
@@ -795,6 +809,38 @@ public class OcppConnectorHandler extends BaseThingHandler {
             observeSmartChargingUnsupported("CALL ERROR " + errorCode);
         } else {
             limitDeferred = true;
+            retryProfileLater();
+        }
+    }
+
+    /**
+     * A CALL that went unanswered leaves the session up, so waiting for the next connect could hold a stale
+     * limit for days. Bounded, because a charger that keeps dropping this one CALL will not answer a retry either.
+     */
+    private void retryProfileLater() {
+        synchronized (lock) {
+            if (profileRetries >= PROFILE_RETRY_LIMIT || profileRetryTask != null) {
+                return;
+            }
+            profileRetries++;
+            profileRetryTask = scheduler.schedule(() -> {
+                synchronized (lock) {
+                    profileRetryTask = null;
+                }
+                if (limitDeferred && isReadyToSend()) {
+                    limitDeferred = false;
+                    applyLimit();
+                }
+            }, profileRetryMillis, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void profileLanded() {
+        limitDeferred = false;
+        synchronized (lock) {
+            profileRetries = 0;
+            cancel(profileRetryTask);
+            profileRetryTask = null;
         }
     }
 
@@ -830,6 +876,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 .whenComplete((confirmation, ex) -> {
                     if (ex == null && commands.isAccepted(confirmation)) {
                         if (claimPublication(claim)) {
+                            profileLanded();
                             publish(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
                             publish(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
                             publish(CHANNEL_PAUSE, OnOffType.OFF);
@@ -845,6 +892,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                         // Deliberately not the backoff: a charger can implement SetChargingProfile and only
                         // refuse ClearChargingProfile, and backing off would cost it its working charge limit.
                         limitDeferred = true;
+                        retryProfileLater();
                     }
                 });
     }
@@ -1149,6 +1197,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     public void onTransactionUpdated(TransactionEvent event) {
         String remoteId = event.remoteId();
+        ForgottenTransaction late = forgotten;
+        if (late != null && late.transactionId() == event.transactionId()) {
+            // An update queued behind the Available that ended it must not reopen the transaction.
+            remoteId = null;
+        }
         if (remoteId != null) {
             Integer known = transactionId;
             if (known == null || known != event.transactionId()) {

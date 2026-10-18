@@ -1188,6 +1188,23 @@ class OcppConnectorHandlerTest {
     }
 
     @Test
+    void anUpdateQueuedBehindAvailableDoesNotReopenTheTransaction() {
+        handler.onTransactionStarted(new TransactionEvent(TransactionEvent.Kind.STARTED, 1, 9, "tx-9", "tag",
+                TokenType.CARD, 100, null, null));
+        handler.onStatusNotification(status(ChargePointStatus.Available));
+        clearInvocations(callback);
+
+        handler.onTransactionUpdated(new TransactionEvent(TransactionEvent.Kind.UPDATED, 1, 9, "tx-9", null,
+                TokenType.UNKNOWN, null, null, null));
+        handler.onTransactionEnded(new TransactionEvent(TransactionEvent.Kind.ENDED, 1, 9, "tx-9", null,
+                TokenType.UNKNOWN, 1600, null, null));
+
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_TRANSACTION_ID)), any());
+        assertChannel(CHANNEL_LAST_SESSION_ENERGY,
+                new org.openhab.core.library.types.QuantityType<>(1500, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
+
+    @Test
     void aLateStopLeavesTheNextSessionRunning() {
         handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
                 "tag", 100, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));

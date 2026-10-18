@@ -293,6 +293,31 @@ class Ocpp201InboundHandlerTest {
     }
 
     @Test
+    void anIdleChargingStateDoesNotReportACableThatIsNotThere() {
+        TransactionEventRequest request = transaction(TransactionEventEnum.Started, "abc", null);
+        request.getTransactionInfo().setChargingState(ChargingStateEnum.Idle);
+
+        handler.handleTransactionEventRequest(session, request);
+
+        verify(listener, never()).onStatusNotification(eq(session), any());
+    }
+
+    @Test
+    void aFreeVendStartIsTreatedAsNoTokenPresented() {
+        when(listener.isTagAuthorized(any())).thenReturn(false);
+        TransactionEventRequest request = transaction(TransactionEventEnum.Started, "abc", null);
+        request.setIdToken(new IdToken("", IdTokenEnum.NoAuthorization));
+
+        TransactionEventResponse response = handler.handleTransactionEventRequest(session, request);
+
+        assertNull(response.getIdTokenInfo());
+        verify(listener, never()).isTagAuthorized(any());
+        ArgumentCaptor<TransactionEvent> captor = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener).onTransactionEvent(eq(session), captor.capture());
+        assertNull(captor.getValue().idToken());
+    }
+
+    @Test
     void aTransactionWithNoIdStillGetsOne() {
         TransactionEventRequest request = transaction(TransactionEventEnum.Started, null, null);
 

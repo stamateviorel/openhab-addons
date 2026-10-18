@@ -114,7 +114,9 @@ public final class Ocpp201Events {
 
     /** 2.0.1 moved the detail 1.6 reported as a connector status into the transaction event. */
     public static @Nullable ConnectorStatus toConnectorStatus(@Nullable ChargingStateEnum state) {
-        if (state == null) {
+        // Idle means no EV is connected, but it also rides on a Started sent before the car plugs in, so it
+        // cannot stand for Available either; the StatusNotification reports that.
+        if (state == null || state == ChargingStateEnum.Idle) {
             return null;
         }
         return switch (state) {
@@ -122,7 +124,7 @@ public final class Ocpp201Events {
             case EVConnected -> ConnectorStatus.PREPARING;
             case SuspendedEV -> ConnectorStatus.SUSPENDED_EV;
             case SuspendedEVSE -> ConnectorStatus.SUSPENDED_EVSE;
-            case Idle -> ConnectorStatus.FINISHING;
+            case Idle -> null;
         };
     }
 

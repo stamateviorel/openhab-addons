@@ -365,7 +365,7 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
     public TransactionEventResponse handleTransactionEventRequest(UUID sessionIndex, TransactionEventRequest request) {
         Transaction info = request.getTransactionInfo();
         String remoteId = info == null ? null : info.getTransactionId();
-        String idToken = tokenOf(request.getIdToken());
+        String idToken = presentedToken(request.getIdToken());
         TransactionEvent.Kind kind = switch (request.getEventType()) {
             case Started -> TransactionEvent.Kind.STARTED;
             case Ended -> TransactionEvent.Kind.ENDED;
@@ -521,6 +521,12 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
 
     private static @Nullable String tokenOf(@Nullable IdToken idToken) {
         return idToken == null ? null : idToken.getIdToken();
+    }
+
+    /** A free-vend station still sends an idToken, an empty one of type NoAuthorization: nobody presented one. */
+    private static @Nullable String presentedToken(@Nullable IdToken idToken) {
+        String token = tokenOf(idToken);
+        return token == null || token.isBlank() || typeOf(idToken) == IdTokenEnum.NoAuthorization ? null : token;
     }
 
     private static @Nullable IdTokenEnum typeOf(@Nullable IdToken idToken) {
