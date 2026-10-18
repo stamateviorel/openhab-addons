@@ -327,7 +327,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         cancelScheduledWork();
         OcppServerBridgeHandler serverHandler = server;
         if (serverHandler != null) {
-            serverHandler.unregisterChargePoint(chargePointId);
+            serverHandler.unregisterChargePoint(chargePointId, this);
         }
         server = null;
         synchronized (stateLock) {
@@ -363,8 +363,8 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         connectors.put(connectorId, handler);
     }
 
-    public void unregisterConnector(int connectorId) {
-        connectors.remove(connectorId);
+    public void unregisterConnector(int connectorId, OcppConnectorHandler connector) {
+        connectors.remove(connectorId, connector);
     }
 
     public @Nullable ExternalMeter externalMeter(int connectorId) {

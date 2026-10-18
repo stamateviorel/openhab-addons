@@ -102,6 +102,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private volatile boolean disposed;
     private long lifecycleGeneration;
     private volatile @Nullable Future<?> startupTask;
+    long serverRetryMillis = TimeUnit.MINUTES.toMillis(1);
 
     private final StorageService storageService;
     private final OcppBindingConfig bindingConfig;
@@ -182,39 +183,67 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
             this.transport = newTransport;
         }
 
-        startupTask = scheduler.submit(() -> {
-            synchronized (lifecycleLock) {
-                if (disposed || generation != lifecycleGeneration) {
-                    return;
-                }
-            }
-            try {
-                newTransport.start(localConfig.host, localConfig.port);
-            } catch (RuntimeException e) {
-                logger.warn("Could not start the OCPP server on {}:{}", localConfig.host, localConfig.port, e);
-                boolean current;
-                synchronized (lifecycleLock) {
-                    current = !disposed && generation == lifecycleGeneration;
-                    if (generation == lifecycleGeneration) {
-                        transport = null;
-                    }
-                }
-                if (current) {
-                    updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                            "@text/offline.communication-error.server-start [\"" + e.getMessage() + "\"]");
-                }
+        startupTask = scheduler.submit(() -> startServer(newTransport, localConfig, generation));
+    }
+
+    /**
+     * A bind address that is not up yet at boot, or a port another process still holds, clears on its own; without
+     * a retry the bridge would stay offline until the Thing is edited or openHAB restarts.
+     */
+    private void startServer(OcppTransport newTransport, OcppServerConfiguration localConfig, long generation) {
+        synchronized (lifecycleLock) {
+            if (disposed || generation != lifecycleGeneration) {
                 return;
             }
-            boolean adopted;
+        }
+        try {
+            newTransport.start(localConfig.host, localConfig.port);
+        } catch (RuntimeException e) {
+            logger.warn("Could not start the OCPP server on {}:{}; retrying in {} s", localConfig.host,
+                    localConfig.port, TimeUnit.MILLISECONDS.toSeconds(serverRetryMillis), e);
+            boolean current;
             synchronized (lifecycleLock) {
-                adopted = !disposed && generation == lifecycleGeneration;
+                current = !disposed && generation == lifecycleGeneration;
+                if (generation == lifecycleGeneration) {
+                    transport = null;
+                }
             }
-            if (adopted) {
-                updateStatus(ThingStatus.ONLINE);
-            } else {
-                newTransport.stop();
+            if (current) {
+                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                        "@text/offline.communication-error.server-start [\"" + e.getMessage() + "\"]");
+                startupTask = scheduler.schedule(() -> retryServer(localConfig, generation), serverRetryMillis,
+                        TimeUnit.MILLISECONDS);
             }
-        });
+            return;
+        }
+        boolean adopted;
+        synchronized (lifecycleLock) {
+            adopted = !disposed && generation == lifecycleGeneration;
+        }
+        if (adopted) {
+            updateStatus(ThingStatus.ONLINE);
+        } else {
+            newTransport.stop();
+        }
+    }
+
+    /** A server that failed to bind cannot be started again, so the retry builds a fresh one. */
+    private void retryServer(OcppServerConfiguration localConfig, long generation) {
+        OcppTransport fresh;
+        try {
+            fresh = createTransport(localConfig);
+        } catch (RuntimeException e) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
+                    "@text/offline.configuration-error.transport [\"" + e.getMessage() + "\"]");
+            return;
+        }
+        synchronized (lifecycleLock) {
+            if (disposed || generation != lifecycleGeneration) {
+                return;
+            }
+            transport = fresh;
+        }
+        startServer(fresh, localConfig, generation);
     }
 
     @Override
@@ -268,8 +297,9 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         }
     }
 
-    public void unregisterChargePoint(String chargePointId) {
-        chargePoints.remove(chargePointId);
+    /** Only the handler that registered: a second Thing with the same id must keep its route. */
+    public void unregisterChargePoint(String chargePointId, OcppChargePointHandler handler) {
+        chargePoints.remove(chargePointId, handler);
     }
 
     public void connectorDiscovered(String chargePointId, int connectorId) {
@@ -495,7 +525,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         CpmsService service = cpms;
         adoptToken(session, event);
         if (service != null) {
-            Integer meterStop = finishMeter(transactionId, event.meterWh(), sessionChargePoints.get(session));
+            Integer meterStop = finishMeter(transactionId, event.meterWh());
             service.onTransactionStop(transactionId, meterStop, epochOf(event.timestamp()));
         }
         OcppChargePointHandler handler = resolve(session);
@@ -599,12 +629,12 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     private void startPowerTally(int transactionId, OcppChargePointHandler.ExternalMeter meter) {
         PowerTally tally = new PowerTally(meter.itemName(), meter.kilo(), System.currentTimeMillis(), 0);
         powerTallies.put(transactionId, tally);
-        meterSources.put(transactionId, new SessionMeter(MeterSource.POWER_ITEM, meter.itemName()));
+        meterSources.put(transactionId, new SessionMeter(MeterSource.POWER_ITEM, meter.itemName(), meter.kilo()));
         persistMeter(transactionId, tally.persisted());
     }
 
     private void startEnergyMeter(int transactionId, OcppChargePointHandler.ExternalMeter meter) {
-        meterSources.put(transactionId, new SessionMeter(MeterSource.ENERGY_ITEM, meter.itemName()));
+        meterSources.put(transactionId, new SessionMeter(MeterSource.ENERGY_ITEM, meter.itemName(), meter.kilo()));
         persistMeter(transactionId, new PersistedMeter(MeterSource.ENERGY_ITEM, meter.itemName(), meter.kilo(), 0));
     }
 
@@ -632,8 +662,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
     }
 
     /** The stop reading of a session, from the source its start came from; {@code null} if that one cannot be read. */
-    private @Nullable Integer finishMeter(int transactionId, @Nullable Integer chargerWh,
-            @Nullable String chargePointId) {
+    private @Nullable Integer finishMeter(int transactionId, @Nullable Integer chargerWh) {
         SessionMeter started = meterSources.get(transactionId);
         PowerTally tally = removeMeter(transactionId);
         if (started == null) {
@@ -642,14 +671,10 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         if (started.source() == MeterSource.POWER_ITEM) {
             return tally == null ? null : (int) Math.round(tally.finish(System.currentTimeMillis(), this));
         }
-        if (chargePointId == null) {
-            return null;
-        }
-        Integer connectorId = transactionConnector(transactionId, chargePointId);
-        OcppChargePointHandler.ExternalMeter meter = connectorId == null ? null
-                : externalMeterFor(chargePointId, connectorId);
-        return meter != null && !meter.power() && meter.itemName().equals(started.itemName()) ? energyMeterWh(meter)
-                : null;
+        // Read from the item the session started on: a stop that follows Available no longer has a connector.
+        String itemName = started.itemName();
+        return itemName == null ? null
+                : energyMeterWh(new OcppChargePointHandler.ExternalMeter(itemName, false, started.kilo()));
     }
 
     private void persistMeter(int transactionId, PersistedMeter meter) {
@@ -687,7 +712,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
                     store.remove(key);
                     continue;
                 }
-                meterSources.put(transactionId, new SessionMeter(source, itemName));
+                meterSources.put(transactionId, new SessionMeter(source, itemName, p.kilo()));
                 if (source == MeterSource.POWER_ITEM && itemName != null) {
                     powerTallies.put(transactionId, new PowerTally(itemName, p.kilo(), now, p.wh()));
                 }
@@ -735,7 +760,7 @@ public class OcppServerBridgeHandler extends BaseBridgeHandler implements OcppSe
         POWER_ITEM
     }
 
-    private record SessionMeter(MeterSource source, @Nullable String itemName) {
+    private record SessionMeter(MeterSource source, @Nullable String itemName, boolean kilo) {
     }
 
     private record PersistedMeter(@Nullable MeterSource source, @Nullable String itemName, boolean kilo, double wh) {

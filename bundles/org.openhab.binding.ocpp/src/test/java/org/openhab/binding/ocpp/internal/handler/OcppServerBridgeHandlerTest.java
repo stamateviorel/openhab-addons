@@ -227,6 +227,20 @@ class OcppServerBridgeHandlerTest {
     }
 
     @Test
+    void aServerThatCouldNotBindIsStartedAgainLater() {
+        org.mockito.Mockito.doThrow(new IllegalStateException("Address already in use")).doNothing().when(transport)
+                .start(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyInt());
+        handler.serverRetryMillis = 50;
+
+        handler.initialize();
+
+        verify(transport, timeout(2000).times(2)).start(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyInt());
+        verify(callback, timeout(2000)).statusUpdated(any(),
+                argThat(status -> status.getStatus() == ThingStatus.ONLINE));
+    }
+
+    @Test
     void aPasswordOutsideTheProfile1WindowFailsInitialization() {
         // A configured password outside the 16-40 profile-1 window must fail config, not lock chargers out.
         when(thing.getConfiguration()).thenReturn(new Configuration(java.util.Map.of("authPassword", "tooshort")));
@@ -263,6 +277,24 @@ class OcppServerBridgeHandlerTest {
         handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 5, "t1", "CARD-NEW",
                 TokenType.CARD, null, null, null));
         verify(discovery).tokenDiscovered("CARD-NEW", TokenType.CARD, "Charger 2 connector 2");
+    }
+
+    @Test
+    void removingADuplicateChargePointThingLeavesTheOtherRouted() {
+        handler.initialize();
+        OcppChargePointHandler first = mock(OcppChargePointHandler.class);
+        OcppChargePointHandler second = mock(OcppChargePointHandler.class);
+        handler.registerChargePoint("charx", first);
+        handler.registerChargePoint("charx", second);
+        handler.unregisterChargePoint("charx", first);
+        UUID session = UUID.randomUUID();
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V2_0_1);
+        TransactionEvent update = new TransactionEvent(TransactionEvent.Kind.UPDATED, 2, 5, "t1", null,
+                TokenType.UNKNOWN, null, null, null);
+
+        handler.onTransactionEvent(session, update);
+
+        verify(second).onTransactionUpdated(update);
     }
 
     @Test
@@ -509,6 +541,34 @@ class OcppServerBridgeHandlerTest {
         assertEquals(1, cpms.transactions().size());
         assertEquals(0.0, cpms.transactions().get(0).energyWh(), 1.0,
                 "the charger's own register must never be subtracted from an external-meter start");
+    }
+
+    @Test
+    void aStopAfterAvailableStillReadsTheEnergyItemTheSessionStartedOn() throws Exception {
+        Item meterItem = mock(Item.class);
+        when(meterItem.getState()).thenReturn(new QuantityType<>("100 kWh"), new QuantityType<>("112.5 kWh"));
+        ItemRegistry itemRegistry = mock(ItemRegistry.class);
+        when(itemRegistry.getItem("Car_Energy")).thenReturn(meterItem);
+        OcppChargePointHandler chargePoint = mock(OcppChargePointHandler.class);
+        when(chargePoint.externalMeter(2))
+                .thenReturn(new OcppChargePointHandler.ExternalMeter("Car_Energy", false, false));
+        handler = new TestableBridgeHandler(thing, storageService, transport, mock(ConfigurationAdmin.class), null,
+                itemRegistry);
+        handler.setCallback(callback);
+        handler.initialize();
+        handler.registerChargePoint("charx", chargePoint);
+        UUID session = UUID.randomUUID();
+        handler.onSessionOpened(session, "charx", null, OcppVersion.V1_6);
+        handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.STARTED, 2, 77, "t1", "CARD",
+                TokenType.CARD, 0, null, null));
+        // The connector reported Available before the stop.
+        handler.releaseTransaction(77);
+
+        handler.onTransactionEvent(session, new TransactionEvent(TransactionEvent.Kind.ENDED, null, 77, "t1", "CARD",
+                TokenType.CARD, 0, null, null));
+
+        CpmsService cpms = Objects.requireNonNull(handler.getCpms());
+        assertEquals(12_500.0, cpms.transactions().get(0).energyWh(), 1.0);
     }
 
     @Test

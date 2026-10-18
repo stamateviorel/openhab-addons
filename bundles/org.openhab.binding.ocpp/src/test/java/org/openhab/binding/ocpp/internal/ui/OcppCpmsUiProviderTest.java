@@ -127,6 +127,18 @@ class OcppCpmsUiProviderTest {
 
             assertTrue(titles(overview).contains("\u200B=1+1"));
             assertTrue(titles(userPage).contains("\u200B=ACE · socket 1"));
+            List<String> seriesNames = new ArrayList<>();
+            for (RootUIComponent page : pages.values()) {
+                for (UIComponent series : find(page, "oh-data-series")) {
+                    seriesNames.add(String.valueOf(series.getConfig().get("name")));
+                    if (series.getConfig().get("data") instanceof List<?> data) {
+                        data.stream().filter(Map.class::isInstance).map(slice -> ((Map<?, ?>) slice).get("name"))
+                                .forEach(name -> seriesNames.add(String.valueOf(name)));
+                    }
+                }
+            }
+            assertTrue(seriesNames.stream().anyMatch(name -> name.startsWith("\u200B=")));
+            assertTrue(seriesNames.stream().noneMatch(name -> name.startsWith("=")));
         } finally {
             provider.deactivate();
         }

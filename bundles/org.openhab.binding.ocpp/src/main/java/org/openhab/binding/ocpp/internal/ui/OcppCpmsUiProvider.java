@@ -374,7 +374,7 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
         private UIComponent barSeries(String name, @Nullable String color, List<Double> values) {
             UIComponent series = new UIComponent("oh-data-series");
             series.addConfig("type", "bar");
-            series.addConfig("name", name);
+            series.addConfig("name", text(name));
             series.addConfig("stack", "month");
             List<List<Object>> data = new ArrayList<>();
             for (int i = 0; i < months.size(); i++) {
@@ -395,7 +395,7 @@ public class OcppCpmsUiProvider extends AbstractProvider<RootUIComponent> implem
             series.addConfig("radius", List.of("35%", "65%"));
             List<Map<String, Object>> data = new ArrayList<>();
             for (Map.Entry<String, Double> slice : slices.entrySet()) {
-                data.add(Map.of("name", slice.getKey(), "value", Math.round(slice.getValue() * 10) / 10.0));
+                data.add(Map.of("name", text(slice.getKey()), "value", Math.round(slice.getValue() * 10) / 10.0));
             }
             series.addConfig("data", data);
             series.addConfig("label", Map.of("formatter", "{b}\n{c} kWh"));
