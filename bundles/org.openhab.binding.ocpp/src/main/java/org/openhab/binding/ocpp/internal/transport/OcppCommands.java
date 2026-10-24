@@ -49,6 +49,9 @@ public interface OcppCommands {
 
     Request clearChargingProfile(int connectorId);
 
+    /** Only the binding's TxDefaultProfile, so a transaction's own cap stays. */
+    Request clearDefaultChargingProfile(int connectorId);
+
     /** What the charger applies on the connector right now; null on a version this binding does not read it on. */
     @Nullable
     Request readCompositeSchedule(int connectorId, boolean inWatts);

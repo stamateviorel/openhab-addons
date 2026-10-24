@@ -131,6 +131,11 @@ public class Ocpp16Commands implements OcppCommands {
     }
 
     @Override
+    public Request clearDefaultChargingProfile(int connectorId) {
+        return ChargingProfileBuilder.clearDefaultLimit(connectorId);
+    }
+
+    @Override
     public @Nullable Request readCompositeSchedule(int connectorId, boolean inWatts) {
         GetCompositeScheduleRequest request = new GetCompositeScheduleRequest(connectorId, COMPOSITE_WINDOW_SECONDS);
         request.setChargingRateUnit(inWatts ? eu.chargetime.ocpp.model.smartcharging.ChargingRateUnitType.W

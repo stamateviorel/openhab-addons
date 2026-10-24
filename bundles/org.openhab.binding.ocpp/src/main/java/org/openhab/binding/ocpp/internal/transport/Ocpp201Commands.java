@@ -193,6 +193,17 @@ public class Ocpp201Commands implements OcppCommands {
     }
 
     @Override
+    public Request clearDefaultChargingProfile(int connectorId) {
+        ClearChargingProfile criteria = new ClearChargingProfile();
+        criteria.setEvseId(connectorId);
+        criteria.setStackLevel(STACK_LEVEL);
+        criteria.setChargingProfilePurpose(ChargingProfilePurposeEnum.TxDefaultProfile);
+        ClearChargingProfileRequest request = new ClearChargingProfileRequest();
+        request.setChargingProfileCriteria(criteria);
+        return request;
+    }
+
+    @Override
     public Request readCapabilities() {
         return new GetBaseReportRequest(reportIds.incrementAndGet(), ReportBaseEnum.FullInventory);
     }
