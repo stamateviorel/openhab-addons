@@ -12,6 +12,7 @@
  */
 package org.openhab.binding.ocpp.internal.handler;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -72,6 +73,23 @@ class OcppChargePointHandlerTest {
         connector2 = mock(OcppConnectorHandler.class);
         handler.registerConnector(1, connector1);
         handler.registerConnector(2, connector2);
+    }
+
+    /** A charger has one ChargePointMaxProfile: with two connectors set to send it, the lower one keeps it. */
+    @Test
+    void theLowerConnectorKeepsTheChargePointMaxProfileWhenTwoAreSetToIt() {
+        when(connector1.sendsChargePointMax()).thenReturn(true);
+        when(connector2.sendsChargePointMax()).thenReturn(true);
+
+        assertEquals(0, handler.otherChargePointMaxConnector(1));
+        assertEquals(1, handler.otherChargePointMaxConnector(2));
+    }
+
+    @Test
+    void aSingleChargePointMaxConnectorKeepsItWhateverItsNumber() {
+        when(connector2.sendsChargePointMax()).thenReturn(true);
+
+        assertEquals(0, handler.otherChargePointMaxConnector(2));
     }
 
     private static TransactionEvent started(int connectorId, int transactionId) {

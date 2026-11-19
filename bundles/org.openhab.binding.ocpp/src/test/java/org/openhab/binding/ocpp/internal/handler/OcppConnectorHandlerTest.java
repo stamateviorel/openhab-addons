@@ -583,6 +583,125 @@ class OcppConnectorHandlerTest {
         verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
     }
 
+    /**
+     * An EN+ charger on firmware V1.10.311 rejects a TxProfile and stores a TxDefaultProfile without applying it to a
+     * running charge. With profilePurpose ChargePointMaxProfile the cap goes to connector 0 as the charge point's
+     * maximum, also during a transaction.
+     */
+    @Test
+    void aChargePointMaxConnectorSendsItsCapToConnectorZeroDuringACharge() {
+        OcppChargePointHandler chargePoint = attachChargePointMax();
+        startTransaction(7);
+        clearInvocations(chargePoint);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        SetChargingProfileRequest sent = lastProfile(chargePoint);
+        assertEquals(0, sent.getConnectorId().intValue());
+        assertEquals(ChargingProfilePurposeType.ChargePointMaxProfile,
+                sent.getCsChargingProfiles().getChargingProfilePurpose());
+        assertEquals(0, sent.getCsChargingProfiles().getStackLevel().intValue());
+        assertEquals(10.0, sentLimit(sent));
+    }
+
+    /** The cap is stored in the charger and outlives the charge, so clear-limit must remove it where it is. */
+    @Test
+    void clearLimitRemovesTheChargePointMaxProfileFromConnectorZero() {
+        OcppChargePointHandler chargePoint = attachChargePointMax();
+        startTransaction(7);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        clearInvocations(chargePoint);
+
+        command(CHANNEL_CLEAR_LIMIT, OnOffType.ON);
+
+        List<Request> requests = limitRequests(chargePoint);
+        assertEquals(1, requests.size(), requests.toString());
+        ClearChargingProfileRequest clear = (ClearChargingProfileRequest) requests.get(0);
+        assertEquals(Integer.valueOf(0), clear.getConnectorId());
+        assertEquals(ChargingProfilePurposeType.ChargePointMaxProfile, clear.getChargingProfilePurpose());
+        verify(callback, org.mockito.Mockito.atLeastOnce())
+                .stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_CHARGE_LIMIT)), eq(UnDefType.UNDEF));
+    }
+
+    /**
+     * A ChargePointMaxProfile of 0 is no stop: the charger above answered one by applying its own 32 A maximum. So a
+     * pause is not sent, the cap in force stays and the channels say so, and the limit still follows afterwards.
+     */
+    @Test
+    void aPauseIsNotSentAsAChargePointMaxProfileOfZero() {
+        OcppChargePointHandler chargePoint = attachChargePointMax();
+        startTransaction(7);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        clearInvocations(chargePoint, callback);
+
+        command(CHANNEL_PAUSE, OnOffType.ON);
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+        verify(chargePoint, never()).send(argThat(r -> r instanceof ClearChargingProfileRequest));
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_PAUSE)), eq(OnOffType.OFF));
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_CHARGE_LIMIT)), eq(
+                new org.openhab.core.library.types.QuantityType<>(10.0, org.openhab.core.library.unit.Units.AMPERE)));
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(6));
+        assertEquals(6.0, sentLimit(lastProfile(chargePoint)), "the refused pause must not gate later limits");
+    }
+
+    @Test
+    void aZeroLimitIsNotSentAsAChargePointMaxProfileEither() {
+        OcppChargePointHandler chargePoint = attachChargePointMax();
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        clearInvocations(chargePoint);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(0));
+        command(CHANNEL_POWER_LIMIT, new DecimalType(0));
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+    }
+
+    /** The default purpose is untouched: a pause is still a 0 A profile on the connector. */
+    @Test
+    void anAutoConnectorStillPausesWithAZeroProfileOnItsConnector() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        startTransaction(7);
+
+        command(CHANNEL_PAUSE, OnOffType.ON);
+
+        SetChargingProfileRequest sent = lastProfile(chargePoint);
+        assertEquals(1, sent.getConnectorId().intValue());
+        assertEquals(ChargingProfilePurposeType.TxProfile, sent.getCsChargingProfiles().getChargingProfilePurpose());
+        assertEquals(0.0, sentLimit(sent));
+    }
+
+    /**
+     * Two connectors on ChargePointMaxProfile would overwrite each other's cap, and a clear-limit on one would clear
+     * both: the second sends nothing at all, and its channels say it holds no limit.
+     */
+    @Test
+    void aSecondChargePointMaxConnectorOnTheSameChargerSendsNothing() {
+        OcppChargePointHandler chargePoint = attachChargePointMax();
+        when(chargePoint.otherChargePointMaxConnector(org.mockito.ArgumentMatchers.anyInt())).thenReturn(1);
+        startTransaction(7);
+        clearInvocations(chargePoint, callback);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_POWER_LIMIT, new DecimalType(4000));
+        command(CHANNEL_PAUSE, OnOffType.ON);
+        command(CHANNEL_CLEAR_LIMIT, OnOffType.ON);
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+        verify(chargePoint, never()).send(argThat(r -> r instanceof ClearChargingProfileRequest));
+        verify(callback, org.mockito.Mockito.atLeastOnce())
+                .stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_CHARGE_LIMIT)), eq(UnDefType.UNDEF));
+    }
+
+    private OcppChargePointHandler attachChargePointMax() {
+        when(thing.getConfiguration()).thenReturn(new org.openhab.core.config.core.Configuration(
+                java.util.Map.of("profilePurpose", "ChargePointMaxProfile")));
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        handler.initialize();
+        return chargePoint;
+    }
+
     private void rememberStop() {
         when(thing.getProperties()).thenReturn(java.util.Map.of(PROPERTY_PERSISTED_STOP, "true"));
     }

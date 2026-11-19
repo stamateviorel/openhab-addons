@@ -12,6 +12,9 @@
  */
 package org.openhab.binding.ocpp.internal.transport;
 
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 
@@ -34,6 +37,9 @@ public final class ChargingProfileBuilder {
 
     static final int TX_DEFAULT_SUFFIX = 1;
     static final int TX_PROFILE_SUFFIX = 2;
+    static final int CHARGE_POINT_MAX_SUFFIX = 3;
+    /** An Absolute schedule starts this far back, so a charger clock a little behind never sees it in the future. */
+    static final long ABSOLUTE_START_LEAD_SECONDS = 60;
     private static final int PROFILE_ID_STRIDE = 10;
     private static final int STACK_LEVEL = 0;
 
@@ -42,26 +48,60 @@ public final class ChargingProfileBuilder {
 
     public static SetChargingProfileRequest limit(int connectorId, ChargingRateUnitType unit, double value,
             @Nullable Integer numberPhases, boolean forceTxDefault, @Nullable Integer transactionId) {
-        boolean useTxProfile = transactionId != null && !forceTxDefault;
-        ChargingProfilePurposeType purpose = useTxProfile ? ChargingProfilePurposeType.TxProfile
-                : ChargingProfilePurposeType.TxDefaultProfile;
+        return limit(connectorId, unit, value, numberPhases, forceTxDefault, transactionId, false,
+                ZonedDateTime.now(ZoneOffset.UTC));
+    }
+
+    /**
+     * With {@code chargePointMax} the cap goes out as a ChargePointMaxProfile on connectorId 0: OCPP's cap for the
+     * whole charge point, which bounds every connector at once, running transactions included. It is Absolute,
+     * since it has no transaction to be relative to, and so carries a startSchedule.
+     */
+    public static SetChargingProfileRequest limit(int connectorId, ChargingRateUnitType unit, double value,
+            @Nullable Integer numberPhases, boolean forceTxDefault, @Nullable Integer transactionId,
+            boolean chargePointMax, ZonedDateTime now) {
+        boolean useTxProfile = !chargePointMax && transactionId != null && !forceTxDefault;
+        ChargingProfilePurposeType purpose = chargePointMax ? ChargingProfilePurposeType.ChargePointMaxProfile
+                : useTxProfile ? ChargingProfilePurposeType.TxProfile : ChargingProfilePurposeType.TxDefaultProfile;
 
         ChargingSchedulePeriod period = new ChargingSchedulePeriod(0, value);
         if (numberPhases != null) {
             period.setNumberPhases(numberPhases);
         }
         ChargingSchedule schedule = new ChargingSchedule(unit, new ChargingSchedulePeriod[] { period });
-        ChargingProfile profile = new ChargingProfile(profileId(connectorId, useTxProfile), STACK_LEVEL, purpose,
-                ChargingProfileKindType.Relative, schedule);
+        if (chargePointMax) {
+            // OCPP 1.6: an Absolute schedule without a startSchedule is invalid
+            schedule.setStartSchedule(
+                    now.withZoneSameInstant(ZoneOffset.UTC).withNano(0).minusSeconds(ABSOLUTE_START_LEAD_SECONDS));
+        }
+        int id = chargePointMax ? connectorId * PROFILE_ID_STRIDE + CHARGE_POINT_MAX_SUFFIX
+                : profileId(connectorId, useTxProfile);
+        ChargingProfile profile = new ChargingProfile(id, STACK_LEVEL, purpose,
+                chargePointMax ? ChargingProfileKindType.Absolute : ChargingProfileKindType.Relative, schedule);
         if (useTxProfile) {
             profile.setTransactionId(transactionId);
         }
-        return new SetChargingProfileRequest(connectorId, profile);
+        // A ChargePointMaxProfile can only be set on connectorId 0 (OCPP 1.6, 3.13.2)
+        return new SetChargingProfileRequest(chargePointMax ? 0 : connectorId, profile);
     }
 
     public static ClearChargingProfileRequest clearLimit(int connectorId) {
+        return clearLimit(connectorId, false);
+    }
+
+    /**
+     * Clears what {@link #limit} with the same {@code chargePointMax} set. A ChargePointMaxProfile is stored in the
+     * charger and outlives every transaction, so it is cleared on connectorId 0 by its purpose; left there it would
+     * cap every later charge.
+     */
+    public static ClearChargingProfileRequest clearLimit(int connectorId, boolean chargePointMax) {
         ClearChargingProfileRequest request = new ClearChargingProfileRequest();
-        request.setConnectorId(connectorId);
+        if (chargePointMax) {
+            request.setConnectorId(0);
+            request.setChargingProfilePurpose(ChargingProfilePurposeType.ChargePointMaxProfile);
+        } else {
+            request.setConnectorId(connectorId);
+        }
         request.setStackLevel(STACK_LEVEL);
         return request;
     }

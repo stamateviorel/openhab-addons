@@ -87,6 +87,7 @@ For the charger's own offline authorization cache, see the `chargepoint` `local-
 | --------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- | -------- | -------- |
 | connectorId           | integer | OCPP connector number (1..N)                                                                                                                                       | 1       | no       | no       |
 | forceTxDefaultProfile | boolean | Always send the charge limit as a TxDefaultProfile, even during a transaction. Needed for chargers that reject a TxProfile outside one                             | false   | no       | yes      |
+| profilePurpose        | text    | `auto` (TxProfile during a transaction, TxDefaultProfile outside one) or `ChargePointMaxProfile` (the limit as the charge point's maximum on connector 0). See below | auto    | no       | yes      |
 | profileMinIntervalMs  | integer | Minimum spacing (ms) between SetChargingProfile sends; rapid changes are coalesced. 0 disables                                                                     | 0       | no       | yes      |
 | startLimit            | decimal | Current (A) every new charge starts at: when a charge ends the connector goes back to it with pause off. Empty carries the last limit and pause over           |         | no       | yes      |
 | hardwareMaxCurrentKey | text    | Vendor ChangeConfiguration key backing the `hardware-max-current` channel. Empty disables that channel                                                             | (empty) | no       | yes      |
@@ -108,6 +109,12 @@ Its entries are sent after the server's, so a key set in both is left at the cha
 A charger reports which of its settings are writable, and the ones it calls read-only are logged as such when the binding reads its configuration.
 
 `forceTxDefaultProfile` is for chargers that reject a `TxProfile` when no transaction is active — a Phoenix CHARX does: the charge limit is then sent as a `TxDefaultProfile`, which such chargers accept and apply through their own load management.
+`profilePurpose` set to `ChargePointMaxProfile` is for chargers that accept a `TxProfile` or `TxDefaultProfile` and never apply it to a running charge — an EN+ charger on firmware V1.10.311 does both: it rejects a `TxProfile`, and it stores a `TxDefaultProfile`, Relative or Absolute, idle or charging, while the car keeps drawing the old current.
+The limit then goes out as a `ChargePointMaxProfile` on connector 0 (Absolute, stack level 0), OCPP's maximum for the whole charge point, which such a charger applies within a minute.
+Three things follow from what that profile is:
+it caps the whole charger, so on a charger with two connectors both share the one limit — set it on one connector only: a second connector set to it sends no limit at all (its own limits would overwrite the first one's cap, and its `clear-limit` would clear it), and the log says which connector keeps it;
+it is stored in the charger and outlives every transaction, so it stays in force until `clear-limit` removes it (switch back to `auto` only after `clear-limit`, or the stored cap stays behind);
+and a value of 0 does not stop a charge — the charger above answered one by applying its own 32 A maximum — so in this mode `pause`, and a `charge-limit` or `power-limit` of 0, are not sent: the last limit stays, the channels go back to it, and a warning is logged. Stop and start the charge with `charging` instead.
 `profileMinIntervalMs` coalesces rapid limit changes into at most one `SetChargingProfile` per interval, which keeps a solar-tracking rule that adjusts the limit every few seconds from flooding the charger.
 `refreshInterval` actively polls a connector for `MeterValues` for chargers that do not push them on their own; a poll is skipped while the previous one is still outstanding, so a charger that stops answering cannot build a backlog.
 `hardwareMaxCurrentKey` binds the `hardware-max-current` channel to a vendor `ChangeConfiguration` key, since the hardware ceiling is not a standard OCPP setting; the channel appears only once that key is set.
@@ -272,6 +279,7 @@ A `power-limit` of 0 stops the charge too, and `clear-limit` removes it along wi
 `number-phases` requests charging on a given number of phases (1, 2 or 3) by setting `numberPhases` in the charging profile — for switching a car to single-phase when solar surplus is low, for instance; 0 clears the request so the charger keeps its own default (OCPP assumes 3).
 It only takes effect on a charger that supports phase switching (its `ConnectorSwitch3to1PhaseSupported` is true), and when set it also drives the amps→watts conversion above.
 `pause` suspends charging with a 0 A profile without ending the transaction; switching it off resumes — at your `charge-limit` if one is set, otherwise by removing the cap so the charger returns to its own maximum — distinct from `charging`, which ends the session.
+With `profilePurpose` set to `ChargePointMaxProfile` a pause is not sent at all, since 0 is no stop in that mode (see the `connector` configuration); use `charging`.
 A pause is a 0 A limit, so a resume must lift the cap rather than send another 0 A, which a charger reads as "stay suspended".
 A `charge-limit` set during a pause is kept and sent when the pause ends.
 `availability` takes the connector Operative or Inoperative, `unlock` releases the cable lock, and the `chargepoint`-level `reset` performs a soft reset of the whole charger.
@@ -450,6 +458,7 @@ Every charger dials `ws://<openhab-host>:<port>/<chargePointId>`; the only real 
 | V2C Trydan                          | `ws://<host>:8887/<id>`                                                           | Sends a short-password HTTP Basic-auth header on every connection; accepted (the binding relaxes the library's password-length check when no `authPassword` is set). |
 | Easee                               | `ws://<host>:8887/<id>`                                                           | Answers `Accepted` to a 6 A limit but does not start charging on it; 7 A works. After a reboot one unit ignored every limit until its dynamic circuit limit was set again in the Easee app. |
 | EV Partner / e-vision pro 11 kW     | `ws://<host>:8887/<id>`                                                           | Advertises `SmartCharging` and then answers every `SetChargingProfile` with `NotSupported`, ending the transaction on one. The binding stops sending profiles after the first such answer; `disableSmartCharging` skips even that. |
+| EN+ (also sold as Evon, Malmbergs), firmware V1.10.311 | `ws://<host>:8887/<id>` | Rejects a `TxProfile` and stores a `TxDefaultProfile` without applying it to a running charge: set `profilePurpose` to `ChargePointMaxProfile` on the `connector`, and stop and start with `charging` (0 A is no pause there). Firmware V1.9.728 obeys the default profiles. |
 
 ## Security
 

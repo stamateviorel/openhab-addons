@@ -52,6 +52,21 @@ public interface OcppCommands {
     /** Only the binding's TxDefaultProfile, so a transaction's own cap stays. */
     Request clearDefaultChargingProfile(int connectorId);
 
+    /**
+     * As above, or with {@code chargePointMax} the cap as a ChargePointMaxProfile on connector 0, for chargers
+     * that store a TxProfile/TxDefaultProfile but do not apply it during a charge. A version without it ignores
+     * the flag.
+     */
+    default Request setChargingProfile(int connectorId, double value, boolean inWatts, int numberPhases,
+            boolean txDefault, @Nullable Integer transactionId, @Nullable String remoteId, boolean chargePointMax) {
+        return setChargingProfile(connectorId, value, inWatts, numberPhases, txDefault, transactionId, remoteId);
+    }
+
+    /** Clears what {@link #setChargingProfile} with the same {@code chargePointMax} set. */
+    default Request clearChargingProfile(int connectorId, boolean chargePointMax) {
+        return clearChargingProfile(connectorId);
+    }
+
     /** What the charger applies on the connector right now; null on a version this binding does not read it on. */
     @Nullable
     Request readCompositeSchedule(int connectorId, boolean inWatts);

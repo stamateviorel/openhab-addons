@@ -367,6 +367,19 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         connectors.remove(connectorId, connector);
     }
 
+    /**
+     * A charger has one ChargePointMaxProfile, on connector 0. Two connectors sending their cap that way would
+     * overwrite each other's, and a clear-limit on one would clear both, so the lowest-numbered connector in that
+     * mode keeps it.
+     *
+     * @return that connector's id when it is not {@code connectorId}, else 0
+     */
+    public int otherChargePointMaxConnector(int connectorId) {
+        int lowest = connectors.entrySet().stream().filter(e -> e.getValue().sendsChargePointMax())
+                .mapToInt(Map.Entry::getKey).min().orElse(connectorId);
+        return lowest < connectorId ? lowest : 0;
+    }
+
     public @Nullable ExternalMeter externalMeter(int connectorId) {
         OcppConnectorHandler connector = connectors.get(connectorId);
         if (connector == null) {

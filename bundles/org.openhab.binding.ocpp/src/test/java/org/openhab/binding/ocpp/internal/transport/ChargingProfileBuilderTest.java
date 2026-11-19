@@ -16,6 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
 
@@ -105,5 +108,46 @@ class ChargingProfileBuilderTest {
         assertEquals(0, request.getStackLevel().intValue());
         assertNull(request.getId());
         assertNull(request.getChargingProfilePurpose());
+    }
+
+    // --- ChargePointMaxProfile: an EN+ charger on firmware V1.10.311 rejects a TxProfile and stores a
+    // TxDefaultProfile without applying it to a running charge, but obeys the charge point's maximum.
+
+    private static final ZonedDateTime NOW = ZonedDateTime.of(2026, 11, 16, 7, 30, 15, 123_000_000, ZoneOffset.UTC);
+
+    @Test
+    void chargePointMaxGoesToConnectorZeroAsAnAbsoluteCap() {
+        SetChargingProfileRequest request = ChargingProfileBuilder.limit(1, ChargingRateUnitType.A, 6.0, null, true, 42,
+                true, NOW);
+        assertEquals(0, request.getConnectorId().intValue(), "a ChargePointMaxProfile can only be set on connector 0");
+        ChargingProfile profile = request.getCsChargingProfiles();
+        assertEquals(ChargingProfilePurposeType.ChargePointMaxProfile, profile.getChargingProfilePurpose());
+        assertEquals(ChargingProfileKindType.Absolute, profile.getChargingProfileKind());
+        assertEquals(NOW.withNano(0).minusSeconds(60), profile.getChargingSchedule().getStartSchedule());
+        assertEquals(0, profile.getStackLevel().intValue());
+        assertNull(profile.getTransactionId(), "the charge point's maximum belongs to no transaction");
+        assertEquals(13, profile.getChargingProfileId().intValue());
+        assertEquals(6.0, profile.getChargingSchedule().getChargingSchedulePeriod()[0].getLimit().doubleValue());
+    }
+
+    @Test
+    void withoutChargePointMaxTheBuilderSendsWhatItAlwaysSent() {
+        SetChargingProfileRequest request = ChargingProfileBuilder.limit(1, ChargingRateUnitType.A, 16.0, null, false,
+                42, false, NOW);
+        ChargingProfile profile = request.getCsChargingProfiles();
+        assertEquals(1, request.getConnectorId().intValue());
+        assertEquals(ChargingProfilePurposeType.TxProfile, profile.getChargingProfilePurpose());
+        assertEquals(ChargingProfileKindType.Relative, profile.getChargingProfileKind());
+        assertNull(profile.getChargingSchedule().getStartSchedule());
+        assertEquals(0, profile.getStackLevel().intValue());
+        assertEquals(ChargingProfileBuilder.profileId(1, true), profile.getChargingProfileId().intValue());
+    }
+
+    @Test
+    void clearingTheChargePointMaxClearsConnectorZeroByPurpose() {
+        ClearChargingProfileRequest request = ChargingProfileBuilder.clearLimit(1, true);
+        assertEquals(0, request.getConnectorId().intValue());
+        assertEquals(ChargingProfilePurposeType.ChargePointMaxProfile, request.getChargingProfilePurpose());
+        assertEquals(0, request.getStackLevel().intValue());
     }
 }

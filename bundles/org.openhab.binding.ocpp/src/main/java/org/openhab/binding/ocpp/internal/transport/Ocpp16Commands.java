@@ -12,6 +12,8 @@
  */
 package org.openhab.binding.ocpp.internal.transport;
 
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -133,6 +135,19 @@ public class Ocpp16Commands implements OcppCommands {
     @Override
     public Request clearDefaultChargingProfile(int connectorId) {
         return ChargingProfileBuilder.clearDefaultLimit(connectorId);
+    }
+
+    @Override
+    public Request setChargingProfile(int connectorId, double value, boolean inWatts, int numberPhases,
+            boolean txDefault, @Nullable Integer transactionId, @Nullable String remoteId, boolean chargePointMax) {
+        return ChargingProfileBuilder.limit(connectorId, inWatts ? ChargingRateUnitType.W : ChargingRateUnitType.A,
+                value, numberPhases > 0 ? numberPhases : null, txDefault, transactionId, chargePointMax,
+                ZonedDateTime.now(ZoneOffset.UTC));
+    }
+
+    @Override
+    public Request clearChargingProfile(int connectorId, boolean chargePointMax) {
+        return ChargingProfileBuilder.clearLimit(connectorId, chargePointMax);
     }
 
     @Override

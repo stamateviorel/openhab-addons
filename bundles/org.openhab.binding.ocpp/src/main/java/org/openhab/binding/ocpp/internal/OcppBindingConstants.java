@@ -49,6 +49,9 @@ public class OcppBindingConstants {
     public static final String CHANNEL_CLEAR_LIMIT = "clear-limit";
     public static final String CHANNEL_HARDWARE_MAX_CURRENT = "hardware-max-current";
 
+    // Connector config: profilePurpose
+    public static final String PURPOSE_CHARGE_POINT_MAX = "ChargePointMaxProfile";
+
     // Connector channels — metering
     public static final String CHANNEL_CURRENT_L1 = "current-import-l1";
     public static final String CHANNEL_CURRENT_L2 = "current-import-l2";

@@ -24,6 +24,8 @@ public class OcppConnectorConfiguration {
 
     public int connectorId = 1;
     public boolean forceTxDefaultProfile = false;
+    /** "auto" (TxProfile in a transaction, TxDefaultProfile outside one) or "ChargePointMaxProfile". */
+    public String profilePurpose = "auto";
     public boolean disableSmartCharging = false;
     public int profileMinIntervalMs = 0;
     /** Negative is unset: the last limit and pause carry over to the next charge. */

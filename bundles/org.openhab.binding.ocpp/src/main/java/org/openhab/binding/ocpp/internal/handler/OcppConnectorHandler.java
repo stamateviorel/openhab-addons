@@ -132,6 +132,13 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     private volatile int connectorId = 1;
     private volatile boolean forceTxDefaultProfile;
+    // The cap goes out as a ChargePointMaxProfile on connector 0 (profilePurpose), for chargers that store a
+    // TxProfile/TxDefaultProfile and never apply it during a charge.
+    private volatile boolean chargePointMax;
+    private volatile boolean stopRefusalLogged;
+    private volatile boolean secondCapLogged;
+    // The last limit the charger accepted, so a refused stop can put the channels back to it.
+    private volatile @Nullable ProfileClaim lastAccepted;
     private volatile boolean disableSmartCharging;
     private volatile int profileMinIntervalMs;
     private volatile double startLimit = -1;
@@ -208,6 +215,13 @@ public class OcppConnectorHandler extends BaseThingHandler {
         OcppConnectorConfiguration config = getConfigAs(OcppConnectorConfiguration.class);
         connectorId = config.connectorId;
         forceTxDefaultProfile = config.forceTxDefaultProfile;
+        chargePointMax = PURPOSE_CHARGE_POINT_MAX.equalsIgnoreCase(config.profilePurpose.trim());
+        stopRefusalLogged = false;
+        secondCapLogged = false;
+        lastAccepted = null;
+        if (chargePointMax) {
+            logger.info("Connector {} sends its charge cap as a ChargePointMaxProfile on connector 0", connectorId);
+        }
         disableSmartCharging = config.disableSmartCharging;
         profileMinIntervalMs = config.profileMinIntervalMs;
         startLimit = config.startLimit;
@@ -243,6 +257,10 @@ public class OcppConnectorHandler extends BaseThingHandler {
             requestStatus();
             onChargePointReady();
         }
+    }
+
+    public boolean sendsChargePointMax() {
+        return chargePointMax;
     }
 
     public String getExternalEnergyItem() {
@@ -706,10 +724,20 @@ public class OcppConnectorHandler extends BaseThingHandler {
             // passing through applyLimit() at all.
             return;
         }
-        if (transactionId != null && !forceTxDefaultProfile) {
+        if (chargePointMax) {
+            OcppChargePointHandler cp = chargePoint;
+            int holder = cp != null ? cp.otherChargePointMaxConnector(connectorId) : 0;
+            if (holder != 0) {
+                refuseSecondCap(claim, holder);
+                return;
+            }
+        }
+        if (transactionId != null && !forceTxDefaultProfile && !chargePointMax) {
             limitHeldByTxProfile = true;
         }
-        if (!claim.paused() && Double.isNaN(claim.wireValue())) {
+        if (chargePointMax && claim.wireValue() == 0) {
+            refuseStop(claim);
+        } else if (!claim.paused() && Double.isNaN(claim.wireValue())) {
             clearProfile(claim);
         } else {
             writeUnlessAlreadyApplied(claim);
@@ -768,7 +796,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
 
     /** A TxProfile lapses with its transaction; anything else lands in the charger's persistent default. */
     private boolean persistsDefault() {
-        return forceTxDefaultProfile || transactionId == null;
+        return forceTxDefaultProfile || chargePointMax || transactionId == null;
     }
 
     private boolean isNewest(ProfileClaim claim) {
@@ -783,8 +811,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
         boolean persists = persistsDefault();
         dispatch(commands.setChargingProfile(connectorId, claim.wireValue(), claim.wireUnit() == ChargingRateUnitType.W,
                 requestedPhases == null ? 0 : requestedPhases, forceTxDefaultProfile, transactionId,
-                remoteTransactionId), "SetChargingProfile").whenComplete((confirmation, ex) -> {
+                remoteTransactionId, chargePointMax), "SetChargingProfile").whenComplete((confirmation, ex) -> {
                     if (ex == null && commands.isAccepted(confirmation)) {
+                        if (logger.isDebugEnabled()) {
+                            logAppliedLimit(claim);
+                        }
                         if (claimPublication(claim)) {
                             profileLanded();
                             publishAcceptedLimit(claim);
@@ -807,6 +838,29 @@ public class OcppConnectorHandler extends BaseThingHandler {
                         logger.debug("Stale SetChargingProfile failure on connector {} ignored", connectorId);
                     }
                 });
+    }
+
+    /**
+     * "Accepted" means stored, not applied: at DEBUG, read the composite schedule back and say what the charger
+     * applies now (an EN+ charger on firmware V1.10.311 accepted a 0 A TxDefaultProfile and charged on at 16 A).
+     */
+    private void logAppliedLimit(ProfileClaim claim) {
+        OcppCommands commands = commands();
+        boolean inWatts = claim.wireUnit() == ChargingRateUnitType.W;
+        eu.chargetime.ocpp.model.Request read = commands.readCompositeSchedule(connectorId, inWatts);
+        if (read == null) {
+            return;
+        }
+        String purpose = chargePointMax ? PURPOSE_CHARGE_POINT_MAX : "auto";
+        dispatch(read, "GetCompositeSchedule[verify]").whenComplete((confirmation, ex) -> {
+            OcppCommands.AppliedLimit applied = ex == null ? commands.appliedLimitOf(confirmation, inWatts) : null;
+            String now = applied != null
+                    ? applied.limit() + " " + claim.wireUnit()
+                            + (applied.numberPhases() == null ? "" : " on " + applied.numberPhases() + " phases")
+                    : "nothing readable (" + (ex != null ? ex.getMessage() : String.valueOf(confirmation)) + ")";
+            logger.debug("Connector {}: sent {} {} ({}, transaction {}); the charger's composite schedule now says {}",
+                    connectorId, claim.wireValue(), claim.wireUnit(), purpose, transactionId, now);
+        });
     }
 
     /** A CALL ERROR for SetChargingProfile itself, rather than a refusal of this one profile. */
@@ -876,11 +930,70 @@ public class OcppConnectorHandler extends BaseThingHandler {
         }
         publish(CHANNEL_PAUSE, OnOffType.from(claim.paused()));
         stopOnCharger = claim.paused() || claim.wireValue() == 0;
+        lastAccepted = claim;
+    }
+
+    /**
+     * A ChargePointMaxProfile of 0 is no stop on the chargers this mode is for: one (EN+, firmware V1.10.311)
+     * answered a 0 A one by applying its own 32 A maximum and the car charged on. A pause or a 0 limit sent that
+     * way would lift the cap instead of stopping the charge, so nothing is sent: the cap in force stays, the
+     * channels go back to it, and the log says how to stop instead.
+     */
+    private void refuseStop(ProfileClaim claim) {
+        if (!claimPublication(claim)) {
+            return;
+        }
+        String what = claim.paused() ? "pause" : "a limit of 0";
+        if (!stopRefusalLogged) {
+            stopRefusalLogged = true;
+            logger.warn("Connector {} sends its cap as a ChargePointMaxProfile, where 0 does not stop a charge; "
+                    + "{} was not sent and the last limit stays. Use the charging channel to stop and start "
+                    + "the charge.", connectorId, what);
+        } else {
+            logger.debug("Connector {}: {} not sent as a ChargePointMaxProfile", connectorId, what);
+        }
+        ProfileClaim last = lastAccepted;
+        paused = false;
+        currentLimitAmps = last != null ? last.limitAmps() : Double.NaN;
+        powerLimitWatts = last != null && last.powerSourced() ? last.limitWatts() : Double.NaN;
+        if (last != null) {
+            publishAcceptedLimit(last);
+        } else {
+            publish(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
+            publish(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
+            publish(CHANNEL_PAUSE, OnOffType.OFF);
+        }
+    }
+
+    /**
+     * A second connector set to ChargePointMaxProfile on the same charger would overwrite the first one's cap, and
+     * its clear-limit would clear both. Nothing it sends goes out: the lower connector keeps the cap, this one's
+     * channels say it has none, and the log says to set the mode on one connector only.
+     */
+    private void refuseSecondCap(ProfileClaim claim, int holder) {
+        if (!claimPublication(claim)) {
+            return;
+        }
+        if (!secondCapLogged) {
+            secondCapLogged = true;
+            logger.warn("Connectors {} and {} are both set to profilePurpose ChargePointMaxProfile, but a charger has "
+                    + "one such cap: connector {} keeps it and connector {} sends no limit. Set it on one connector "
+                    + "only.", holder, connectorId, holder, connectorId);
+        } else {
+            logger.debug("Connector {}: limit not sent, connector {} holds the ChargePointMaxProfile", connectorId,
+                    holder);
+        }
+        paused = false;
+        currentLimitAmps = Double.NaN;
+        powerLimitWatts = Double.NaN;
+        publish(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
+        publish(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
+        publish(CHANNEL_PAUSE, OnOffType.OFF);
     }
 
     private void clearProfile(ProfileClaim claim) {
         OcppCommands commands = commands();
-        dispatch(commands.clearChargingProfile(connectorId), "ClearChargingProfile")
+        dispatch(commands.clearChargingProfile(connectorId, chargePointMax), "ClearChargingProfile")
                 .whenComplete((confirmation, ex) -> {
                     if (ex == null && commands.isAccepted(confirmation)) {
                         if (claimPublication(claim)) {
@@ -889,6 +1002,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                             publish(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
                             publish(CHANNEL_PAUSE, OnOffType.OFF);
                             stopOnCharger = false;
+                            lastAccepted = null;
                             rememberPersistedStop(false);
                         } else {
                             logger.debug("Stale ClearChargingProfile confirmation on connector {} ignored",

@@ -259,6 +259,21 @@
 				<default>false</default>
 				<advanced>true</advanced>
 			</parameter>
+			<parameter name="profilePurpose" type="text">
+				<label>Charging Profile Purpose</label>
+				<description>auto: a TxProfile during a transaction, a TxDefaultProfile outside one (or always with Force
+					TxDefaultProfile). ChargePointMaxProfile: the limit goes to connectorId 0 as the charge point's maximum, which also
+					bounds a running charge - for chargers that accept a TxDefaultProfile but do not apply it to a running charge. It
+					caps the whole charger (all connectors share it, so set it on one connector only) and stays in the charger until
+					clear-limit; 0 does not stop a charge in this mode, so pause and a limit of 0 are not sent - use charging to stop
+					and start.</description>
+				<options>
+					<option value="auto">auto</option>
+					<option value="ChargePointMaxProfile">ChargePointMaxProfile</option>
+				</options>
+				<default>auto</default>
+				<advanced>true</advanced>
+			</parameter>
 			<parameter name="profileMinIntervalMs" type="integer" min="0" unit="ms">
 				<label>Charging Profile Min Interval</label>
 				<description>Minimum spacing between SetChargingProfile sends. Rapid changes are coalesced. 0 disables.</description>
