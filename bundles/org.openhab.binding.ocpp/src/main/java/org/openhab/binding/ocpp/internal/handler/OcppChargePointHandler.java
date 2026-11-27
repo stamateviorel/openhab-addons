@@ -911,14 +911,15 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             return;
         }
         OcppServerConfiguration config = serverHandler.getServerConfig();
-        String fingerprint = configFingerprint(config);
+        Map<String, String> extra = extraConfigEntries(config);
+        String fingerprint = configFingerprint(config, extra);
         if (!fingerprint.equals(attemptedConfigFingerprint)) {
             attemptedConfigFingerprint = fingerprint;
             bootConfigAttempts.set(0);
             acceptedMeasurands.clear();
         }
         if (fingerprint.equals(appliedConfigFingerprint)) {
-            if (!readFailed && stillSetOnCharger(config)) {
+            if (!readFailed && stillSetOnCharger(config, extra)) {
                 logger.debug("Boot config for {} already applied; skipping", chargePointId);
                 requestConnectorStatuses();
                 return;
@@ -953,12 +954,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         if (config.disableRemoteTxAuthorization) {
             addConfigStep(steps, "AuthorizeRemoteTxRequests", "false");
         }
-        for (String pair : concat(config.extraConfig, extraConfig)) {
-            int equals = pair.indexOf('=');
-            if (equals > 0) {
-                addConfigStep(steps, pair.substring(0, equals).trim(), pair.substring(equals + 1).trim());
-            }
-        }
+        extra.forEach((key, value) -> addConfigStep(steps, key, value));
         runBootConfigStep(steps, 0, fingerprint, run, new AtomicBoolean(true));
     }
 
@@ -984,7 +980,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
      * Whether the charger still reports the settings it accepted. A charger that resets them when it
      * reboots reports something else, and a setting it does not report at all cannot be confirmed.
      */
-    private boolean stillSetOnCharger(OcppServerConfiguration config) {
+    private boolean stillSetOnCharger(OcppServerConfiguration config, Map<String, String> extra) {
         Map<String, String> reported = capabilities.raw();
         if (reported.isEmpty()) {
             return true;
@@ -1003,12 +999,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         if (config.disableRemoteTxAuthorization) {
             wanted.put("AuthorizeRemoteTxRequests", "false");
         }
-        for (String pair : concat(config.extraConfig, extraConfig)) {
-            int equals = pair.indexOf('=');
-            if (equals > 0) {
-                wanted.put(pair.substring(0, equals).trim(), pair.substring(equals + 1).trim());
-            }
-        }
+        wanted.putAll(extra);
         for (Map.Entry<String, String> entry : wanted.entrySet()) {
             if (!entry.getValue().equalsIgnoreCase(reported.get(entry.getKey()))) {
                 return false;
@@ -1017,20 +1008,27 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         return true;
     }
 
-    private String configFingerprint(OcppServerConfiguration config) {
+    private String configFingerprint(OcppServerConfiguration config, Map<String, String> extra) {
         return chargePointId + "|" + meterless + "|" + config.meterValueSampleInterval + "|"
                 + config.clockAlignedDataInterval + "|" + config.meterValuesData + "|"
-                + config.disableRemoteTxAuthorization + "|" + String.join(",", config.extraConfig) + "|"
-                + String.join(",", extraConfig);
+                + config.disableRemoteTxAuthorization + "|" + extra;
     }
 
-    private static List<String> concat(List<String> first, List<String> second) {
-        if (second.isEmpty()) {
-            return first;
+    /** The server's entries first, then the charge point's, so a key in both is sent once with the latter's value. */
+    private Map<String, String> extraConfigEntries(OcppServerConfiguration config) {
+        Map<String, String> entries = new LinkedHashMap<>();
+        for (List<String> source : List.of(config.extraConfig, extraConfig)) {
+            for (String pair : source) {
+                int equals = pair.indexOf('=');
+                String key = equals < 0 ? "" : pair.substring(0, equals).trim();
+                if (key.isEmpty()) {
+                    logger.debug("Ignoring extraConfig entry '{}' for {}: not key=value", pair, chargePointId);
+                } else {
+                    entries.put(key, pair.substring(equals + 1).trim());
+                }
+            }
         }
-        List<String> all = new ArrayList<>(first);
-        all.addAll(second);
-        return all;
+        return entries;
     }
 
     /**

@@ -86,6 +86,7 @@ class OcppBootConfigTest {
     private @NonNullByDefault({}) OcppServerConfiguration serverConfig;
     private @NonNullByDefault({}) OcppServerBridgeHandler serverHandler;
     private @NonNullByDefault({}) UUID session;
+    private @NonNullByDefault({}) Bridge cpThing;
     private final List<ChangeConfigurationRequest> sent = new ArrayList<>();
 
     @BeforeEach
@@ -105,7 +106,7 @@ class OcppBootConfigTest {
         Bridge serverThing = mock(Bridge.class);
         when(serverThing.getHandler()).thenReturn(serverHandler);
 
-        Bridge cpThing = mock(Bridge.class);
+        cpThing = mock(Bridge.class);
         when(cpThing.getUID()).thenReturn(CP_UID);
         when(cpThing.getBridgeUID()).thenReturn(SERVER_UID);
         when(cpThing.getStatus()).thenReturn(ThingStatus.ONLINE);
@@ -626,6 +627,81 @@ class OcppBootConfigTest {
                 eq(new ChangeConfigurationRequest("MeterValuesSampledData", full)));
         verify(transport, after(1000).times(1)).send(any(),
                 eq(new ChangeConfigurationRequest("MeterValuesSampledData", shorter)));
+    }
+
+    @Test
+    void aChargersOwnExtraConfigurationIsSent() {
+        setChargerExtraConfig(List.of("VendorKey=7"));
+
+        boot();
+
+        verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("VendorKey", "7")));
+    }
+
+    @Test
+    void aKeyInBothListsIsSentOnceWithTheChargersValue() {
+        serverConfig.extraConfig = List.of("DynamicCircuitCurrent=16", "SiteKey=1");
+        setChargerExtraConfig(List.of("DynamicCircuitCurrent=10"));
+
+        boot();
+
+        verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("SiteKey", "1")));
+        assertEquals(List.of("10"), sentValuesFor("DynamicCircuitCurrent"));
+    }
+
+    @Test
+    void entriesAreTrimmedAndOnesWithoutAKeyAreIgnored() {
+        setChargerExtraConfig(List.of("NoEquals", " =7", " VendorKey = 7 ", "LastKey=1"));
+
+        boot();
+
+        verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("LastKey", "1")));
+        synchronized (sent) {
+            assertEquals(List.of("AuthorizeRemoteTxRequests=false", "VendorKey=7", "LastKey=1"),
+                    sent.stream().map(r -> r.getKey() + "=" + r.getValue()).toList());
+        }
+    }
+
+    @Test
+    void aChargerStillReportingItsOwnValueIsNotSentItAgain() {
+        serverConfig.extraConfig = List.of("DynamicCircuitCurrent=16");
+        setChargerExtraConfig(List.of("DynamicCircuitCurrent=10"));
+        reportConfiguration(Map.of("DynamicCircuitCurrent", "10", "AuthorizeRemoteTxRequests", "false"));
+        boot();
+        verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "10")));
+
+        boot();
+
+        verify(transport, after(1500).times(1)).send(any(),
+                eq(new ChangeConfigurationRequest("DynamicCircuitCurrent", "10")));
+    }
+
+    @Test
+    void anEditedChargerExtraConfigurationIsSentAgainOnTheNextBoot() {
+        setChargerExtraConfig(List.of("VendorKey=7"));
+        boot();
+        verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("VendorKey", "7")));
+
+        boot();
+        verify(transport, after(1500).times(1)).send(any(),
+                eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
+
+        setChargerExtraConfig(List.of("VendorKey=8"));
+        boot();
+        verify(transport, timeout(3000)).send(any(), eq(new ChangeConfigurationRequest("VendorKey", "8")));
+        verify(transport, timeout(3000).times(2)).send(any(),
+                eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
+    }
+
+    private void boot() {
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+    }
+
+    private void setChargerExtraConfig(List<String> entries) {
+        when(cpThing.getConfiguration()).thenReturn(new Configuration(
+                Map.of("chargePointId", "charger", "configSettleSeconds", 0, "extraConfig", entries)));
+        handler.thingUpdated(cpThing);
+        handler.onConnected(session, OcppVersion.V1_6);
     }
 
     /** The charger stays silent on GetConfiguration but answers everything else. */
