@@ -12,7 +12,9 @@
  */
 package org.openhab.binding.ocpp.internal.handler;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -21,6 +23,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.openhab.binding.ocpp.internal.OcppBindingConstants.*;
 
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -50,6 +55,7 @@ import org.openhab.core.thing.binding.ThingHandlerCallback;
 import org.openhab.core.types.RefreshType;
 import org.openhab.core.types.UnDefType;
 
+import eu.chargetime.ocpp.CallErrorException;
 import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.core.ChargePointErrorCode;
@@ -58,6 +64,7 @@ import eu.chargetime.ocpp.model.core.ChargingRateUnitType;
 import eu.chargetime.ocpp.model.core.ChargingSchedule;
 import eu.chargetime.ocpp.model.core.GetConfigurationConfirmation;
 import eu.chargetime.ocpp.model.core.KeyValueType;
+import eu.chargetime.ocpp.model.core.StartTransactionRequest;
 import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
 import eu.chargetime.ocpp.model.core.UnlockConnectorRequest;
 import eu.chargetime.ocpp.model.smartcharging.ChargingProfileStatus;
@@ -90,6 +97,8 @@ class OcppConnectorReadinessTest {
         when(parent.isReady()).thenAnswer(invocation -> ready.get());
         when(parent.getChargePointId()).thenReturn("charger");
         when(parent.getCapabilities()).thenReturn(ChargerCapabilities.unknown());
+        // A bare mock answers 0 for an Integer, which would recover a transaction 0 on every connector.
+        when(parent.recoverTransactionId(anyInt())).thenReturn(null);
         when(parent.send(any())).thenReturn(
                 CompletableFuture.completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted)));
 
@@ -342,7 +351,7 @@ class OcppConnectorReadinessTest {
         ready.set(true);
         CompletableFuture<eu.chargetime.ocpp.model.Confirmation> first = new CompletableFuture<>();
         CompletableFuture<eu.chargetime.ocpp.model.Confirmation> second = new CompletableFuture<>();
-        when(parent.send(any())).thenReturn(first, second);
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile))).thenReturn(first, second);
 
         handler.handleCommand(new ChannelUID(CONN_UID, CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
         handler.handleCommand(new ChannelUID(CONN_UID, CHANNEL_CHARGE_LIMIT), new QuantityType<>(20, Units.AMPERE));
@@ -361,7 +370,7 @@ class OcppConnectorReadinessTest {
         ready.set(true);
         CompletableFuture<eu.chargetime.ocpp.model.Confirmation> first = new CompletableFuture<>();
         CompletableFuture<eu.chargetime.ocpp.model.Confirmation> second = new CompletableFuture<>();
-        when(parent.send(any())).thenReturn(first, second);
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile))).thenReturn(first, second);
 
         handler.handleCommand(new ChannelUID(CONN_UID, CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
         handler.handleCommand(new ChannelUID(CONN_UID, CHANNEL_CHARGE_LIMIT), new QuantityType<>(20, Units.AMPERE));
@@ -633,8 +642,11 @@ class OcppConnectorReadinessTest {
         handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
 
         ArgumentCaptor<Request> sent = ArgumentCaptor.forClass(Request.class);
-        verify(parent, times(2)).send(sent.capture());
-        SetChargingProfileRequest resent = (SetChargingProfileRequest) sent.getAllValues().get(1);
+        verify(parent, org.mockito.Mockito.atLeastOnce()).send(sent.capture());
+        List<Request> profiles = sent.getAllValues().stream().filter(OcppConnectorReadinessTest::isSetChargingProfile)
+                .toList();
+        assertEquals(2, profiles.size());
+        SetChargingProfileRequest resent = (SetChargingProfileRequest) profiles.get(1);
         org.junit.jupiter.api.Assertions.assertEquals(10.0,
                 resent.getCsChargingProfiles().getChargingSchedule().getChargingSchedulePeriod()[0].getLimit()
                         .doubleValue());
@@ -746,6 +758,134 @@ class OcppConnectorReadinessTest {
         handler.onCapabilitiesRead();
 
         org.junit.jupiter.api.Assertions.assertTrue(sent.isEmpty());
+    }
+
+    @Test
+    void aRefusedPhaseCountIsSentAgainWithoutItAndSmartChargingStaysOn() {
+        ready.set(true);
+        List<Request> sent = answerPhaseCountsWith(ChargingProfileStatus.NotSupported);
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_NUMBER_PHASES), new DecimalType(1));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+
+        List<Integer> phases = sent.stream().map(OcppConnectorReadinessTest::phaseCountOf).toList();
+        assertEquals(List.of(3, 1, 3, 3), phases, "the refused phase count goes out once, then never again");
+        verify(callback).stateUpdated(channel(CHANNEL_NUMBER_PHASES), UnDefType.UNDEF);
+    }
+
+    @Test
+    void aChargerRefusingTheProfileWithoutThePhaseCountTooStopsBeingSentProfiles() {
+        List<Request> sent = answerEveryProfileWith(ChargingProfileStatus.NotSupported);
+        handler.handleCommand(channel(CHANNEL_NUMBER_PHASES), new DecimalType(1));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        ready.set(true);
+
+        handler.onChargePointReady();
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+
+        assertEquals(List.of(1, 3), sent.stream().map(OcppConnectorReadinessTest::phaseCountOf).toList());
+    }
+
+    @Test
+    void aRefusedThreePhaseProfileIsTheDefaultFormAndIsNotSentAgain() {
+        List<Request> sent = answerEveryProfileWith(ChargingProfileStatus.NotSupported);
+        handler.handleCommand(channel(CHANNEL_NUMBER_PHASES), new DecimalType(3));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        ready.set(true);
+
+        handler.onChargePointReady();
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+
+        assertEquals(1, sent.size());
+    }
+
+    @Test
+    void aNotSupportedTxProfileLeavesSmartChargingOn() {
+        ready.set(true);
+        refuseProfilesWith(ChargingProfileStatus.NotSupported);
+        handler.onTransactionStarted(Ocpp16Events
+                .toStarted(new StartTransactionRequest(1, "tag", 100, ZonedDateTime.now(ZoneOffset.UTC)), 7));
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+
+        verify(parent, times(2)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void aNotSupportedProfileInWattsLeavesSmartChargingOn() {
+        ready.set(true);
+        refuseProfilesWith(ChargingProfileStatus.NotSupported);
+
+        handler.handleCommand(channel(CHANNEL_POWER_LIMIT), new QuantityType<>(4000, Units.WATT));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+
+        verify(parent, times(2)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void aStaleNotSupportedAfterANewerAcceptedDoesNotStopProfiling() {
+        ready.set(true);
+        CompletableFuture<Confirmation> first = new CompletableFuture<>();
+        AtomicInteger sends = new AtomicInteger();
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile)))
+                .thenAnswer(invocation -> sends.getAndIncrement() == 0 ? first
+                        : CompletableFuture
+                                .completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted)));
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+        first.complete(new SetChargingProfileConfirmation(ChargingProfileStatus.NotSupported));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(12, Units.AMPERE));
+
+        verify(parent, times(3)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    @Test
+    void aNotImplementedCallErrorStopsProfilesToo() {
+        ready.set(true);
+        when(parent.send(argThat(OcppConnectorReadinessTest::isSetChargingProfile))).thenReturn(
+                CompletableFuture.failedFuture(new CallErrorException("NotImplemented", "no smart charging", null)));
+
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(16, Units.AMPERE));
+        handler.handleCommand(channel(CHANNEL_CHARGE_LIMIT), new QuantityType<>(10, Units.AMPERE));
+
+        verify(parent, times(1)).send(argThat(OcppConnectorReadinessTest::isSetChargingProfile));
+    }
+
+    /** Answers a profile carrying numberPhases with {@code status}, any other with Accepted. */
+    private List<Request> answerPhaseCountsWith(ChargingProfileStatus status) {
+        List<Request> sent = new ArrayList<>();
+        when(parent.send(any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(0);
+            if (!isSetChargingProfile(request)) {
+                return CompletableFuture.completedFuture(new SetChargingProfileConfirmation(status));
+            }
+            sent.add(request);
+            boolean phased = phaseCountOf(request) != 3;
+            return CompletableFuture.completedFuture(
+                    new SetChargingProfileConfirmation(phased ? status : ChargingProfileStatus.Accepted));
+        });
+        return sent;
+    }
+
+    private List<Request> answerEveryProfileWith(ChargingProfileStatus status) {
+        List<Request> sent = new ArrayList<>();
+        when(parent.send(any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(0);
+            if (isSetChargingProfile(request)) {
+                sent.add(request);
+            }
+            return CompletableFuture.completedFuture(new SetChargingProfileConfirmation(status));
+        });
+        return sent;
+    }
+
+    private static int phaseCountOf(Request request) {
+        Integer phases = ((SetChargingProfileRequest) request).getCsChargingProfiles().getChargingSchedule()
+                .getChargingSchedulePeriod()[0].getNumberPhases();
+        return phases == null ? 3 : phases;
     }
 
     private OcppConnectorHandler newConnector(Map<String, Object> config) {

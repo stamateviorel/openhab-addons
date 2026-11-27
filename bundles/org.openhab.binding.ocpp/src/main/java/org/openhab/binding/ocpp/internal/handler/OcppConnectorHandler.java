@@ -177,6 +177,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
     // Set once the charger has answered a profile with NotSupported: nothing more is sent until it boots
     // or its Thing config is edited.
     private volatile boolean smartChargingObservedUnsupported;
+    // Set once a profile carrying numberPhases was refused as unsupported and the same limit without it was not.
+    private volatile boolean phaseCountRefused;
     // Set once the charger refuses GetCompositeSchedule as a feature; defaults are then written unread.
     private volatile boolean compositeReadUnsupported;
     // A Wallbox read just after a paused charge ended reported 32 A while it kept the 0 A, so a lift is always sent.
@@ -238,6 +240,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         // user's way out of a backoff — and out of the warn latch, so a second refusal is reported again.
         smartChargingObservedUnsupported = false;
         smartChargingUnsupportedLogged = false;
+        phaseCountRefused = false;
         compositeReadUnsupported = false;
         OcppChargePointHandler parent = chargePointHandler();
         if (parent == null) {
@@ -465,7 +468,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
             return true;
         }
         if (disableSmartCharging) {
-            warnSmartChargingOff("has disableSmartCharging set in its Thing configuration");
             return true;
         }
         OcppChargePointHandler cp = chargePoint;
@@ -476,12 +478,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
         return true;
     }
 
-    /**
-     * Stops sending profiles to a charger that advertised SmartCharging and then refused one. A pause is a 0 A
-     * profile and some of these chargers end the running transaction on any profile, so a retry would stop the
-     * charge rather than throttle it.
-     */
-    /** A profile the config edit or an earlier refusal outranked says nothing about the charger now. */
     private boolean isCurrent(ProfileClaim claim) {
         synchronized (lock) {
             return claim.generation() > lastPublishedGeneration;
@@ -504,14 +500,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
             // charge-limit, power-limit and number-phases with nothing on screen to explain why.
             paused = false;
         }
-        String reason = "advertised SmartCharging but answered " + answer
-                + " to a charging profile, and is sent no more until it reboots or its Thing configuration is edited";
-        if (smartChargingUnsupportedLogged) {
-            // Already warned, so this is a charger that refused again after a reboot re-probed it.
-            logger.debug("Charger {} connector {} {}", chargePointId(), connectorId, reason);
-        } else {
-            warnSmartChargingOff(reason);
-        }
+        warnSmartChargingOff("advertised SmartCharging but answered " + answer
+                + " to a charging profile, and is sent no more until it reboots or its Thing configuration is edited");
         // REFRESH answers from what was last reported, so leaving the accepted values there would have the
         // channels claim a limit the binding no longer maintains.
         publish(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
@@ -542,6 +532,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
      */
     public void onChargerBooted() {
         smartChargingObservedUnsupported = false;
+        smartChargingUnsupportedLogged = false;
+        phaseCountRefused = false;
         compositeReadUnsupported = false;
         rememberedStopUnchecked = true;
     }
@@ -677,7 +669,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
         Optional<Boolean> currentUnit = caps.allowsCurrentUnit();
         boolean allowsPower = powerUnit.isEmpty() || powerUnit.get();
         boolean allowsCurrent = currentUnit.isEmpty() || currentUnit.get();
-        Integer numberPhases = numberPhasesRequested > 0 ? numberPhasesRequested : null;
+        Integer numberPhases = numberPhasesRequested > 0 && !phaseCountRefused ? numberPhasesRequested : null;
         int conversionPhases = numberPhasesRequested > 0 ? numberPhasesRequested : phases;
         if (numberPhases != null && Boolean.FALSE.equals(caps.phaseSwitchSupported().orElse(null))
                 && !phaseSwitchWarningLogged) {
@@ -810,6 +802,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
         OcppCommands commands = commands();
         Integer requestedPhases = claim.numberPhases();
         boolean persists = persistsDefault();
+        // Only a refusal of the plainest profile says the charger lacks SmartCharging: a TxProfile, a limit in
+        // watts or a phase count can each be refused on their own by a charger that takes a current default.
+        // The library puts three phases on a period that names none, so 3 is the plain form too.
+        boolean plain = persists && !chargePointMax && claim.wireUnit() == ChargingRateUnitType.A
+                && (requestedPhases == null || requestedPhases == 3);
         dispatch(commands.setChargingProfile(connectorId, claim.wireValue(), claim.wireUnit() == ChargingRateUnitType.W,
                 requestedPhases == null ? 0 : requestedPhases, forceTxDefaultProfile, transactionId,
                 remoteTransactionId, chargePointMax), "SetChargingProfile").whenComplete((confirmation, ex) -> {
@@ -828,13 +825,19 @@ public class OcppConnectorHandler extends BaseThingHandler {
                         }
                     } else if (ex == null) {
                         if (commands.isFeatureUnsupported(confirmation) && isCurrent(claim)) {
-                            observeSmartChargingUnsupported("NotSupported");
+                            onRefusedAsUnsupported(claim, plain, "NotSupported");
                         } else {
                             logger.debug("SetChargingProfile on connector {} not accepted: {}", connectorId,
                                     confirmation);
                         }
                     } else if (isCurrent(claim)) {
-                        onProfileSendFailed(ex);
+                        String errorCode = unsupportedFeatureError(ex);
+                        if (errorCode != null) {
+                            onRefusedAsUnsupported(claim, plain, "CALL ERROR " + errorCode);
+                        } else {
+                            limitDeferred = true;
+                            retryProfileLater();
+                        }
                     } else {
                         logger.debug("Stale SetChargingProfile failure on connector {} ignored", connectorId);
                     }
@@ -864,15 +867,28 @@ public class OcppConnectorHandler extends BaseThingHandler {
         });
     }
 
-    /** A CALL ERROR for SetChargingProfile itself, rather than a refusal of this one profile. */
-    private void onProfileSendFailed(Throwable ex) {
-        String errorCode = unsupportedFeatureError(ex);
-        if (errorCode != null) {
-            observeSmartChargingUnsupported("CALL ERROR " + errorCode);
+    private void onRefusedAsUnsupported(ProfileClaim claim, boolean plain, String answer) {
+        if (plain) {
+            observeSmartChargingUnsupported(answer);
+        } else if (claim.numberPhases() instanceof Integer phaseCount && phaseCount != 3) {
+            // Asked once more without the phase count, so a sticky number-phases setting cannot hide a charger
+            // that refuses every profile.
+            logger.warn(
+                    "Charger {} connector {} answered {} to a profile with numberPhases {}; the phase count "
+                            + "is not sent again until the charger reboots or the Thing configuration is edited",
+                    chargePointId(), connectorId, answer, claim.numberPhases());
+            setProfile(withoutPhaseCount(claim));
         } else {
-            limitDeferred = true;
-            retryProfileLater();
+            logger.debug("SetChargingProfile on connector {} answered {}; smart charging left on", connectorId, answer);
         }
+    }
+
+    private ProfileClaim withoutPhaseCount(ProfileClaim claim) {
+        ProfileClaim plain = new ProfileClaim(claim.generation(), claim.wireUnit(), claim.wireValue(),
+                claim.limitAmps(), claim.limitWatts(), claim.powerSourced(), null, claim.paused());
+        phaseCountRefused = true;
+        publish(CHANNEL_NUMBER_PHASES, UnDefType.UNDEF);
+        return plain;
     }
 
     /**
