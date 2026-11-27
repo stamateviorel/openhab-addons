@@ -810,13 +810,16 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         readCapabilities(run);
     }
 
-    /** Cancelling the task stops only a burst that has not started; one already running is taken over here. */
     private boolean superseded(BootConfigRun run) {
-        if (run.session().equals(session) && run.generation() == bootConfigGeneration.get()) {
+        if (isCurrent(run)) {
             return false;
         }
         logger.debug("Boot config for {} abandoned — a newer session or boot replaced it", chargePointId);
         return true;
+    }
+
+    private boolean isCurrent(BootConfigRun run) {
+        return run.session().equals(session) && run.generation() == bootConfigGeneration.get();
     }
 
     /** 2.0.1 answers GetBaseReport with NotifyReport messages, not in the response. */
@@ -924,7 +927,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
             appliedConfigFingerprint = null;
             bootConfigAttempts.set(0);
         }
-        if (bootConfigAttempts.incrementAndGet() > MAX_BOOT_CONFIG_ATTEMPTS) {
+        if (bootConfigAttempts.get() >= MAX_BOOT_CONFIG_ATTEMPTS) {
             logger.debug("Boot config for {} not attempted again after {} failed tries", chargePointId,
                     MAX_BOOT_CONFIG_ATTEMPTS);
             requestConnectorStatuses();
@@ -938,8 +941,10 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 addConfigStep(steps, "MeterValueSampleInterval", Integer.toString(config.meterValueSampleInterval));
             }
             if (!config.meterValuesData.isBlank()) {
-                addMeasurandStep(steps, "MeterValuesSampledData", startingMeasurands(config, "MeterValuesSampledData"));
-                addMeasurandStep(steps, "MeterValuesAlignedData", startingMeasurands(config, "MeterValuesAlignedData"));
+                addMeasurandStep(steps, run, "MeterValuesSampledData",
+                        startingMeasurands(config, "MeterValuesSampledData"));
+                addMeasurandStep(steps, run, "MeterValuesAlignedData",
+                        startingMeasurands(config, "MeterValuesAlignedData"));
             }
             if (config.clockAlignedDataInterval >= 0) {
                 addConfigStep(steps, "ClockAlignedDataInterval", Integer.toString(config.clockAlignedDataInterval));
@@ -967,12 +972,12 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         steps.add(() -> send(request).toCompletableFuture());
     }
 
-    private void addMeasurandStep(List<BootConfigStep> steps, String key, String value) {
+    private void addMeasurandStep(List<BootConfigStep> steps, BootConfigRun run, String key, String value) {
         if (commands().setConfiguration(key, value) == null) {
             logger.debug("Charge point {} has no {} setting on {}", chargePointId, key, version);
             return;
         }
-        steps.add(() -> negotiateMeasurand(key, value));
+        steps.add(() -> negotiateMeasurand(run, key, value));
     }
 
     /**
@@ -1089,6 +1094,10 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
     private void runBootConfigStep(List<BootConfigStep> steps, int index, String fingerprint, BootConfigRun run,
             AtomicBoolean allSucceeded) {
         if (superseded(run)) {
+            // A newer boot on the same session runs the burst again; a lost session cut this try short.
+            if (!run.session().equals(session)) {
+                bootConfigAttempts.incrementAndGet();
+            }
             return;
         }
         if (index >= steps.size()) {
@@ -1098,7 +1107,7 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 if (!steps.isEmpty()) {
                     logger.debug("Boot config for {} complete ({} steps)", chargePointId, steps.size());
                 }
-            } else if (bootConfigAttempts.get() < MAX_BOOT_CONFIG_ATTEMPTS) {
+            } else if (bootConfigAttempts.incrementAndGet() < MAX_BOOT_CONFIG_ATTEMPTS) {
                 logger.warn("Boot config for {} did not fully land; will retry on its next boot", chargePointId);
             } else {
                 logger.warn(
@@ -1135,13 +1144,13 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
         return commands().describe(confirmation);
     }
 
-    private CompletableFuture<Confirmation> negotiateMeasurand(String key, String value) {
+    private CompletableFuture<Confirmation> negotiateMeasurand(BootConfigRun run, String key, String value) {
         CompletableFuture<Confirmation> result = new CompletableFuture<>();
-        attemptMeasurand(key, value, result);
+        attemptMeasurand(run, key, value, result);
         return result;
     }
 
-    private void attemptMeasurand(String key, String value, CompletableFuture<Confirmation> result) {
+    private void attemptMeasurand(BootConfigRun run, String key, String value, CompletableFuture<Confirmation> result) {
         Request request = commands().setConfiguration(key, value);
         if (request == null) {
             logger.debug("Charge point {} has no {} setting to write on {}", chargePointId, key, version);
@@ -1157,9 +1166,9 @@ public class OcppChargePointHandler extends BaseBridgeHandler {
                 acceptedMeasurands.put(key, value);
             } else if (commands().isValueRejected(confirmation)) {
                 String shorter = Measurands.dropLast(value);
-                if (!shorter.isEmpty() && !shorter.equals(value)) {
+                if (!shorter.isEmpty() && !shorter.equals(value) && isCurrent(run)) {
                     logger.debug("Charger {} rejected {}={}, retrying with {}", chargePointId, key, value, shorter);
-                    attemptMeasurand(key, shorter, result);
+                    attemptMeasurand(run, key, shorter, result);
                     return;
                 }
             }

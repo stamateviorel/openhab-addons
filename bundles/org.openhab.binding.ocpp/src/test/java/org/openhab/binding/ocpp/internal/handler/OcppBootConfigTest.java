@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -31,6 +32,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +49,7 @@ import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingUID;
 import org.openhab.core.thing.binding.ThingHandlerCallback;
 
+import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.core.BootNotificationRequest;
 import eu.chargetime.ocpp.model.core.ChangeConfigurationConfirmation;
@@ -160,7 +163,7 @@ class OcppBootConfigTest {
 
         ChangeConfigurationRequest first = new ChangeConfigurationRequest("First", "1");
         ChangeConfigurationRequest second = new ChangeConfigurationRequest("Second", "2");
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> firstResult = new CompletableFuture<>();
+        CompletableFuture<Confirmation> firstResult = new CompletableFuture<>();
         when(transport.send(any(), eq(first))).thenReturn(firstResult);
 
         handler.send(first);
@@ -176,7 +179,7 @@ class OcppBootConfigTest {
     @Test
     void theStatusProbePathIsSerializedToo() {
         // sendNow bypasses the readiness gate but must still queue behind an in-flight CALL.
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> firstProbe = new CompletableFuture<>();
+        CompletableFuture<Confirmation> firstProbe = new CompletableFuture<>();
         when(transport.send(any(), any())).thenReturn(firstProbe);
 
         handler.sendNow(new eu.chargetime.ocpp.model.remotetrigger.TriggerMessageRequest(
@@ -196,11 +199,10 @@ class OcppBootConfigTest {
         handler.onHeartbeat();
         awaitReady();
 
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> firstNeverAnswers = new CompletableFuture<>();
+        CompletableFuture<Confirmation> firstNeverAnswers = new CompletableFuture<>();
         ChangeConfigurationRequest first = new ChangeConfigurationRequest("First", "1");
         when(transport.send(any(), eq(first))).thenReturn(firstNeverAnswers);
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> firstResult = handler.send(first)
-                .toCompletableFuture();
+        CompletableFuture<Confirmation> firstResult = handler.send(first).toCompletableFuture();
         verify(transport, timeout(1000)).send(any(), eq(first));
 
         handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
@@ -222,7 +224,7 @@ class OcppBootConfigTest {
         handler.onHeartbeat();
         awaitReady();
 
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> f1 = new CompletableFuture<>();
+        CompletableFuture<Confirmation> f1 = new CompletableFuture<>();
         ChangeConfigurationRequest r1 = new ChangeConfigurationRequest("R1", "1");
         when(transport.send(any(), eq(r1))).thenReturn(f1);
         handler.send(r1);
@@ -232,7 +234,7 @@ class OcppBootConfigTest {
         handler.onHeartbeat();
         awaitReady();
 
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> f2 = new CompletableFuture<>();
+        CompletableFuture<Confirmation> f2 = new CompletableFuture<>();
         ChangeConfigurationRequest r2 = new ChangeConfigurationRequest("R2", "2");
         when(transport.send(any(), eq(r2))).thenReturn(f2);
         handler.send(r2);
@@ -361,7 +363,7 @@ class OcppBootConfigTest {
     @Test
     void anAbandonedBootSequenceDoesNotContinueOnAReplacementSession() {
         serverConfig.extraConfig = List.of("VendorKey=42");
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> firstStep = new CompletableFuture<>();
+        CompletableFuture<Confirmation> firstStep = new CompletableFuture<>();
         when(transport.send(any(), any())).thenAnswer(invocation -> {
             Request request = invocation.getArgument(1);
             record(request);
@@ -388,8 +390,8 @@ class OcppBootConfigTest {
 
     @Test
     void aRequestQueuedOnOneSessionIsNotSentOnItsSuccessor() {
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> queued = handler
-                .send(new ChangeConfigurationRequest("Key", "1")).toCompletableFuture();
+        CompletableFuture<Confirmation> queued = handler.send(new ChangeConfigurationRequest("Key", "1"))
+                .toCompletableFuture();
         assertFalse(queued.isDone());
 
         handler.onConnected(UUID.randomUUID(), OcppVersion.V1_6);
@@ -489,7 +491,7 @@ class OcppBootConfigTest {
 
     @Test
     void connectorsAreToldOnceAConfigurationReadAfterReadinessReportsTheUnits() {
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> configuration = new CompletableFuture<>();
+        CompletableFuture<Confirmation> configuration = new CompletableFuture<>();
         when(transport.send(any(), any())).thenAnswer(invocation -> {
             Request request = invocation.getArgument(1);
             if (request instanceof GetConfigurationRequest) {
@@ -531,7 +533,7 @@ class OcppBootConfigTest {
     @Test
     void aSecondBootTakesOverTheBurstInsteadOfRunningASecondOne() {
         serverConfig.extraConfig = List.of("VendorKey=42");
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> firstStep = new CompletableFuture<>();
+        CompletableFuture<Confirmation> firstStep = new CompletableFuture<>();
         when(transport.send(any(), any())).thenAnswer(invocation -> {
             Request request = invocation.getArgument(1);
             record(request);
@@ -554,8 +556,76 @@ class OcppBootConfigTest {
 
         verify(transport, timeout(3000).times(2)).send(any(),
                 eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
-        verify(transport, org.mockito.Mockito.after(1000).times(1)).send(any(),
-                eq(new ChangeConfigurationRequest("VendorKey", "42")));
+        verify(transport, after(1000).times(1)).send(any(), eq(new ChangeConfigurationRequest("VendorKey", "42")));
+    }
+
+    @Test
+    void anOvertakenBurstDoesNotUseUpATry() {
+        CompletableFuture<Confirmation> firstStep = new CompletableFuture<>();
+        AtomicBoolean held = new AtomicBoolean();
+        when(transport.send(any(), any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(1);
+            record(request);
+            if (request instanceof GetConfigurationRequest) {
+                return CompletableFuture.completedFuture(configurationAnswer(Map.of()));
+            }
+            return held.compareAndSet(false, true) ? firstStep
+                    : CompletableFuture
+                            .completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Rejected));
+        });
+        OcppConnectorHandler connector = mock(OcppConnectorHandler.class);
+        handler.registerConnector(1, connector);
+
+        boot();
+        verify(transport, timeout(3000)).send(any(),
+                eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
+        boot();
+        firstStep.complete(new ChangeConfigurationConfirmation(ConfigurationStatus.Rejected));
+        verify(connector, timeout(3000).times(1)).requestStatus();
+
+        for (int boot = 2; boot <= 4; boot++) {
+            boot();
+            verify(connector, timeout(3000).times(boot)).requestStatus();
+        }
+
+        verify(transport, after(1000).times(4)).send(any(),
+                eq(new ChangeConfigurationRequest("AuthorizeRemoteTxRequests", "false")));
+    }
+
+    @Test
+    void anOvertakenBurstDoesNotKeepNegotiatingMeasurands() {
+        String full = "Energy.Active.Import.Register,Power.Active.Import,Temperature";
+        String shorter = "Energy.Active.Import.Register,Power.Active.Import";
+        serverConfig.meterValuesData = full;
+        serverConfig.disableRemoteTxAuthorization = false;
+        CompletableFuture<Confirmation> firstAnswer = new CompletableFuture<>();
+        AtomicBoolean held = new AtomicBoolean();
+        when(transport.send(any(), any())).thenAnswer(invocation -> {
+            Request request = invocation.getArgument(1);
+            record(request);
+            if (request instanceof GetConfigurationRequest) {
+                return CompletableFuture.completedFuture(configurationAnswer(Map.of()));
+            }
+            if (request instanceof ChangeConfigurationRequest change && "MeterValuesSampledData".equals(change.getKey())
+                    && change.getValue().contains("Temperature")) {
+                return held.compareAndSet(false, true) ? firstAnswer
+                        : CompletableFuture
+                                .completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Rejected));
+            }
+            return CompletableFuture.completedFuture(new ChangeConfigurationConfirmation(ConfigurationStatus.Accepted));
+        });
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        verify(transport, timeout(3000)).send(any(),
+                eq(new ChangeConfigurationRequest("MeterValuesSampledData", full)));
+
+        handler.onBootNotification(Ocpp16Events.toBootInfo(new BootNotificationRequest("vendor", "model")));
+        firstAnswer.complete(new ChangeConfigurationConfirmation(ConfigurationStatus.Rejected));
+
+        verify(transport, timeout(3000).times(2)).send(any(),
+                eq(new ChangeConfigurationRequest("MeterValuesSampledData", full)));
+        verify(transport, after(1000).times(1)).send(any(),
+                eq(new ChangeConfigurationRequest("MeterValuesSampledData", shorter)));
     }
 
     /** The charger stays silent on GetConfiguration but answers everything else. */
