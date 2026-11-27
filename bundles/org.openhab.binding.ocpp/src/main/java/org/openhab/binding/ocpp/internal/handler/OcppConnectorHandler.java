@@ -245,6 +245,17 @@ public class OcppConnectorHandler extends BaseThingHandler {
         phaseCountRefused = false;
         compositeReadFailures.set(0);
         storedDefault = null;
+        // A config edit re-initialises this same instance, so a transaction of the old connectorId would otherwise
+        // stay open here and be the one a stop or a TxProfile names.
+        boolean hadTransaction = transactionId != null;
+        transactionId = null;
+        remoteTransactionId = null;
+        meterStart = null;
+        forgotten = null;
+        limitHeldByTxProfile = false;
+        if (hadTransaction) {
+            publish(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
+        }
         OcppChargePointHandler parent = chargePointHandler();
         if (parent == null) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_UNINITIALIZED);
@@ -410,7 +421,18 @@ public class OcppConnectorHandler extends BaseThingHandler {
                 Integer phaseCount = toPhaseCount(command);
                 if (phaseCount != null) {
                     numberPhasesRequested = phaseCount;
-                    if (!paused) {
+                    if (paused) {
+                        break;
+                    }
+                    if (Double.isNaN(currentLimitAmps) && Double.isNaN(powerLimitWatts)) {
+                        // The phase count travels in a charging profile, and without a limit there is none to send;
+                        // a clear would drop the request rather than carry it.
+                        logger.debug("Connector {}: number-phases {} goes out with the next charge-limit or "
+                                + "power-limit", connectorId, phaseCount);
+                        if (phaseCount == 0) {
+                            publish(CHANNEL_NUMBER_PHASES, new DecimalType(0));
+                        }
+                    } else {
                         applyLimit();
                     }
                 }
@@ -964,6 +986,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
         Integer phaseCount = claim.numberPhases();
         if (phaseCount != null) {
             publish(CHANNEL_NUMBER_PHASES, new DecimalType(phaseCount));
+        } else if (numberPhasesRequested == 0) {
+            publish(CHANNEL_NUMBER_PHASES, new DecimalType(0));
         }
         publish(CHANNEL_PAUSE, OnOffType.from(claim.paused()));
         lastAccepted = claim;

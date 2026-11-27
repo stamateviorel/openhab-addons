@@ -279,6 +279,7 @@ Alternatively set `power-limit` (watts) directly — it is sent as-is, with no c
 Commanding `charge-limit` again clears the power-limit and returns to amps, so the most recent command always wins.
 A `power-limit` of 0 stops the charge too, and `clear-limit` removes it along with `charge-limit`.
 `number-phases` requests charging on a given number of phases (1, 2 or 3) by setting `numberPhases` in the charging profile — for switching a car to single-phase when solar surplus is low, for instance; 0 clears the request so the charger keeps its own default (OCPP assumes 3).
+The phase count travels in the charging profile, so with no `charge-limit` or `power-limit` set it is held and goes out with the next one.
 It only takes effect on a charger that supports phase switching (its `ConnectorSwitch3to1PhaseSupported` is true), and when set it also drives the amps→watts conversion above.
 `pause` suspends charging with a 0 A profile without ending the transaction; switching it off resumes — at your `charge-limit` if one is set, otherwise by removing the cap so the charger returns to its own maximum — distinct from `charging`, which ends the session.
 With `profilePurpose` set to `ChargePointMaxProfile` a pause is not sent at all, since 0 is no stop in that mode (see the `connector` configuration); use `charging`.

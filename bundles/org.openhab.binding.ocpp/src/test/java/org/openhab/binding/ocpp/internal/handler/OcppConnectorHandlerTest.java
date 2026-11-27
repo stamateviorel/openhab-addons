@@ -68,6 +68,7 @@ import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.core.ChargePointErrorCode;
 import eu.chargetime.ocpp.model.core.ChargePointStatus;
 import eu.chargetime.ocpp.model.core.ChargingProfilePurposeType;
+import eu.chargetime.ocpp.model.core.RemoteStopTransactionRequest;
 import eu.chargetime.ocpp.model.core.StatusNotificationRequest;
 import eu.chargetime.ocpp.model.smartcharging.ChargingProfileStatus;
 import eu.chargetime.ocpp.model.smartcharging.ClearChargingProfileConfirmation;
@@ -182,6 +183,64 @@ class OcppConnectorHandlerTest {
 
         assertChannel(CHANNEL_SESSION_ENERGY,
                 new org.openhab.core.library.types.QuantityType<>(500, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
+
+    @Test
+    void aPhaseCountWithoutALimitWaitsForTheNextLimit() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+
+        command(CHANNEL_NUMBER_PHASES, new DecimalType(1));
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof ClearChargingProfileRequest));
+        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(16));
+
+        assertEquals(1,
+                lastProfile(chargePoint).getCsChargingProfiles().getChargingSchedule().getChargingSchedulePeriod()[0]
+                        .getNumberPhases());
+        assertChannel(CHANNEL_NUMBER_PHASES, new DecimalType(1));
+    }
+
+    @Test
+    void aPhaseCountOfZeroIsShownOnceTheChargerTakesIt() {
+        attachReadyChargePoint();
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(16));
+        command(CHANNEL_NUMBER_PHASES, new DecimalType(1));
+        clearInvocations(callback);
+
+        command(CHANNEL_NUMBER_PHASES, new DecimalType(0));
+
+        assertChannel(CHANNEL_NUMBER_PHASES, new DecimalType(0));
+    }
+
+    @Test
+    void aPhaseCountOfZeroWithoutALimitIsShownAtOnce() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+
+        command(CHANNEL_NUMBER_PHASES, new DecimalType(0));
+
+        assertChannel(CHANNEL_NUMBER_PHASES, new DecimalType(0));
+        verify(chargePoint, never()).send(any());
+    }
+
+    @Test
+    void aConnectorIdEditDuringAChargeForgetsTheOldTransaction() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        when(chargePoint.recoverTransactionId(2)).thenReturn(null);
+        startTransaction(7);
+        when(thing.getConfiguration()).thenReturn(new Configuration(Map.of("connectorId", 2)));
+
+        handler.dispose();
+        handler.initialize();
+        clearInvocations(chargePoint);
+        command(CHANNEL_CHARGING, OnOffType.OFF);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        assertChannel(CHANNEL_TRANSACTION_ID, UnDefType.UNDEF);
+        verify(chargePoint, never()).send(argThat(r -> r instanceof RemoteStopTransactionRequest));
+        assertEquals(ChargingProfilePurposeType.TxDefaultProfile,
+                lastProfile(chargePoint).getCsChargingProfiles().getChargingProfilePurpose());
     }
 
     @Test
