@@ -86,6 +86,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private static final long STUCK_STATE_SECONDS = 120;
     private static final int PROFILE_RETRY_LIMIT = 3;
     private static final long REMOTE_START_RETRY_DELAY_SECONDS = 5;
+    private static final int COMPOSITE_READ_FAILURE_LIMIT = 3;
 
     private record DynamicChannel(String channelTypeId, String itemType, @Nullable String label) {
     }
@@ -179,10 +180,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
     private volatile boolean smartChargingObservedUnsupported;
     // Set once a profile carrying numberPhases was refused as unsupported and the same limit without it was not.
     private volatile boolean phaseCountRefused;
-    // Set once the charger refuses GetCompositeSchedule as a feature; defaults are then written unread.
-    private volatile boolean compositeReadUnsupported;
-    // A Wallbox read just after a paused charge ended reported 32 A while it kept the 0 A, so a lift is always sent.
-    private volatile boolean stopOnCharger;
+    // At the limit, defaults are written unread until the charger boots or the Thing re-initialises.
+    private final AtomicInteger compositeReadFailures = new AtomicInteger();
+    // GetCompositeSchedule folds in every profile and local limit: a Wallbox Copper SB answered 32 A while it still
+    // held a 0 A default. So only a repeat of the default this run last saw accepted is read back.
+    private volatile @Nullable StoredDefault storedDefault;
 
     // Dedicated lock: the base class synchronizes on the handler monitor.
     private final Object lock = new Object();
@@ -241,7 +243,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
         smartChargingObservedUnsupported = false;
         smartChargingUnsupportedLogged = false;
         phaseCountRefused = false;
-        compositeReadUnsupported = false;
+        compositeReadFailures.set(0);
+        storedDefault = null;
         OcppChargePointHandler parent = chargePointHandler();
         if (parent == null) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_UNINITIALIZED);
@@ -335,6 +338,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
         abandonRemoteStart();
         pendingStartTag = null;
         synchronized (lock) {
+            // Outdates every answer still in flight, so none of them writes or retries for the next run.
+            profileGeneration++;
             cancel(stuckTask);
             cancel(pendingFlush);
             cancel(profileRetryTask);
@@ -534,7 +539,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
         smartChargingObservedUnsupported = false;
         smartChargingUnsupportedLogged = false;
         phaseCountRefused = false;
-        compositeReadUnsupported = false;
+        compositeReadFailures.set(0);
+        storedDefault = null;
         rememberedStopUnchecked = true;
     }
 
@@ -594,6 +600,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                         logger.info("Connector {} released a 0 A charging profile left by an earlier run; "
                                 + "it would have suspended every charge", connectorId);
                         rememberPersistedStop(false);
+                        storedDefault = null;
                         // Items restored from persistence may still say paused; a rule that only writes on
                         // change would then never send the pause it still wants.
                         publish(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
@@ -738,16 +745,17 @@ public class OcppConnectorHandler extends BaseThingHandler {
     }
 
     /**
-     * A default profile is written into the charger's persistent storage, so one that would change nothing is
-     * read back first and skipped. Anything short of a clear match is written as before.
+     * A default profile is written into the charger's persistent storage, so a repeat of the one it last accepted
+     * is read back first and skipped when the charger confirms it. Anything short of that is written.
      */
     private void writeUnlessAlreadyApplied(ProfileClaim claim) {
         OcppCommands commands = commands();
         boolean inWatts = claim.wireUnit() == ChargingRateUnitType.W;
-        eu.chargetime.ocpp.model.Request read = persistsDefault() && !compositeReadUnsupported
-                ? commands.readCompositeSchedule(connectorId, inWatts)
-                : null;
-        if (read == null || liftsAStop(claim)) {
+        eu.chargetime.ocpp.model.Request read = persistsDefault()
+                && compositeReadFailures.get() < COMPOSITE_READ_FAILURE_LIMIT
+                && StoredDefault.of(claim).equals(storedDefault) ? commands.readCompositeSchedule(connectorId, inWatts)
+                        : null;
+        if (read == null) {
             setProfile(claim);
             return;
         }
@@ -756,14 +764,20 @@ public class OcppConnectorHandler extends BaseThingHandler {
             if (!isNewest(claim)) {
                 return;
             }
-            if (ex != null && unsupportedFeatureError(ex) != null) {
-                compositeReadUnsupported = true;
-            }
             OcppCommands.AppliedLimit applied = ex == null ? commands.appliedLimitOf(confirmation, inWatts) : null;
-            if (applied != null && persistsDefault() && alreadyApplied(applied, claim)) {
+            if (applied != null) {
+                compositeReadFailures.set(0);
+            } else if (ex != null && unsupportedFeatureError(ex) != null) {
+                compositeReadFailures.set(COMPOSITE_READ_FAILURE_LIMIT);
+            } else {
+                compositeReadFailures.incrementAndGet();
+            }
+            if (applied != null && persistsDefault() && StoredDefault.of(claim).equals(storedDefault)
+                    && alreadyApplied(applied, claim)) {
                 logger.debug("Connector {} already applies {} {}; default profile not rewritten", connectorId,
                         claim.wireValue(), claim.wireUnit());
                 if (claimPublication(claim)) {
+                    profileLanded();
                     publishAcceptedLimit(claim);
                     rememberPersistedStop(claim.wireValue() == 0);
                 }
@@ -773,18 +787,23 @@ public class OcppConnectorHandler extends BaseThingHandler {
         });
     }
 
-    private boolean liftsAStop(ProfileClaim claim) {
-        return claim.wireValue() > 0 && (stopOnCharger || isRememberedStop());
+    private record StoredDefault(ChargingRateUnitType unit, double value, @Nullable Integer numberPhases) {
+        static StoredDefault of(ProfileClaim claim) {
+            return new StoredDefault(claim.wireUnit(), claim.wireValue(), claim.numberPhases());
+        }
     }
 
-    /** OCPP 1.6 carries one decimal, and an unstated phase count means three. */
+    /**
+     * OCPP 1.6 carries one decimal, and an unstated phase count means three. The phase count is compared only when
+     * the claim sets one: a single-phase charger reports 1 for a profile that never named a count.
+     */
     private static boolean alreadyApplied(OcppCommands.AppliedLimit applied, ProfileClaim claim) {
         if (Math.abs(applied.limit() - claim.wireValue()) >= 0.05) {
             return false;
         }
         Integer reported = applied.numberPhases();
         Integer requested = claim.numberPhases();
-        return (requested == null ? 3 : requested) == (reported == null ? 3 : reported);
+        return requested == null || requested == (reported == null ? 3 : reported);
     }
 
     /** A TxProfile lapses with its transaction; anything else lands in the charger's persistent default. */
@@ -818,6 +837,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                             profileLanded();
                             publishAcceptedLimit(claim);
                             if (persists) {
+                                storedDefault = StoredDefault.of(claim);
                                 rememberPersistedStop(claim.wireValue() == 0);
                             }
                         } else {
@@ -946,7 +966,6 @@ public class OcppConnectorHandler extends BaseThingHandler {
             publish(CHANNEL_NUMBER_PHASES, new DecimalType(phaseCount));
         }
         publish(CHANNEL_PAUSE, OnOffType.from(claim.paused()));
-        stopOnCharger = claim.paused() || claim.wireValue() == 0;
         lastAccepted = claim;
     }
 
@@ -1018,7 +1037,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
                             publish(CHANNEL_CHARGE_LIMIT, UnDefType.UNDEF);
                             publish(CHANNEL_POWER_LIMIT, UnDefType.UNDEF);
                             publish(CHANNEL_PAUSE, OnOffType.OFF);
-                            stopOnCharger = false;
+                            storedDefault = null;
                             lastAccepted = null;
                             rememberPersistedStop(false);
                         } else {

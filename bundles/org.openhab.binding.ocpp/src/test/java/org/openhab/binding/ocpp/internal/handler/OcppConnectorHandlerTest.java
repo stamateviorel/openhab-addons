@@ -27,9 +27,12 @@ import static org.mockito.Mockito.when;
 import static org.openhab.binding.ocpp.internal.OcppBindingConstants.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -41,6 +44,7 @@ import org.openhab.binding.ocpp.internal.transport.event.MeterSample;
 import org.openhab.binding.ocpp.internal.transport.event.StatusInfo;
 import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
+import org.openhab.core.config.core.Configuration;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.QuantityType;
@@ -58,6 +62,8 @@ import org.openhab.core.types.Command;
 import org.openhab.core.types.RefreshType;
 import org.openhab.core.types.UnDefType;
 
+import eu.chargetime.ocpp.CallErrorException;
+import eu.chargetime.ocpp.model.Confirmation;
 import eu.chargetime.ocpp.model.Request;
 import eu.chargetime.ocpp.model.core.ChargePointErrorCode;
 import eu.chargetime.ocpp.model.core.ChargePointStatus;
@@ -928,20 +934,45 @@ class OcppConnectorHandlerTest {
     }
 
     @Test
-    void aDefaultTheChargerAlreadyAppliesIsNotWrittenAgain() {
+    void aRepeatedDefaultTheChargerAlreadyAppliesIsNotWrittenAgain() {
         OcppChargePointHandler chargePoint = chargerApplying(10.0);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        clearInvocations(chargePoint, callback);
 
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
 
         verify(chargePoint).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
         verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
-        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_CHARGE_LIMIT)), eq(
-                new org.openhab.core.library.types.QuantityType<>(10.0, org.openhab.core.library.unit.Units.AMPERE)));
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_CHARGE_LIMIT)),
+                eq(new QuantityType<>(10.0, Units.AMPERE)));
     }
 
     @Test
-    void aDifferentDefaultIsWritten() {
+    void theFirstDefaultIsWrittenWithoutAsking() {
+        OcppChargePointHandler chargePoint = chargerApplying(10.0);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+        assertEquals(10.0, sentLimit(lastProfile(chargePoint)));
+    }
+
+    @Test
+    void aChangedDefaultIsWrittenWithoutAsking() {
+        OcppChargePointHandler chargePoint = chargerApplying(12.0);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(12));
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+        assertEquals(12.0, sentLimit(lastProfile(chargePoint)));
+    }
+
+    @Test
+    void aRepeatTheChargerDoesNotConfirmIsWritten() {
         OcppChargePointHandler chargePoint = chargerApplying(16.0);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        clearInvocations(chargePoint);
 
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
 
@@ -949,19 +980,19 @@ class OcppConnectorHandlerTest {
     }
 
     @Test
-    void aStopAlreadyInPlaceIsNotWrittenAgain() {
+    void aRepeatedStopIsNotWrittenAgain() {
         OcppChargePointHandler chargePoint = chargerApplying(0.0);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(0));
+        clearInvocations(chargePoint);
 
-        command(CHANNEL_PAUSE, OnOffType.ON);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(0));
 
         verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
-        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_PAUSE)), eq(OnOffType.ON));
     }
 
     @Test
     void liftingAPauseIsWrittenEvenWhenTheReadSaysTheLimitIsBack() {
-        var reported = new java.util.concurrent.atomic.AtomicReference<java.lang.@org.eclipse.jdt.annotation.Nullable Double>(
-                32.0);
+        AtomicReference<@Nullable Double> reported = new AtomicReference<>(32.0);
         OcppChargePointHandler chargePoint = chargerReporting(reported);
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(32));
         startTransaction(7);
@@ -978,8 +1009,7 @@ class OcppConnectorHandlerTest {
 
     @Test
     void raisingA0ALimitIsWrittenEvenWhenTheReadMatches() {
-        var reported = new java.util.concurrent.atomic.AtomicReference<java.lang.@org.eclipse.jdt.annotation.Nullable Double>(
-                5.0);
+        AtomicReference<@Nullable Double> reported = new AtomicReference<>(5.0);
         OcppChargePointHandler chargePoint = chargerReporting(reported);
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(0));
         reported.set(16.0);
@@ -991,9 +1021,8 @@ class OcppConnectorHandlerTest {
     }
 
     @Test
-    void aLimitAfterALimitIsStillReadBack() {
-        var reported = new java.util.concurrent.atomic.AtomicReference<java.lang.@org.eclipse.jdt.annotation.Nullable Double>(
-                5.0);
+    void aReadThatMatchesAnotherLimitIsNotTakenForTheStoredDefault() {
+        AtomicReference<@Nullable Double> reported = new AtomicReference<>(5.0);
         OcppChargePointHandler chargePoint = chargerReporting(reported);
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
         reported.set(16.0);
@@ -1001,12 +1030,40 @@ class OcppConnectorHandlerTest {
 
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(16));
 
-        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+        assertEquals(16.0, sentLimit(lastProfile(chargePoint)));
+    }
+
+    @Test
+    void aDefaultAfterAClearIsWrittenAgain() {
+        OcppChargePointHandler chargePoint = chargerApplying(10.0);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_CLEAR_LIMIT, OnOffType.ON);
+        clearInvocations(chargePoint);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+        assertEquals(10.0, sentLimit(lastProfile(chargePoint)));
+    }
+
+    @Test
+    void theFirstDefaultAfterAChargerBootIsWrittenWithoutAsking() {
+        OcppChargePointHandler chargePoint = chargerApplying(10.0);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        handler.onChargerBooted();
+        clearInvocations(chargePoint);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+        assertEquals(10.0, sentLimit(lastProfile(chargePoint)));
     }
 
     @Test
     void aChargerThatDeclinesTheReadStillGetsTheWrite() {
         OcppChargePointHandler chargePoint = chargerApplying(null);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        clearInvocations(chargePoint);
 
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
 
@@ -1018,57 +1075,132 @@ class OcppConnectorHandlerTest {
         OcppChargePointHandler chargePoint = attachReadyChargePoint();
         when(chargePoint.send(any()))
                 .thenAnswer(invocation -> invocation.getArgument(0) instanceof GetCompositeScheduleRequest
-                        ? CompletableFuture.failedFuture(
-                                new eu.chargetime.ocpp.CallErrorException("NotSupported", "no composite", null))
+                        ? CompletableFuture.failedFuture(new CallErrorException("NotSupported", "no composite", null))
                         : CompletableFuture
                                 .completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted)));
 
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
-        command(CHANNEL_CHARGE_LIMIT, new DecimalType(12));
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
 
         verify(chargePoint, times(1)).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
-        assertEquals(2, limitRequests(chargePoint).size());
-        assertEquals(12.0, sentLimit(lastProfile(chargePoint)));
+        assertEquals(3, limitRequests(chargePoint).size());
     }
 
     @Test
     void aLimitDuringATransactionIsNotReadBack() {
         OcppChargePointHandler chargePoint = chargerApplying(10.0);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
         startTransaction(7);
 
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
 
         verify(chargePoint, never()).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
-        assertEquals(10.0, sentLimit(lastProfile(chargePoint)));
+        assertEquals(2, limitRequests(chargePoint).size());
     }
 
     @Test
     void aSlowReadDoesNotOverwriteANewerLimit() {
         OcppChargePointHandler chargePoint = attachReadyChargePoint();
-        CompletableFuture<eu.chargetime.ocpp.model.Confirmation> slowRead = new CompletableFuture<>();
-        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
-        when(chargePoint.send(any())).thenAnswer(invocation -> {
-            if (!(invocation.getArgument(0) instanceof GetCompositeScheduleRequest)) {
-                return CompletableFuture
-                        .completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted));
-            }
-            if (reads.getAndIncrement() == 0) {
-                return slowRead;
-            }
-            GetCompositeScheduleConfirmation applies12 = new GetCompositeScheduleConfirmation(
-                    GetCompositeScheduleStatus.Accepted);
-            applies12.setChargingSchedule(new eu.chargetime.ocpp.model.core.ChargingSchedule(
-                    eu.chargetime.ocpp.model.core.ChargingRateUnitType.A,
-                    new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod[] {
-                            new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod(0, 12.0) }));
-            return CompletableFuture.completedFuture(applies12);
-        });
-
+        CompletableFuture<Confirmation> slowRead = new CompletableFuture<>();
+        when(chargePoint.send(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0) instanceof GetCompositeScheduleRequest ? slowRead
+                        : CompletableFuture
+                                .completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted)));
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
         command(CHANNEL_CHARGE_LIMIT, new DecimalType(12));
         slowRead.complete(new GetCompositeScheduleConfirmation(GetCompositeScheduleStatus.Rejected));
 
+        assertEquals(2, limitRequests(chargePoint).size());
+        assertEquals(12.0, sentLimit(lastProfile(chargePoint)));
+    }
+
+    @Test
+    void aReadAnsweredAfterAReinitialisationWritesNothing() {
+        OcppChargePointHandler chargePoint = attachReadyChargePoint();
+        when(chargePoint.recoverTransactionId(1)).thenReturn(null);
+        CompletableFuture<Confirmation> slowRead = new CompletableFuture<>();
+        when(chargePoint.send(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0) instanceof GetCompositeScheduleRequest ? slowRead
+                        : CompletableFuture
+                                .completedFuture(new SetChargingProfileConfirmation(ChargingProfileStatus.Accepted)));
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        handler.dispose();
+        handler.initialize();
+        slowRead.complete(new GetCompositeScheduleConfirmation(GetCompositeScheduleStatus.Rejected));
+
+        verify(chargePoint, times(1)).send(argThat(r -> r instanceof SetChargingProfileRequest));
+    }
+
+    @Test
+    void aRepeatedChargePointMaxCapIsReadBackAndSkipped() {
+        when(thing.getConfiguration()).thenReturn(new Configuration(Map.of("profilePurpose", "ChargePointMaxProfile")));
+        OcppChargePointHandler chargePoint = chargerApplying(10.0);
+        when(chargePoint.recoverTransactionId(1)).thenReturn(null);
+        handler.initialize();
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        verify(chargePoint, never()).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+        clearInvocations(chargePoint);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        verify(chargePoint).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
         verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+    }
+
+    @Test
+    void readsStopAfterThreeThatSayNothing() {
+        OcppChargePointHandler chargePoint = chargerApplying(null);
+        for (int i = 0; i < 5; i++) {
+            command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        }
+
+        verify(chargePoint, times(3)).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+        assertEquals(5, limitRequests(chargePoint).size());
+    }
+
+    @Test
+    void aUsableReadResetsTheFailedReadCount() {
+        AtomicReference<@Nullable Double> reported = new AtomicReference<>(null);
+        OcppChargePointHandler chargePoint = chargerReporting(reported);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        reported.set(16.0);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        reported.set(null);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        verify(chargePoint, times(5)).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+    }
+
+    @Test
+    void aChargerReportingOnePhaseConfirmsADefaultThatNamesNone() {
+        OcppChargePointHandler chargePoint = chargerReporting(new AtomicReference<>(10.0), 1);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        clearInvocations(chargePoint);
+
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+
+        verify(chargePoint, never()).send(argThat(r -> r instanceof SetChargingProfileRequest));
+    }
+
+    @Test
+    void aRepeatOnOnePhaseIsWrittenWhenTheChargerStatesNoPhaseCount() {
+        OcppChargePointHandler chargePoint = chargerApplying(10.0);
+        command(CHANNEL_CHARGE_LIMIT, new DecimalType(10));
+        command(CHANNEL_NUMBER_PHASES, new DecimalType(1));
+        clearInvocations(chargePoint);
+
+        command(CHANNEL_NUMBER_PHASES, new DecimalType(1));
+
+        verify(chargePoint).send(argThat(r -> r instanceof GetCompositeScheduleRequest));
+        assertEquals(10.0, sentLimit(lastProfile(chargePoint)));
     }
 
     @Test
@@ -1148,15 +1280,17 @@ class OcppConnectorHandlerTest {
     }
 
     /** A charge point that reports {@code limit} amps in force now, or declines to say when it is null. */
-    private OcppChargePointHandler chargerApplying(@org.eclipse.jdt.annotation.Nullable Double limit) {
-        return chargerReporting(
-                new java.util.concurrent.atomic.AtomicReference<java.lang.@org.eclipse.jdt.annotation.Nullable Double>(
-                        limit));
+    private OcppChargePointHandler chargerApplying(@Nullable Double limit) {
+        return chargerReporting(new AtomicReference<>(limit));
     }
 
     /** As {@link #chargerApplying}, with the reported limit read again on every request. */
-    private OcppChargePointHandler chargerReporting(
-            java.util.concurrent.atomic.AtomicReference<java.lang.@org.eclipse.jdt.annotation.Nullable Double> reported) {
+    private OcppChargePointHandler chargerReporting(AtomicReference<@Nullable Double> reported) {
+        return chargerReporting(reported, null);
+    }
+
+    private OcppChargePointHandler chargerReporting(AtomicReference<@Nullable Double> reported,
+            @Nullable Integer numberPhases) {
         OcppChargePointHandler chargePoint = attachReadyChargePoint();
         when(chargePoint.send(any())).thenAnswer(invocation -> {
             Double limit = reported.get();
@@ -1169,6 +1303,7 @@ class OcppConnectorHandlerTest {
                             eu.chargetime.ocpp.model.core.ChargingRateUnitType.A,
                             new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod[] {
                                     new eu.chargetime.ocpp.model.core.ChargingSchedulePeriod(0, limit) }));
+                    answer.getChargingSchedule().getChargingSchedulePeriod()[0].setNumberPhases(numberPhases);
                 }
                 return CompletableFuture.completedFuture(answer);
             }
