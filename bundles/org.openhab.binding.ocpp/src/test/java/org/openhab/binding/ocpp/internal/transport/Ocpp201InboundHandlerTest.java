@@ -266,6 +266,18 @@ class Ocpp201InboundHandlerTest {
     }
 
     @Test
+    void theReadingsOfATransactionEventNameItsTransaction() {
+        handler.handleTransactionEventRequest(session,
+                transaction(TransactionEventEnum.Updated, "abc", new SampledValue[] { new SampledValue(1500d) }));
+
+        ArgumentCaptor<TransactionEvent> event = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(listener).onTransactionEvent(eq(session), event.capture());
+        ArgumentCaptor<MeterSample> captor = ArgumentCaptor.forClass(MeterSample.class);
+        verify(listener).onMeterValues(eq(session), captor.capture());
+        assertEquals(event.getValue().transactionId(), captor.getValue().transactionId());
+    }
+
+    @Test
     void aUnitMultiplierIsAppliedToTheReading() {
         // 2.0.1 may report 12 kWh as value 12 with multiplier 3; 1.6 had no multiplier at all.
         SampledValue sample = new SampledValue(12d);

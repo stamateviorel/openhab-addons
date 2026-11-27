@@ -74,7 +74,7 @@ public final class Ocpp16Events {
             blocks.sort(Comparator.comparing(MeterSample.Block::timestamp,
                     Comparator.nullsFirst(Comparator.naturalOrder())));
         }
-        return new MeterSample(connectorOf(request.getConnectorId()), blocks);
+        return new MeterSample(connectorOf(request.getConnectorId()), blocks, request.getTransactionId());
     }
 
     public static TransactionEvent toStarted(StartTransactionRequest request, int transactionId) {

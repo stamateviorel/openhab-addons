@@ -43,7 +43,9 @@ import org.openhab.binding.ocpp.internal.transport.event.TokenType;
 import org.openhab.binding.ocpp.internal.transport.event.TransactionEvent;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
+import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.types.StringType;
+import org.openhab.core.library.unit.Units;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
@@ -174,6 +176,64 @@ class OcppConnectorHandlerTest {
 
         assertChannel(CHANNEL_SESSION_ENERGY,
                 new org.openhab.core.library.types.QuantityType<>(500, org.openhab.core.library.unit.Units.WATT_HOUR));
+    }
+
+    @Test
+    void aStartResetsTheSessionEnergyToZero() {
+        startTransaction(7);
+
+        assertChannel(CHANNEL_SESSION_ENERGY, new QuantityType<>(0, Units.WATT_HOUR));
+    }
+
+    @Test
+    void aStartWithoutAMeterReadingLeavesTheSessionEnergyUndefined() {
+        handler.onTransactionStarted(new TransactionEvent(TransactionEvent.Kind.STARTED, 1, 9, "tx-9", "tag",
+                TokenType.CARD, null, null, null));
+
+        assertChannel(CHANNEL_SESSION_ENERGY, UnDefType.UNDEF);
+    }
+
+    @Test
+    void meterValuesOfAnotherTransactionDoNotCountTowardsTheRunningOne() {
+        startTransaction(7);
+        MeterSample queued = new MeterSample(1,
+                meterValues("Energy.Active.Import.Register", null, "kWh", "1.5").blocks(), 6);
+
+        handler.onMeterValues(queued);
+
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_SESSION_ENERGY)),
+                eq(new QuantityType<>(1400, Units.WATT_HOUR)));
+    }
+
+    @Test
+    void meterValuesNamingTheRunningTransactionCount() {
+        startTransaction(7);
+
+        handler.onMeterValues(
+                new MeterSample(1, meterValues("Energy.Active.Import.Register", null, "kWh", "1.5").blocks(), 7));
+
+        assertChannel(CHANNEL_SESSION_ENERGY, new QuantityType<>(1400, Units.WATT_HOUR));
+    }
+
+    @Test
+    void aRegisterBelowMeterStartIsNotCounted() {
+        startTransaction(7);
+        clearInvocations(callback);
+
+        handler.onMeterValues(meterValues("Energy.Active.Import.Register", null, "Wh", "50"));
+
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_SESSION_ENERGY)), any());
+    }
+
+    @Test
+    void aStopBelowMeterStartSettlesNoTotal() {
+        startTransaction(7);
+
+        handler.onTransactionEnded(
+                new TransactionEvent(TransactionEvent.Kind.ENDED, 1, 7, null, null, TokenType.UNKNOWN, 40, null, null));
+
+        assertChannel(CHANNEL_SESSION_ENERGY, UnDefType.UNDEF);
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, CHANNEL_LAST_SESSION_ENERGY)), any());
     }
 
     @Test

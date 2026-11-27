@@ -1249,7 +1249,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
         Map<String, State> states = meterValues.toStates(sample);
         ensureDynamicChannels(states.keySet());
         states.forEach(this::publish);
-        publishSessionEnergy(states.get(CHANNEL_ENERGY_ACTIVE_IMPORT));
+        Integer reported = sample.transactionId();
+        // A charger replays its offline buffer after reconnecting, so a sample may belong to an earlier session.
+        if (reported == null || reported.equals(transactionId)) {
+            publishSessionEnergy(states.get(CHANNEL_ENERGY_ACTIVE_IMPORT));
+        }
         List<MeterSample.Block> blocks = sample.blocks();
         ZonedDateTime timestamp = null;
         for (int i = blocks.size() - 1; i >= 0 && timestamp == null; i--) {
@@ -1309,10 +1313,11 @@ public class OcppConnectorHandler extends BaseThingHandler {
             publish(CHANNEL_ID_TAG, new StringType(idTag));
         }
         Integer meterStart = event.meterWh();
+        this.meterStart = meterStart;
         if (meterStart != null) {
-            this.meterStart = meterStart;
             publish(CHANNEL_METER_START, new QuantityType<>(meterStart, Units.WATT_HOUR));
         }
+        publish(CHANNEL_SESSION_ENERGY, meterStart != null ? new QuantityType<>(0, Units.WATT_HOUR) : UnDefType.UNDEF);
         ZonedDateTime timestamp = event.timestamp();
         if (timestamp != null) {
             publish(CHANNEL_TIMESTAMP_START, new DateTimeType(timestamp));
@@ -1346,8 +1351,8 @@ public class OcppConnectorHandler extends BaseThingHandler {
             return;
         }
         QuantityType<?> wh = reading.toUnit(Units.WATT_HOUR);
-        if (wh != null) {
-            publish(CHANNEL_SESSION_ENERGY, new QuantityType<>(Math.max(0, wh.intValue() - start), Units.WATT_HOUR));
+        if (wh != null && wh.intValue() >= start) {
+            publish(CHANNEL_SESSION_ENERGY, new QuantityType<>(wh.intValue() - start, Units.WATT_HOUR));
         }
     }
 
@@ -1378,10 +1383,14 @@ public class OcppConnectorHandler extends BaseThingHandler {
         publish(CHANNEL_METER_STOP, new QuantityType<>(meterStop, Units.WATT_HOUR));
         if (start != null) {
             int total = meterStop - start;
+            // A meter that was reset or replaced mid-session runs backwards.
             if (sessionIdle) {
-                publish(CHANNEL_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
+                publish(CHANNEL_SESSION_ENERGY,
+                        total >= 0 ? new QuantityType<>(total, Units.WATT_HOUR) : UnDefType.UNDEF);
             }
-            publish(CHANNEL_LAST_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
+            if (total >= 0) {
+                publish(CHANNEL_LAST_SESSION_ENERGY, new QuantityType<>(total, Units.WATT_HOUR));
+            }
         }
     }
 

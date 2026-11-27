@@ -409,7 +409,8 @@ public class Ocpp201InboundHandler implements ServerProvisioningEventHandler, Se
         if (connectorId != null) {
             // A 2.0.1 TransactionEvent carries meter values and charging state on every kind, not only
             // Updated.
-            MeterSample sample = Ocpp201Events.toMeterSample(connectorId, request.getMeterValue());
+            MeterSample values = Ocpp201Events.toMeterSample(connectorId, request.getMeterValue());
+            MeterSample sample = new MeterSample(connectorId, values.blocks(), transactionId);
             if (!sample.blocks().isEmpty()) {
                 deliver("TransactionEvent[MeterValues]", sessionIndex,
                         () -> listener.onMeterValues(sessionIndex, sample));

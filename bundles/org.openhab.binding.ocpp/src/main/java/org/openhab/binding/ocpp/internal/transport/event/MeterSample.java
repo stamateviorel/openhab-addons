@@ -24,7 +24,11 @@ import org.eclipse.jdt.annotation.Nullable;
  * @author Stamate Viorel - Initial contribution
  */
 @NonNullByDefault
-public record MeterSample(int connectorId, List<Block> blocks) {
+public record MeterSample(int connectorId, List<Block> blocks, @Nullable Integer transactionId) {
+
+    public MeterSample(int connectorId, List<Block> blocks) {
+        this(connectorId, blocks, null);
+    }
 
     public record Block(@Nullable ZonedDateTime timestamp, List<Reading> readings) {
     }

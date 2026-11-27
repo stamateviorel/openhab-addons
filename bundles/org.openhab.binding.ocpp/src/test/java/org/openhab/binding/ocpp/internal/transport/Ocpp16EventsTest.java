@@ -96,6 +96,16 @@ class Ocpp16EventsTest {
     }
 
     @Test
+    void aMeterSampleNamesTheTransactionItBelongsTo() {
+        MeterValuesRequest request = new MeterValuesRequest(1);
+        request.setTransactionId(6);
+        request.setMeterValue(new MeterValue[] {
+                new MeterValue(ZonedDateTime.now(ZoneOffset.UTC), new SampledValue[] { new SampledValue("1") }) });
+
+        assertEquals(6, Ocpp16Events.toMeterSample(request).transactionId());
+    }
+
+    @Test
     void meteringBlocksComeOutOldestFirst() {
         // A MeterValues request lists its readings in no guaranteed order, and every reader of a sample
         // takes the last block as the latest reading.
