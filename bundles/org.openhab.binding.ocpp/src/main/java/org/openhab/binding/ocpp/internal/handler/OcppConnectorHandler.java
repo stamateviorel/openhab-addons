@@ -344,6 +344,7 @@ public class OcppConnectorHandler extends BaseThingHandler {
             parent.unregisterConnector(connectorId, this);
         }
         chargePoint = null;
+        published.clear();
     }
 
     private @Nullable OcppChargePointHandler chargePointHandler() {

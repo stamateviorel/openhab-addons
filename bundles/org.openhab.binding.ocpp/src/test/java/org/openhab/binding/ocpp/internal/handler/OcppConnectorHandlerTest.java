@@ -1346,6 +1346,17 @@ class OcppConnectorHandlerTest {
     }
 
     @Test
+    void aRefreshAfterDisposeDoesNotReplayTheOldSession() {
+        startTransaction(7);
+        handler.dispose();
+        clearInvocations(callback);
+
+        command(CHANNEL_TRANSACTION_ID, RefreshType.REFRESH);
+
+        verify(callback, never()).stateUpdated(any(), any());
+    }
+
+    @Test
     void anAvailableForgetsAnOpenSessionWithoutLoggingATotalForIt() {
         handler.onTransactionStarted(Ocpp16Events.toStarted(new eu.chargetime.ocpp.model.core.StartTransactionRequest(1,
                 "tag", 100, java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)), 7));
