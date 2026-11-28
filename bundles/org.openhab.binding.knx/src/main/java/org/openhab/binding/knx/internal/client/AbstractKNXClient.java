@@ -23,6 +23,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -558,7 +559,7 @@ public abstract class AbstractKNXClient implements NetworkLinkListener, KNXClien
         logger.trace("writeToKNX groupAddress '{}', commandSpec '{}:{} {}'", groupAddress, groupAddress,
                 commandSpec.getDPT(), commandSpec.getValue());
 
-        sendToKNX(processCommunicator, groupAddress, commandSpec.getDPT(), commandSpec.getValue());
+        sendToKNX(() -> this.processCommunicator, groupAddress, commandSpec.getDPT(), commandSpec.getValue());
     }
 
     @Override
@@ -575,12 +576,18 @@ public abstract class AbstractKNXClient implements NetworkLinkListener, KNXClien
 
         logger.trace("respondToKNX groupAddress '{}', responseSpec '{}'", groupAddress, responseSpec);
 
-        sendToKNX(responseCommunicator, groupAddress, responseSpec.getDPT(), responseSpec.getValue());
+        sendToKNX(() -> this.responseCommunicator, groupAddress, responseSpec.getDPT(), responseSpec.getValue());
     }
 
-    private void sendToKNX(ProcessCommunication communicator, GroupAddress groupAddress, String dpt, Type type)
-            throws KNXException {
+    private void sendToKNX(Supplier<@Nullable ProcessCommunication> current, GroupAddress groupAddress, String dpt,
+            Type type) throws KNXException {
         if (!connectIfNotAutomatic()) {
+            return;
+        }
+        // only now: waiting above for a reconnect replaces the communicator, the one from before is detached
+        ProcessCommunication communicator = current.get();
+        if (communicator == null) {
+            logger.debug("Cannot write to KNX bus, connection is being replaced");
             return;
         }
 
