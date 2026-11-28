@@ -19,16 +19,18 @@ import static org.mockito.Mockito.*;
 import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatchers;
 import org.openhab.binding.knx.internal.handler.KNXBridgeBaseThingHandler.CommandExtensionData;
 import org.openhab.core.thing.ThingStatus;
-import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.thing.ThingUID;
 
+import io.calimero.KNXException;
 import io.calimero.link.KNXNetworkLink;
 import io.calimero.secure.Security;
 
@@ -40,42 +42,46 @@ import io.calimero.secure.Security;
 @NonNullByDefault
 class AbstractKNXClientTest {
 
-    private static class FailOnceClient extends AbstractKNXClient {
+    private static class FailTwiceClient extends AbstractKNXClient {
         private int attempts;
 
-        FailOnceClient(ScheduledExecutorService scheduler, StatusUpdateCallback callback) {
+        FailTwiceClient(ScheduledExecutorService scheduler, StatusUpdateCallback callback) {
             super(60, new ThingUID("knx:ip:test"), 2, 50, 3, scheduler, new CommandExtensionData(new TreeMap<>()),
                     Security.newSecurity(), callback);
         }
 
         @Override
-        protected KNXNetworkLink establishConnection() {
-            if (attempts++ == 0) {
-                throw new IllegalStateException("no usable network interface");
+        protected KNXNetworkLink establishConnection() throws KNXException {
+            switch (attempts++) {
+                case 0:
+                    throw new KNXException("gateway not reachable");
+                case 1:
+                    throw new IllegalStateException("no usable network interface");
+                default:
+                    return new DummyKNXNetworkLink();
             }
-            return new DummyKNXNetworkLink();
         }
     }
 
     @Test
-    void reconnectsAfterUnexpectedRuntimeException() throws Exception {
+    void scheduledRetryReconnectsAfterUnexpectedRuntimeException() throws Exception {
         ScheduledExecutorService scheduler = mock(ScheduledExecutorService.class);
+        doReturn(mock(ScheduledFuture.class)).when(scheduler).schedule(ArgumentMatchers.<Callable<Boolean>> any(),
+                anyLong(), any(TimeUnit.class));
         StatusUpdateCallback callback = mock(StatusUpdateCallback.class);
-        FailOnceClient client = new FailOnceClient(scheduler, callback);
-
-        try {
-            client.initialize();
-        } catch (RuntimeException e) {
-            // a scheduled connect job swallows this the same way
-        }
-
-        verify(callback).updateStatus(eq(ThingStatusDetail.COMMUNICATION_ERROR), anyString());
+        FailTwiceClient client = new FailTwiceClient(scheduler, callback);
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<Callable<Boolean>> reconnect = ArgumentCaptor.forClass(Callable.class);
-        verify(scheduler).schedule(reconnect.capture(), eq(60L), eq(TimeUnit.SECONDS));
+        ArgumentCaptor<Callable<Boolean>> retry = ArgumentCaptor.forClass(Callable.class);
 
-        assertTrue(reconnect.getValue().call());
+        // the checked failure leaves a retry in connectJob
+        client.initialize();
+        verify(scheduler).schedule(retry.capture(), anyLong(), eq(TimeUnit.SECONDS));
 
+        // the retry runs into the runtime exception and has to schedule the next attempt itself
+        assertFalse(retry.getValue().call());
+        verify(scheduler, times(2)).schedule(retry.capture(), anyLong(), eq(TimeUnit.SECONDS));
+
+        assertTrue(retry.getValue().call());
         verify(callback).updateStatus(ThingStatus.ONLINE);
         assertTrue(client.isConnected());
         client.dispose();
